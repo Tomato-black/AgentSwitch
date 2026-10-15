@@ -1,0 +1,14 @@
+# Go build artifacts
+/AgentSwitch
+/agentswitch
+*.test
+
+# IDE / build output
+/out/
+/AgentSwitch_MyGo*.docx.bak
+
+# MyGo / frontend (后续切片产物)
+/dist/
+/build/
+/.mygo/
+node_modules/
