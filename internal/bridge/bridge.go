@@ -62,7 +62,7 @@ func (g Gateway) RegenerateToken() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	g.A.Log().Info("token regenerated") // 审计只记事件，绝不记令牌值
+	g.A.Log().Info("token regenerated", "actor", "ui", "result", "ok") // 审计只记事件，绝不记令牌值
 	return tok, nil
 }
 
@@ -71,7 +71,8 @@ func (g Gateway) SaveSettings(port, timeoutSeconds int) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	g.A.Log().Info("settings saved", "port", port, "timeoutSeconds", timeoutSeconds, "restartRequired", restart)
+	g.A.Log().Info("settings saved", "port", port, "timeoutSeconds", timeoutSeconds, "restartRequired", restart,
+		"actor", "ui", "result", "ok")
 	return restart, nil
 }
 func (g Gateway) Recent() []telemetry.RequestRecord { return g.A.Recent() }
@@ -113,7 +114,7 @@ func (s Providers) Create(name, protocol, baseURL string, enabled, allowPrivate 
 	if err := s.A.Store().Providers().Save(p); err != nil {
 		return ProviderView{}, err
 	}
-	s.A.Log().Info("provider created", "id", p.ID, "name", name)
+	s.A.Log().Info("provider created", "id", p.ID, "name", name, "actor", "ui", "result", "ok")
 	return providerView(p), nil
 }
 
@@ -129,7 +130,7 @@ func (s Providers) Update(id, name, baseURL string, enabled, allowPrivate bool) 
 	if err := s.A.Store().Providers().Save(p); err != nil {
 		return err
 	}
-	s.A.Log().Info("provider updated", "id", id)
+	s.A.Log().Info("provider updated", "id", id, "actor", "ui", "result", "ok")
 	return nil
 }
 
@@ -143,7 +144,7 @@ func (s Providers) Remove(id string) error {
 	if err := s.A.Store().Providers().Delete(id); err != nil {
 		return err
 	}
-	s.A.Log().Info("provider removed", "id", id)
+	s.A.Log().Info("provider removed", "id", id, "actor", "ui", "result", "ok")
 	return nil
 }
 
@@ -216,7 +217,8 @@ func (s Accounts) Create(name, providerID, apiKey string, priority int, enabled,
 		s.Creds.Delete(key)
 		return AccountView{}, err
 	}
-	s.A.Log().Info("account created", "id", id, "provider", providerID, "backend", backend)
+	s.A.Log().Info("account created", "id", id, "provider", providerID, "backend", backend,
+		"actor", "ui", "result", "ok")
 	return accountView(row), nil
 }
 
@@ -249,7 +251,8 @@ func (s Accounts) Update(id, name string, priority int) error {
 	if err := s.A.Store().Accounts().Save(a); err != nil {
 		return err
 	}
-	s.A.Log().Info("account updated", "id", id, "name", name, "priority", priority)
+	s.A.Log().Info("account updated", "id", id, "name", name, "priority", priority,
+		"actor", "ui", "result", "ok")
 	return nil
 }
 
@@ -257,7 +260,7 @@ func (s Accounts) SetEnabled(id string, on bool) error {
 	if err := s.A.Store().Accounts().SetEnabled(id, on); err != nil {
 		return err
 	}
-	s.A.Log().Info("account enabled", "id", id, "on", on)
+	s.A.Log().Info("account enabled", "id", id, "on", on, "actor", "ui", "result", "ok")
 	return nil
 }
 
@@ -280,8 +283,13 @@ func (s Accounts) RotateSecret(id, apiKey string, allowFallback bool) error {
 	// 轮换同时刷新持久化的尾 4（List/Get 即刻回读新值）。历史行（migration 002
 	// 之前建的）key_tail 留空直到这里——迁移不读钥匙环，绝不在升级时回填。
 	a.KeyTail = tail4(apiKey)
-	s.A.Log().Info("account secret rotated", "id", id)
-	return s.A.Store().Accounts().Save(a)
+	// 审计行必须落在 Save 成功之后（spec §9：只记已落库的成功变更——原实现
+	// 记在 Save 前，落库失败会留下假成功审计）。
+	if err := s.A.Store().Accounts().Save(a); err != nil {
+		return err
+	}
+	s.A.Log().Info("account secret rotated", "id", id, "actor", "ui", "result", "ok")
+	return nil
 }
 
 func (s Accounts) Remove(id string) error {
@@ -290,7 +298,7 @@ func (s Accounts) Remove(id string) error {
 		return err
 	}
 	s.Creds.Delete(a.SecretKey)
-	s.A.Log().Info("account removed", "id", id)
+	s.A.Log().Info("account removed", "id", id, "actor", "ui", "result", "ok")
 	return s.A.Store().Accounts().Delete(id)
 }
 
@@ -345,7 +353,8 @@ func (s Models) Create(public, upstream string) (ModelView, error) {
 	if err := s.A.Store().Models().Save(m); err != nil {
 		return ModelView{}, err
 	}
-	s.A.Log().Info("model created", "public", public, "upstream", upstream)
+	s.A.Log().Info("model created", "public", public, "upstream", upstream,
+		"actor", "ui", "result", "ok")
 	return ModelView{m.ID, m.PublicModel, m.UpstreamModel, m.Enabled}, nil
 }
 
@@ -372,7 +381,8 @@ func (s Models) Update(id, public, upstream string) error {
 	if err := s.A.Store().Models().Save(m); err != nil {
 		return err
 	}
-	s.A.Log().Info("model updated", "id", id, "public", public, "upstream", upstream)
+	s.A.Log().Info("model updated", "id", id, "public", public, "upstream", upstream,
+		"actor", "ui", "result", "ok")
 	return nil
 }
 
@@ -380,6 +390,6 @@ func (s Models) Remove(id string) error {
 	if err := s.A.Store().Models().Delete(id); err != nil {
 		return err
 	}
-	s.A.Log().Info("model removed", "id", id)
+	s.A.Log().Info("model removed", "id", id, "actor", "ui", "result", "ok")
 	return nil
 }

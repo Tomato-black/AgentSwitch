@@ -67,6 +67,14 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	rec := telemetry.RequestRecord{ID: telemetryID(), StartedAt: started}
 	defer func() {
 		rec.DurationMs = time.Since(started).Milliseconds()
+		// 请求日志行（I5/spec §10 审计）：只记脱敏元数据——request_id/模型映射/
+		// 账号 id/状态/耗时/错误类/是否流式；零密钥、零请求体、零 Authorization。
+		if s.deps.Log != nil {
+			s.deps.Log.Info("request", "request_id", rec.ID, "model", rec.Model,
+				"upstream_model", rec.UpstreamModel, "account", rec.Account,
+				"status", rec.Status, "duration_ms", rec.DurationMs,
+				"error_class", rec.ErrorClass, "streaming", rec.Streaming)
+		}
 		if s.deps.Ring != nil {
 			s.deps.Ring.Add(rec)
 		}

@@ -1,9 +1,12 @@
 package bridge
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"AgentSwitch/internal/app"
@@ -191,6 +194,104 @@ func TestAccountKeyTailVisibleInList(t *testing.T) {
 	}
 	if g, err := a.Store().Accounts().Get(av.ID); err != nil || g.KeyTail != "5678" {
 		t.Fatalf("row after rotate: key_tail=%q err=%v", g.KeyTail, err)
+	}
+}
+
+// TestAuditLinesCarryActorAndResult 覆盖 I5 的审计字段（spec §9）：bridge 全部
+// 审计行带 actor="ui"（发起方=桌面管理面）与 result="ok"（这些行只在成功后记）。
+// 逐条解析日志文件 JSON 行，对已知审计 msg 断言两字段齐全。
+func TestAuditLinesCarryActorAndResult(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "audit.log")
+	a, err := app.Open(app.Options{
+		DBPath: filepath.Join(dir, "b.db"), LogPath: logPath, Host: "127.0.0.1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { a.Close() })
+	creds := credential.Manager{
+		Primary:       credential.NewFallbackFile(filepath.Join(dir, "s.json")),
+		AllowFallback: true,
+	}
+	ps := Providers{A: a, Creds: &creds}
+	p, err := ps.Create("main", "anthropic", "https://api.example.com", true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ps.Update(p.ID, "main2", "https://api2.example.com", true, false); err != nil {
+		t.Fatal(err)
+	}
+	as := Accounts{A: a, Creds: &creds, KeychainAvailable: func() bool { return false }}
+	av, err := as.Create("acc1", p.ID, "sk-ant-1234", 10, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := as.Update(av.ID, "acc1-renamed", 11); err != nil {
+		t.Fatal(err)
+	}
+	if err := as.SetEnabled(av.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := as.RotateSecret(av.ID, "sk-ant-5678", true); err != nil {
+		t.Fatal(err)
+	}
+	ms := Models{A: a}
+	m, err := ms.Create("claude-opus", "up-opus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ms.Update(m.ID, "claude-opus-2", "up-opus"); err != nil {
+		t.Fatal(err)
+	}
+	g := Gateway{A: a}
+	if _, err := g.RegenerateToken(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.SaveSettings(17891, 60); err != nil {
+		t.Fatal(err)
+	}
+	if err := as.Remove(av.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := ms.Remove(m.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := ps.Remove(p.ID); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{
+		"token regenerated": false, "settings saved": false,
+		"provider created": false, "provider updated": false, "provider removed": false,
+		"account created": false, "account updated": false, "account enabled": false,
+		"account secret rotated": false, "account removed": false,
+		"model created": false, "model updated": false, "model removed": false,
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if line == "" {
+			continue
+		}
+		var m map[string]any
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			t.Fatalf("log line not JSON: %q", line)
+		}
+		msg, _ := m["msg"].(string)
+		if _, known := want[msg]; !known {
+			continue
+		}
+		if m["actor"] != "ui" || m["result"] != "ok" {
+			t.Errorf("audit %q: actor=%v result=%v, want actor=ui result=ok", msg, m["actor"], m["result"])
+		}
+		want[msg] = true
+	}
+	for msg, ok := range want {
+		if !ok {
+			t.Errorf("audit line %q not found in log", msg)
+		}
 	}
 }
 

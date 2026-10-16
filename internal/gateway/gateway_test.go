@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -35,6 +36,12 @@ func (m memCred) Delete(k string) error { delete(m, k); return nil }
 
 func testServer(t *testing.T, upstream http.HandlerFunc, tok string, accounts []account.Account, alias map[string]string) *Server {
 	t.Helper()
+	return testServerLog(t, upstream, tok, accounts, alias, slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
+
+// testServerLog 同 testServer 但注入给定 Logger（供日志断言测试用）。
+func testServerLog(t *testing.T, upstream http.HandlerFunc, tok string, accounts []account.Account, alias map[string]string, log *slog.Logger) *Server {
+	t.Helper()
 	var upBase string
 	srv := httptest.NewServer(upstream)
 	t.Cleanup(srv.Close)
@@ -60,10 +67,64 @@ func testServer(t *testing.T, upstream http.HandlerFunc, tok string, accounts []
 		Router:         router.Single{},
 		Adapter:        provider.NewAnthropicAdapter(),
 		ProviderConfig: func() (string, bool, error) { return upBase, true, nil },
-		Log:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Log:            log,
 		Ring:           ring,
 	}
 	return New(d)
+}
+
+// TestRequestLogLineCarriesMetadata 覆盖 I5：handleMessages 的 defer 必须落一行
+// slog "request"（request_id/model/upstream_model/account/status/duration_ms/
+// error_class/streaming——零密钥、零请求体、零 Authorization）。JSON buffer 断言。
+func TestRequestLogLineCarriesMetadata(t *testing.T) {
+	up := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"id":"msg_1","content":[]}`))
+	}
+	accts := []account.Account{{ID: "a1", Priority: 10, Enabled: true, SecretKey: "account:a1"}}
+	var buf bytes.Buffer // handler 同步跑在测试 goroutine，无需加锁
+	ts := testServerLog(t, up, "local-tok", accts, map[string]string{"claude-opus": "up-opus"},
+		slog.New(slog.NewJSONHandler(&buf, nil)))
+	rec := httptest.NewRecorder()
+	ts.Handler().ServeHTTP(rec, authReq(ts, "POST", "/v1/messages", "local-tok",
+		`{"model":"claude-opus","messages":[{"role":"user","content":"hi"}]}`))
+	if rec.Code != 200 {
+		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	found := false
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var m map[string]any
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			t.Fatalf("log line not JSON: %q", line)
+		}
+		if m["msg"] != "request" {
+			continue
+		}
+		found = true
+		for _, k := range []string{"request_id", "model", "upstream_model", "account",
+			"status", "duration_ms", "error_class", "streaming"} {
+			if _, ok := m[k]; !ok {
+				t.Errorf("request line missing %q: %v", k, m)
+			}
+		}
+		if m["request_id"] == "" || m["model"] != "claude-opus" ||
+			m["upstream_model"] != "up-opus" || m["account"] != "a1" {
+			t.Errorf("request line values: %v", m)
+		}
+		if st, ok := m["status"].(float64); !ok || int(st) != 200 {
+			t.Errorf("status = %v, want 200", m["status"])
+		}
+		// 零密钥不变量：上游密钥与网关令牌绝不进日志行。
+		if strings.Contains(line, "sk-upstream") || strings.Contains(line, "local-tok") {
+			t.Fatalf("secret leaked into request log: %s", line)
+		}
+	}
+	if !found {
+		t.Fatalf("no \"request\" log line emitted: %q", buf.String())
+	}
 }
 
 func authReq(ts *Server, method, path, tok, body string) *http.Request {
