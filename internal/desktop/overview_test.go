@@ -1,7 +1,10 @@
 package desktop
 
 import (
+	"context"
+	"net"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 
@@ -56,6 +59,53 @@ func TestOverviewRecentTableRenders(t *testing.T) {
 	tt := ui.NewTester(u.overviewView, 1000, 700)
 	if !tt.HasText("模型") || !tt.HasText("耗时") {
 		t.Fatalf("table headers missing: %v", tt.Texts())
+	}
+}
+
+// TestOverviewStartButtonAllowedFromFailed 覆盖 I3：Failed 态下"启动网关"必须
+// 放行（守卫只认 stopped 时按钮死在 Failed 展示态上，UI 无路可走）。点击后
+// app 真实离开 stopped 即证放行。端口取临时空闲口，避免与并行测试包撞 17890。
+func TestOverviewStartButtonAllowedFromFailed(t *testing.T) {
+	u, a := testUI(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.SaveSettings(port, 120); err != nil {
+		t.Fatal(err)
+	}
+	u.status.State = "failed" // 模拟 Failed 展示态（状态机实际为 stopped）
+	tt := ui.NewTester(u.overviewView, 900, 700)
+	if err := tt.Click("启动网关"); err != nil {
+		t.Fatal(err)
+	}
+	// 启动经 go 异步执行——轮询等待状态机离开 stopped。
+	deadline := time.Now().Add(5 * time.Second)
+	for string(a.State().State) == "stopped" && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := string(a.State().State); got == "stopped" {
+		t.Fatalf("start button must be allowed from failed state, app stuck at %s", got)
+	}
+	if err := a.StopGateway(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestOverviewShowsLogPath 覆盖 I3 的日志路径提示：概览页渲染"日志: <path>"
+// （恒显——降级/失败只是它最被需要的时刻，恒显免去条件分支与文案分支测试）。
+func TestOverviewShowsLogPath(t *testing.T) {
+	u, a := testUI(t)
+	if a.LogPath() == "" {
+		t.Fatal("test app must be opened with a log path")
+	}
+	tt := ui.NewTester(u.overviewView, 900, 700)
+	if !tt.HasText("日志:") || !tt.HasText(a.LogPath()) {
+		t.Fatalf("log path line missing: %v", tt.Texts())
 	}
 }
 

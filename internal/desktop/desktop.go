@@ -32,6 +32,7 @@ type uiState struct {
 	status         app.StateInfo
 	recent         []telemetry.RequestRecord
 	token          string
+	logPath        string       // 日志文件路径（a.LogPath()；概览恒显的"日志:"提示）
 	page           string       // 当前页；"overview" 默认（view 顶部导航行切换）
 	showToken      bool         // 令牌明文显示开关
 	portInput      string       // 设置面板端口输入（打开时回显 Status.Port）
@@ -73,6 +74,7 @@ func newUIState(svc Services, a *app.App) *uiState {
 	si := a.State()
 	st, _ := a.CurrentSettings()
 	u := &uiState{svc: svc, status: si, recent: a.Recent(), token: st.GatewayToken,
+		logPath:  a.LogPath(),
 		page:     "overview",
 		provForm: provFormData{protocol: "anthropic", enabled: true},
 		accForm:  accFormData{enabled: true},

@@ -26,10 +26,16 @@ func (u *uiState) overviewView(c *ui.Context) {
 		if u.status.DegradedReason != "" {
 			ui.Textf(c, "降级原因: %s", u.status.DegradedReason)
 		}
+		// 日志路径提示（spec §17 可诊断性）：恒显——降级/失败时是定位入口，
+		// 正常态给一个可发现的位置也不碍事（选恒显，免条件分支）。
+		ui.Textf(c, "日志: %s", u.logPath)
 
 		// 操作行：启动/停止按状态守卫；设置切换面板并回显当前值
 		ui.Row(c).Gap(8).Children(func() {
-			if ui.PrimaryButton(c, "启动网关").Clicked() && u.status.State == "stopped" {
+			// 启动放行 stopped 与 failed：Failed 是可恢复态（spec §5），
+			// StopGateway 对 gw==nil 幂等，二次 Start 不被旧句柄挡住。
+			if ui.PrimaryButton(c, "启动网关").Clicked() &&
+				(u.status.State == "stopped" || u.status.State == "failed") {
 				go func() { _ = u.svc.Gateway.Start() }()
 			}
 			if ui.Button(c, "停止网关").Clicked() &&

@@ -132,6 +132,10 @@ func (a *App) Store() storage.Store  { return a.store }
 func (a *App) Ring() *telemetry.Ring { return a.ring }
 func (a *App) Log() *slog.Logger     { return a.log }
 
+// LogPath 返回日志文件路径（opts.LogPath；可为空=写 stderr）。概览页用它做
+// 降级/失败时的日志位置提示（spec §17 可诊断性）。
+func (a *App) LogPath() string { return a.opts.LogPath }
+
 // Creds 暴露凭据管理器（Task 11 bridge 直接使用）。
 func (a *App) Creds() credential.Store { return &a.creds }
 

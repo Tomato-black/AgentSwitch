@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -129,6 +130,10 @@ func TestOpenCreatesNestedConfigDir(t *testing.T) {
 	if perm := lf.Mode().Perm(); perm&0o077 != 0 {
 		t.Fatalf("log dir perm = %o, want no group/other access (0700)", perm)
 	}
+	// LogPath() 透传 opts（I3 概览日志提示的数据源）。
+	if a.LogPath() != logPath {
+		t.Fatalf("LogPath() = %q, want %q", a.LogPath(), logPath)
+	}
 }
 
 func TestOpenGeneratesTokenAndRegeneratePersists(t *testing.T) {
@@ -154,6 +159,44 @@ func TestOpenGeneratesTokenAndRegeneratePersists(t *testing.T) {
 	defer a2.Close()
 	if a2.currentToken() != newTok {
 		t.Fatal("regenerated token not persisted")
+	}
+}
+
+// TestStartGatewayFailsOnBusyPortThenRecovers 覆盖 I3（spec §5 六态）：端口被
+// 占 → StartGateway 返回错误且状态 Failed（带 reason）；释放端口后再 Start
+// 必须成功变 Running——Failed 是可恢复态（StopGateway 对 gw==nil 幂等，不会
+// 挡住二次启动）。端口取 :0 临时占用，避免与并行测试包的 17890 撞车。
+func TestStartGatewayFailsOnBusyPortThenRecovers(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer up.Close()
+	a := newTestApp(t, up.URL, true) // 启用账号在库 → 恢复后应为 Running
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	busy := ln.Addr().(*net.TCPAddr).Port
+	if _, err := a.SaveSettings(busy, 120); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.StartGateway(); err == nil {
+		t.Fatal("start on occupied port must fail")
+	}
+	si := a.State()
+	if si.State != StateFailed || si.DegradedReason == "" {
+		t.Fatalf("want failed with reason, got %+v", si)
+	}
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.StartGateway(); err != nil {
+		t.Fatalf("start after port released: %v", err)
+	}
+	si = a.State()
+	if si.State != StateRunning {
+		t.Fatalf("failed must be recoverable: got %s (%s)", si.State, si.DegradedReason)
+	}
+	if err := a.StopGateway(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }
 
