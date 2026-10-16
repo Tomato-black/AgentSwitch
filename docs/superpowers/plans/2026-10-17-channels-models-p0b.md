@@ -479,12 +479,15 @@ func TestCooldownsConcurrent429SingleEntryAndProlong(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
-	sn := c.Snapshot(now.Add(time.Hour))
+	// 快照时刻取最后一个标记时刻（now+49s）之后、条目过期（now+79s）之前，
+	// 否则按契约过期条目会被过滤，断言无从谈起。
+	sn := c.Snapshot(now.Add(50 * time.Second))
 	if len(sn) != 1 {
 		t.Fatalf("concurrent marks must collapse to one entry: %v", sn)
 	}
-	// 重复冷却只 prolong 不回退：最终 Until = 最大 now+RA
-	if want := now.Add(49 * time.Second).Add(6 * time.Second); !sn[0].Until.Equal(want) {
+	// 重复冷却只 prolong 不回退：最终 Until = 最大 now_i+RA_i。i=49 时 RA=0
+	// 走默认 30s，故最大值 = now+49s+30s = now+79s（prolong 取更晚，与顺序无关）。
+	if want := now.Add(49 * time.Second).Add(CooldownRateLimitDefault); !sn[0].Until.Equal(want) {
 		t.Fatalf("until %v want %v", sn[0].Until, want)
 	}
 }
