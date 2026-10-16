@@ -1,5 +1,5 @@
 // Package desktop 是 MyGo 桌面壳：窗口、托盘、关窗拦截、退出钩子与状态桥接。
-// UI 页面（设置/供应商/账号/模型）由 Task 13-15 在本包视图上扩展。
+// UI 页面（概览/供应商已就位；账号/模型由 Task 15 扩展）挂在本包视图上。
 package desktop
 
 import (
@@ -32,7 +32,7 @@ type uiState struct {
 	status         app.StateInfo
 	recent         []telemetry.RequestRecord
 	token          string
-	page           string       // 当前页；"overview" 默认（导航由 Task 14 接）
+	page           string       // 当前页；"overview" 默认（view 顶部导航行切换）
 	showToken      bool         // 令牌明文显示开关
 	portInput      string       // 设置面板端口输入（打开时回显 Status.Port）
 	timeoutInput   string       // 设置面板超时输入（打开时回显 Status.TimeoutSeconds）
@@ -42,18 +42,43 @@ type uiState struct {
 	table          ui.ListState // 最近请求表状态
 	closeNotice    bool         // 首关教育提示
 	closeConfirmed bool         // 用户已知晓，允许关闭
+	// 供应商页（Task 14）：
+	provList          ui.ListState // 供应商表状态；Selected 是当前行（*int，nil=未选）
+	provForm          provFormData // 新建/编辑表单；editID 非空 = 编辑该 id
+	provConfirmDelete bool         // 删除二次确认
+	provTestMsg       string       // 连通测试结果展示
+}
+
+// provFormData 是供应商页的新建/编辑表单。
+type provFormData struct {
+	name, protocol, baseURL string
+	enabled, allowPrivate   bool
+	msg                     string
+	editID                  string // 非空 = 编辑该 id
 }
 
 func newUIState(svc Services, a *app.App) *uiState {
 	si := a.State()
 	st, _ := a.CurrentSettings()
 	return &uiState{svc: svc, status: si, recent: a.Recent(), token: st.GatewayToken,
-		page: "overview"}
+		page:     "overview",
+		provForm: provFormData{protocol: "anthropic", enabled: true}}
 }
 
-// view 按 u.page 分发页面；未识别的 page 落到概览（当前唯一页面）。
+// view 顶部渲染导航行（概览/供应商），再按 u.page 分发页面；未识别的
+// page 落到概览。账号/模型页的 case 属 Task 15。
 func (u *uiState) view(c *ui.Context) {
+	ui.Row(c).Gap(8).Children(func() {
+		if ui.Button(c, "概览").Clicked() {
+			u.page = "overview"
+		}
+		if ui.Button(c, "供应商").Clicked() {
+			u.page = "providers"
+		}
+	})
 	switch u.page {
+	case "providers":
+		u.providersView(c)
 	default:
 		u.overviewView(c)
 	}
