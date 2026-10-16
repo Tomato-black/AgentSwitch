@@ -36,6 +36,38 @@ CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 // 下次轮换——迁移绝不回读钥匙环（迁移不得触发凭据访问）。
 const migration002 = `ALTER TABLE accounts ADD COLUMN key_tail TEXT NOT NULL DEFAULT ''`
 
+// migration003 是渠道化重构（spec 2026-10-17 §3.1）的三张新表。过渡期与旧
+// providers/accounts/models 并存；Task 10 合并为单一 v1 并删旧表（spec 决策 5：
+// 发布前无存量用户，删库重建）。
+const migration003 = `
+CREATE TABLE channels (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL,
+  protocol TEXT NOT NULL, base_url TEXT NOT NULL,
+  priority INTEGER NOT NULL DEFAULT 10, enabled INTEGER NOT NULL DEFAULT 1,
+  allow_private_upstream INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE channel_keys (
+  id TEXT PRIMARY KEY,
+  channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, secret_key TEXT NOT NULL, secret_backend TEXT NOT NULL,
+  key_tail TEXT NOT NULL DEFAULT '', priority INTEGER NOT NULL DEFAULT 10,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE INDEX idx_channel_keys_channel ON channel_keys(channel_id);
+CREATE TABLE channel_models (
+  id TEXT PRIMARY KEY,
+  channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+  public_model TEXT NOT NULL, upstream_model TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+  UNIQUE(channel_id, public_model)
+);
+CREATE INDEX idx_channel_models_channel ON channel_models(channel_id);
+CREATE INDEX idx_channel_models_public ON channel_models(public_model);
+`
+
 // migrations 是按版本序执行的迁移表；migrate 只跑 schema_migrations 里
 // 未记录的版本（幂等）。追加新版本 = 追加一行，勿改已发布语句。
 var migrations = []struct {
@@ -44,6 +76,7 @@ var migrations = []struct {
 }{
 	{1, migration001},
 	{2, migration002},
+	{3, migration003},
 }
 
 type dbStore struct{ db *sql.DB }
@@ -112,8 +145,11 @@ func NewID() string {
 	return hex.EncodeToString(b)
 }
 
-func (s *dbStore) Providers() ProviderRepo { return &providerRepo{s.db} }
-func (s *dbStore) Accounts() AccountRepo   { return &accountRepo{s.db} }
-func (s *dbStore) Models() ModelRepo       { return &modelRepo{s.db} }
-func (s *dbStore) Settings() SettingsRepo  { return &settingsRepo{s.db} }
-func (s *dbStore) Close() error            { return s.db.Close() }
+func (s *dbStore) Providers() ProviderRepo         { return &providerRepo{s.db} }
+func (s *dbStore) Accounts() AccountRepo           { return &accountRepo{s.db} }
+func (s *dbStore) Models() ModelRepo               { return &modelRepo{s.db} }
+func (s *dbStore) Channels() ChannelRepo           { return &channelRepo{s.db} }
+func (s *dbStore) ChannelKeys() ChannelKeyRepo     { return &channelKeyRepo{s.db} }
+func (s *dbStore) ChannelModels() ChannelModelRepo { return &channelModelRepo{s.db} }
+func (s *dbStore) Settings() SettingsRepo          { return &settingsRepo{s.db} }
+func (s *dbStore) Close() error                    { return s.db.Close() }
