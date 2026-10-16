@@ -523,3 +523,320 @@ func TestAdapterFailureFailsOverWithoutCooldown(t *testing.T) {
 		t.Fatalf("bad protocol must not cool the key: %+v", snap)
 	}
 }
+
+// --- Task 6：docx §13 转移边界落位（简报 Step 1/2 + OpenAI 端到端 + Task 5 pointer pin）---
+
+// twoCands 构造两个候选共享密钥 store：key1→upstream1、key2→upstream2。
+// 返回 (Deps tweak, 共享 Cooldowns)——冷却断言用同一实例。
+func twoCands(t *testing.T, up1, up2 string) (func(d *Deps), *router.Cooldowns) {
+	t.Helper()
+	creds := credential.NewFallbackFile(t.TempDir() + "/s.json")
+	_ = creds.Set("account:k1", []byte("sk-1"))
+	_ = creds.Set("account:k2", []byte("sk-2"))
+	cds := router.NewCooldowns()
+	return func(d *Deps) {
+		d.Cred = creds
+		c1 := router.Candidate{ChannelID: "c1", ChannelName: "ch1", KeyID: "k1", KeyName: "key1",
+			SecretKey: "account:k1", Protocol: "anthropic", BaseURL: up1, AllowPrivate: true,
+			UpstreamModel: "u1", ChannelPriority: 10, KeyPriority: 10}
+		c2 := router.Candidate{ChannelID: "c2", ChannelName: "ch2", KeyID: "k2", KeyName: "key2",
+			SecretKey: "account:k2", Protocol: "anthropic", BaseURL: up2, AllowPrivate: true,
+			UpstreamModel: "u2", ChannelPriority: 20, KeyPriority: 10}
+		d.Candidates = func(string) ([]router.Candidate, error) { return []router.Candidate{c1, c2}, nil }
+		d.Cooldowns = cds
+	}, cds
+}
+
+// Review Focus 1 + docx §13：首候选连接失败 → 冷却 connect → 次候选服务，200。
+func TestFailoverSkipsBadChannel(t *testing.T) {
+	var calls2 int
+	good := fakeUpstream(t, 200, `{"id":"ok"}`, &calls2)
+	defer good.Close()
+	dead := "http://127.0.0.1:1" // 必然连接失败
+	tw, _ := twoCands(t, dead, good.URL)
+	s := newGW(t, dead, tw)
+	resp := post(t, s, `{"model":"pub-1","max_tokens":8,"messages":[]}`, "tok")
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 || calls2 != 1 {
+		t.Fatalf("failover: status %d calls2 %d", resp.StatusCode, calls2)
+	}
+}
+
+// docx §13：429 + 无 Retry-After → 默认 30s 冷却 rate_limited → 次候选服务 200。
+func Test429SwitchesAndMarksCooldown(t *testing.T) {
+	var calls2 int
+	good := fakeUpstream(t, 200, `{"id":"ok"}`, &calls2)
+	defer good.Close()
+	busy := fakeUpstream(t, 429, `{"type":"error"}`, nil)
+	defer busy.Close()
+	tw, cds := twoCands(t, busy.URL, good.URL)
+	s := newGW(t, busy.URL, tw)
+	resp := post(t, s, `{"model":"pub-1","max_tokens":8,"messages":[]}`, "tok")
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status %d body %s", resp.StatusCode, b)
+	}
+	// key1 已被冷却（429 无 Retry-After → 默认 30s）；10s 后仍未解冻——
+	// TryAcquire 必须失败（ok=false = 冷却中）。
+	if _, ok := cds.TryAcquire("k1", time.Now().Add(10*time.Second)); ok {
+		t.Fatal("k1 must still be cooling 10s after 429 (default 30s)")
+	}
+	// 只有失败的那枚密钥冷却：接管的 k2 不得被连坐。
+	if _, ok := cds.TryAcquire("k2", time.Now()); !ok {
+		t.Fatal("k2 served fine and must not be cooled")
+	}
+}
+
+// docx §13：400 参数错误 → 不转移、不冷却，客户端拿到 400。
+func Test400NoSwitchNoCooldown(t *testing.T) {
+	var calls2 int
+	good := fakeUpstream(t, 200, `{"id":"ok"}`, &calls2)
+	defer good.Close()
+	bad := fakeUpstream(t, 400, `{"type":"error","error":{"type":"invalid_request_error","message":"bad"}}`, nil)
+	defer bad.Close()
+	tw, cds := twoCands(t, bad.URL, good.URL)
+	s := newGW(t, bad.URL, tw)
+	resp := post(t, s, `{"model":"pub-1","max_tokens":8,"messages":[]}`, "tok")
+	defer resp.Body.Close()
+	if _, ok := cds.TryAcquire("k1", time.Now()); !ok {
+		t.Fatal("400 must not cool the key")
+	}
+	if resp.StatusCode != 400 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(b), "invalid_request_error") {
+		t.Fatalf("body %s", b)
+	}
+	if calls2 != 0 {
+		t.Fatal("400 must not switch")
+	}
+}
+
+// docx §13：流式/非流首字节已写（提交点已过）→ 上游中断只断流，绝不换候选重放。
+func TestNoSwitchAfterFirstByte(t *testing.T) {
+	var calls2 int
+	good := fakeUpstream(t, 200, `{"id":"ok"}`, &calls2)
+	defer good.Close()
+	flaky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200) // 响应头已写=提交点已过
+		w.(http.Flusher).Flush()
+		w.Write([]byte(`{"partial":`))
+		panic(http.ErrAbortHandler) // 模拟流中断（静默断连，不打日志）
+	}))
+	defer flaky.Close()
+	tw, _ := twoCands(t, flaky.URL, good.URL)
+	s := newGW(t, flaky.URL, tw)
+	resp := post(t, s, `{"model":"pub-1","max_tokens":8,"messages":[]}`, "tok")
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	if calls2 != 0 {
+		t.Fatalf("after commit must not switch, calls2=%d", calls2)
+	}
+}
+
+// docx §13：客户端取消 → 直接取消上游、不转移下一候选。
+func TestClientCancelNoSwitch(t *testing.T) {
+	var calls2 int
+	good := fakeUpstream(t, 200, `{"id":"ok"}`, &calls2)
+	defer good.Close()
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// net/http 服务端读完请求体后才 arm 断连检测——先读完 body 再挂住，
+		// 否则 r.Context().Done() 永不触发、Close() 永久阻塞（同 TestClientCancelPropagatesUpstream）。
+		io.Copy(io.Discard, r.Body)
+		<-r.Context().Done() // 挂住直到网关取消
+	}))
+	defer slow.Close()
+	tw, _ := twoCands(t, slow.URL, good.URL)
+	s := newGW(t, slow.URL, tw)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "POST", "/v1/messages",
+		strings.NewReader(`{"model":"pub-1","max_tokens":8,"messages":[]}`))
+	req.Header.Set("Authorization", "Bearer tok")
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req) // 客户端已断，写响应无害
+	if calls2 != 0 {
+		t.Fatalf("cancel must not switch, calls2=%d", calls2)
+	}
+}
+
+// docx §13 + -race：并发 429 下同一密钥冷却原子（prolong 不回退），次候选接管。
+func TestConcurrent429CooldownAtomic(t *testing.T) {
+	var mu sync.Mutex
+	calls2 := 0
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls2++
+		mu.Unlock()
+		w.Write([]byte(`{"id":"ok"}`))
+	}))
+	defer good.Close()
+	busy := fakeUpstream(t, 429, `{"type":"error"}`, nil)
+	defer busy.Close()
+	tw, cds := twoCands(t, busy.URL, good.URL)
+	s := newGW(t, busy.URL, tw)
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp := post(t, s, `{"model":"pub-1","max_tokens":8,"messages":[]}`, "tok")
+			resp.Body.Close()
+		}()
+	}
+	wg.Wait()
+	// 首轮 429 后 k1 冷却：此后请求应全部直达 good（不再打 busy 由
+	// Candidates 快照过滤保证——app 层职责，网关层断言冷却标记成立即可）。
+	// 断言点必须在冷却窗口内（429 默认冷却 30s——简报的 now+1h 观察点已过期），
+	// TryAcquire 必须失败（ok=false = 冷却中）。
+	if _, ok := cds.TryAcquire("k1", time.Now()); ok {
+		t.Fatal("k1 must be cooling after concurrent 429s")
+	}
+	if calls2 == 0 {
+		t.Fatal("good upstream must have served")
+	}
+}
+
+// spec §10：OpenAI 协议候选端到端——Anthropic 入站 → 转换 → OpenAI 假上游
+// （ChatCompletions）→ 逆转换 → 客户端收到 Anthropic envelope。
+func TestOpenAIProtocolCandidateEndToEnd(t *testing.T) {
+	var gotAuth string
+	var gotBody map[string]any
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		b, _ := io.ReadAll(r.Body)
+		json.Unmarshal(b, &gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"id":"cmpl-1","model":"u-oai","choices":[{"message":{"content":"hello from openai"},"finish_reason":"stop"}],"usage":{"prompt_tokens":4,"completion_tokens":3}}`))
+	}))
+	defer up.Close()
+	creds := credential.NewFallbackFile(t.TempDir() + "/s.json")
+	_ = creds.Set("account:ko", []byte("sk-oai"))
+	cand := router.Candidate{ChannelID: "co", ChannelName: "oai", KeyID: "ko", KeyName: "key-oai",
+		SecretKey: "account:ko", Protocol: "openai", BaseURL: up.URL, AllowPrivate: true,
+		UpstreamModel: "u-oai", ChannelPriority: 10, KeyPriority: 10}
+	s := newGW(t, up.URL, func(d *Deps) {
+		d.Cred = creds
+		d.Candidates = func(string) ([]router.Candidate, error) { return []router.Candidate{cand}, nil }
+	})
+	resp := post(t, s, `{"model":"pub-1","max_tokens":16,"system":"sys","messages":[{"role":"user","content":"q"}]}`, "tok")
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		t.Fatalf("status %d body %s", resp.StatusCode, b)
+	}
+	if !strings.Contains(string(b), `"stop_reason":"end_turn"`) || !strings.Contains(string(b), "hello from openai") {
+		t.Fatalf("anthropic envelope expected: %s", b)
+	}
+	if gotAuth != "Bearer sk-oai" {
+		t.Fatalf("bearer auth: %q", gotAuth)
+	}
+	// system 已转换
+	if gotBody["messages"] == nil {
+		t.Fatalf("converted body: %v", gotBody)
+	}
+}
+
+// --- Task 5 遗留 pointer 补 pin ---
+
+// Pointer 1：全候选凭据失效 → 耗尽 502 envelope，Ring 记录 error_class="credential"。
+func TestAllCredentialsDeadReturns502CredentialClass(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"ok"}`))
+	}))
+	defer up.Close()
+	var ring *telemetry.Ring
+	s := newGW(t, up.URL, func(d *Deps) {
+		ring = d.Ring
+		dead1 := router.Candidate{ChannelID: "c1", ChannelName: "ch1", KeyID: "kd1", KeyName: "dead1",
+			SecretKey: "account:gone1", Protocol: "anthropic", BaseURL: up.URL,
+			AllowPrivate: true, UpstreamModel: "u1", ChannelPriority: 10, KeyPriority: 10}
+		dead2 := router.Candidate{ChannelID: "c2", ChannelName: "ch2", KeyID: "kd2", KeyName: "dead2",
+			SecretKey: "account:gone2", Protocol: "anthropic", BaseURL: up.URL,
+			AllowPrivate: true, UpstreamModel: "u2", ChannelPriority: 20, KeyPriority: 10}
+		d.Candidates = func(string) ([]router.Candidate, error) { return []router.Candidate{dead1, dead2}, nil }
+	})
+	resp := post(t, s, `{"model":"pub-1","messages":[]}`, "tok")
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 502 {
+		t.Fatalf("all-credential-dead must 502, got %d: %s", resp.StatusCode, b)
+	}
+	var env struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(b, &env); err != nil || env.Type != "error" {
+		t.Fatalf("502 must be envelope: %s", b)
+	}
+	recs := ring.List()
+	if len(recs) == 0 {
+		t.Fatal("ring must hold the request record")
+	}
+	if recs[0].ErrorClass != "credential" || recs[0].Status != 502 {
+		t.Fatalf("ring record must carry error_class=credential status=502: %+v", recs[0])
+	}
+}
+
+// Pointer 2：anthropic 渠道上游应见 X-Api-Key=凭据本体；本地网关令牌不出站。
+func TestUpstreamSeesAPIKeyNotLocalToken(t *testing.T) {
+	var gotKey, gotAuth string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotKey = r.Header.Get("X-Api-Key")
+		gotAuth = r.Header.Get("Authorization")
+		w.Write([]byte(`{"id":"ok"}`))
+	}))
+	defer up.Close()
+	s := newGW(t, up.URL, nil)
+	resp := post(t, s, `{"model":"pub-1","messages":[]}`, "tok")
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	if gotKey != "sk-test" {
+		t.Fatalf("upstream must see X-Api-Key=sk-test, got %q", gotKey)
+	}
+	if gotAuth != "" {
+		t.Fatalf("local gateway token must not leave: Authorization=%q", gotAuth)
+	}
+}
+
+// Pointer 3a：Retry-After 白名单透传——2xx 成功路径。
+func TestRetryAfterPassthroughOnSuccess(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "5")
+		w.Write([]byte(`{"id":"ok"}`))
+	}))
+	defer up.Close()
+	s := newGW(t, up.URL, nil)
+	resp := post(t, s, `{"model":"pub-1","messages":[]}`, "tok")
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 || resp.Header.Get("Retry-After") != "5" {
+		t.Fatalf("Retry-After must pass through on 2xx: status=%d ra=%q",
+			resp.StatusCode, resp.Header.Get("Retry-After"))
+	}
+}
+
+// Pointer 3b：Retry-After 白名单透传——4xx param 原状态码回传路径。
+func TestRetryAfterPassthroughOnParamError(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "9")
+		w.WriteHeader(400)
+		w.Write([]byte(`{"type":"error","error":{"type":"invalid_request_error","message":"bad"}}`))
+	}))
+	defer up.Close()
+	s := newGW(t, up.URL, nil)
+	resp := post(t, s, `{"model":"pub-1","messages":[]}`, "tok")
+	defer resp.Body.Close()
+	if resp.StatusCode != 400 || resp.Header.Get("Retry-After") != "9" {
+		t.Fatalf("Retry-After must pass through on 400: status=%d ra=%q",
+			resp.StatusCode, resp.Header.Get("Retry-After"))
+	}
+}
