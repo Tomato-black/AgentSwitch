@@ -159,15 +159,22 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		}
 		apiKey, err := s.deps.Cred.Get(c.SecretKey)
 		if err != nil {
-			rec.Status, rec.ErrorClass = 500, "credential"
-			writeErr(w, 500, protocol.ErrTypeAPI, "credential unavailable for key "+c.KeyName)
-			return
+			// 凭据失效（被吊销/钥匙环删除）= 死密钥：按上游 401 同口径冷却
+			// （ClassAuth→1h）再换下一候选——单枚死钥不得瘫痪整个池，也不得
+			// 每请求重试。此刻零字节已写客户端，属可转移窗口。
+			if s.deps.Cooldowns != nil {
+				s.deps.Cooldowns.MarkClassified(c.KeyID, provider.ClassAuth, 0, time.Now())
+			}
+			lastClass = "credential"
+			switches++
+			continue
 		}
 		adapter, err := s.deps.AdapterFor(c.Protocol)
 		if err != nil {
-			rec.Status, rec.ErrorClass = 500, protocol.ErrTypeAPI
-			writeErr(w, 500, protocol.ErrTypeAPI, "adapter unavailable: "+err.Error())
-			return
+			// 渠道协议配置错，密钥无辜：不冷却，换下一候选。
+			lastClass = provider.ClassUnknown
+			switches++
+			continue
 		}
 		rewritten, err := protocol.RewriteModel(body, c.UpstreamModel)
 		if err != nil {
