@@ -69,6 +69,21 @@ func TestLifecycleDegradedAndRunning(t *testing.T) {
 	if a2.State().State != StateRunning {
 		t.Fatalf("want running, got %s (%s)", a2.State().State, a2.State().DegradedReason)
 	}
+	if err := a2.StopGateway(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// 有账号但全部禁用 → 可用启用账号为零 → Degraded（spec §5；与 readyz/Router 过滤口径一致）。
+	a3 := newTestApp(t, up.URL, true)
+	if err := a3.Store().Accounts().SetEnabled("a1", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := a3.StartGateway(); err != nil {
+		t.Fatal(err)
+	}
+	if a3.State().State != StateDegraded || a3.State().DegradedReason == "" {
+		t.Fatalf("disabled account → degraded, got %s (%q)", a3.State().State, a3.State().DegradedReason)
+	}
 }
 
 func TestOpenGeneratesTokenAndRegeneratePersists(t *testing.T) {
