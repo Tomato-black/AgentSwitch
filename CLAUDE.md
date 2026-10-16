@@ -25,6 +25,8 @@ go vet ./...          # 静态检查
 go test ./...         # 全部测试
 go test ./internal/router -run TestFailover   # 跑单个测试
 go test -race ./...   # 涉及并发/冷却状态的测试必须带 -race
+go tool mygo dev      # 开发运行（热重载；入口 cmd/agentswitch，UI 在 internal/desktop）
+go tool mygo build    # 打包（产物在 build/）
 ```
 
 前端（`frontend/` + `mygo.config.ts`，见文档 §12）尚未建立，npm/pnpm 命令待引入后再补充，不要臆造。MyGo 项目模板与打包命令以选定版本的官方仓库/文档为准（文档明确要求不假定未经验证的框架 API）。
