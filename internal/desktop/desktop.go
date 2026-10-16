@@ -28,21 +28,22 @@ type Services struct {
 }
 
 type uiState struct {
-	svc            Services
-	status         app.StateInfo
-	recent         []telemetry.RequestRecord
-	token          string
-	logPath        string       // 日志文件路径（a.LogPath()；概览恒显的"日志:"提示）
-	page           string       // 当前页；"overview" 默认（边栏 Sidebar 选中 id）
-	showToken      bool         // 令牌明文显示开关
-	portInput      string       // 设置面板端口输入（打开时回显 Status.Port）
-	timeoutInput   string       // 设置面板超时输入（打开时回显 Status.TimeoutSeconds）
-	settingsMsg    string       // 设置保存结果提示
-	settingsOpen   bool         // 设置面板展开
-	confirmRegen   bool         // 重新生成令牌的二次确认
-	table          ui.ListState // 最近请求表状态
-	closeNotice    bool         // 首关教育提示
-	closeConfirmed bool         // 用户已知晓，允许关闭
+	svc              Services
+	status           app.StateInfo
+	recent           []telemetry.RequestRecord
+	token            string
+	logPath          string       // 日志文件路径（a.LogPath()；概览恒显的"日志:"提示）
+	page             string       // 当前页；"overview" 默认（边栏 Sidebar 选中 id）
+	showToken        bool         // 令牌明文显示开关
+	portInput        string       // 设置面板端口输入（打开时回显 Status.Port）
+	timeoutInput     string       // 设置面板超时输入（打开时回显 Status.TimeoutSeconds）
+	settingsMsg      string       // 设置保存结果提示
+	settingsOpen     bool         // 设置面板展开
+	prevSettingsOpen bool         // 上一帧的 settingsOpen——折叠面板打开瞬间的回显检测
+	confirmRegen     bool         // 重新生成令牌的二次确认
+	table            ui.ListState // 最近请求表状态
+	closeNotice      bool         // 首关教育提示
+	closeConfirmed   bool         // 用户已知晓，允许关闭
 	// 供应商页（Task 14）：
 	provList          ui.ListState // 供应商表状态；Selected 经 provSel 指向当前行
 	provSel           int          // 供应商表当前行（-1=无）；provList.Selected 指向它
@@ -90,7 +91,7 @@ func newUIState(svc Services, a *app.App) *uiState {
 
 // view 是窗口根：按系统外观选品牌主题，左边栏（导航 + 页脚全局状态位）、
 // 右内容列（首关横条 + 当前页）。SetTheme 必须在任何子件构建前调用
-//（api_gen.go：SetTheme makes the frame use t）。u.page 直接充当 Sidebar
+// （api_gen.go：SetTheme makes the frame use t）。u.page 直接充当 Sidebar
 // 的选中 id（四个 id 与导航项一致），点选即切页，无需 Changed 处理。
 func (u *uiState) view(c *ui.Context) {
 	c.SetTheme(buildTheme(c.Theme().Dark, c.Preferences().TextScale))

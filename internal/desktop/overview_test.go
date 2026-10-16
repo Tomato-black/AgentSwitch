@@ -3,6 +3,7 @@ package desktop
 import (
 	"context"
 	"net"
+	"strconv"
 	"testing"
 	"time"
 
@@ -114,5 +115,34 @@ func recent3() []telemetry.RequestRecord {
 		{Model: "claude-opus", Account: "a1", Status: 200, DurationMs: 1200},
 		{Model: "claude-sonnet", Account: "a1", Status: 429, DurationMs: 90, ErrorClass: "rate_limited"},
 		{Model: "claude-opus", Account: "a1", Status: 200, DurationMs: 800},
+	}
+}
+
+// TestSettingsCollapsibleOpens 覆盖设置折叠面板：点「设置」展开（原独立
+// 按钮改 Collapsible），打开瞬间回显当前端口/超时（原「设置」按钮做的事，
+// 改为帧内 prev/cur 检测）。
+func TestSettingsCollapsibleOpens(t *testing.T) {
+	u, a := testUI(t)
+	st, _ := a.CurrentSettings()
+	tt := ui.NewTester(u.overviewView, 900, 700)
+	if err := tt.Click("设置"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if !u.settingsOpen {
+		t.Fatal("collapsible must open on click")
+	}
+	if !tt.HasText("端口:") || !tt.HasText(strconv.Itoa(st.Port)) {
+		t.Fatalf("settings echo missing: %v", tt.Texts())
+	}
+}
+
+// TestOverviewEmptyRequestsHint 覆盖空请求表引导（spec §5.4：空态是邀请，
+// 不是空白）。
+func TestOverviewEmptyRequestsHint(t *testing.T) {
+	u, _ := testUI(t)
+	tt := ui.NewTester(u.overviewView, 900, 700)
+	if !tt.HasText("暂无请求") {
+		t.Fatalf("empty hint missing: %v", tt.Texts())
 	}
 }
