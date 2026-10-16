@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"AgentSwitch/internal/account"
 	"AgentSwitch/internal/credential"
 	"AgentSwitch/internal/provider"
 	"AgentSwitch/internal/router"
@@ -24,20 +23,23 @@ type Limits struct {
 	RequestTimeout time.Duration
 }
 
-// Deps 是 Server 的全部外部依赖，由 Task 10 的 App 组装注入。
+// Deps 是 Server 的全部外部依赖（渠道化后的 P0-B 形态，spec §6）。
 type Deps struct {
-	Token          func() string
-	Limits         func() Limits
-	Accounts       func() ([]account.Account, error)
-	Alias          func(public string) (upstream string, ok bool, err error)
-	ListAliases    func() []string
-	Cred           credential.Store
-	Router         router.Router
-	Adapter        provider.Adapter
-	ProviderConfig func() (baseURL string, allowPrivate bool, err error)
-	Log            *slog.Logger
-	Ring           *telemetry.Ring
-	OnRecord       func(telemetry.RequestRecord)
+	Token  func() string
+	Limits func() Limits
+	// Candidates 返回公开模型的候选集（enabled 渠道×密钥×模型，已含冷却快照）。
+	Candidates func(publicModel string) ([]router.Candidate, error)
+	// Cooldowns 冷却存储；nil = 不接冷却（最小 fixture 的测试场景）。
+	Cooldowns *router.Cooldowns
+	Cred      credential.Store
+	Router    router.Router
+	// AdapterFor 按渠道协议分派出站 adapter（anthropic|openai）。
+	AdapterFor       func(protocol string) (provider.Adapter, error)
+	ListPublicModels func() []string
+	HasUsableChannel func() bool
+	Log              *slog.Logger
+	Ring             *telemetry.Ring
+	OnRecord         func(telemetry.RequestRecord)
 }
 
 type Server struct {

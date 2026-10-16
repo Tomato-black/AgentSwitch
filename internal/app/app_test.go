@@ -14,7 +14,7 @@ import (
 	"AgentSwitch/internal/storage"
 )
 
-func newTestApp(t *testing.T, upstreamURL string, withAccount bool) *App {
+func newTestApp(t *testing.T, upstreamURL string, withKey bool) *App {
 	t.Helper()
 	a, err := Open(Options{
 		DBPath:  filepath.Join(t.TempDir(), "app.db"),
@@ -26,20 +26,17 @@ func newTestApp(t *testing.T, upstreamURL string, withAccount bool) *App {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { a.Close() })
-	// 测试不得写真实 OS 钥匙环：包内把 Manager.Primary 换成本地 0600 文件
-	// （Open 的生产装配不动；AllowFallback 本已为 true）。
+	// 测试不得写真实 OS 钥匙环：Primary 换本地 0600 文件（AllowFallback 本已 true）。
 	a.creds.Primary = credential.NewFallbackFile(filepath.Join(t.TempDir(), "secrets.json"))
-	// best-effort 清理历史测试可能已写入真实钥匙环的同名条目（无钥匙环时忽略错误）。
-	t.Cleanup(func() { _ = credential.OSKeychain{}.Delete("account:a1") })
-	if err := a.Store().Providers().Save(storage.Provider{
-		ID: "p1", Name: "up", Protocol: "anthropic", BaseURL: upstreamURL,
-		Enabled: true, AllowPrivateUpstream: true,
+	if err := a.Store().Channels().Save(storage.Channel{
+		ID: "c1", Name: "up", Type: "anthropic-compatible", Protocol: "anthropic",
+		BaseURL: upstreamURL, Priority: 10, Enabled: true, AllowPrivateUpstream: true,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if withAccount {
-		if err := a.Store().Accounts().Save(storage.Account{
-			ID: "a1", ProviderID: "p1", Name: "acc", SecretKey: "account:a1",
+	if withKey {
+		if err := a.Store().ChannelKeys().Save(storage.ChannelKey{
+			ID: "k1", ChannelID: "c1", Name: "acc", SecretKey: "account:a1",
 			SecretBackend: "fallback-file", Priority: 10, Enabled: true,
 		}); err != nil {
 			t.Fatal(err)
@@ -82,9 +79,9 @@ func TestLifecycleDegradedAndRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 有账号但全部禁用 → 可用启用账号为零 → Degraded（spec §5；与 readyz/Router 过滤口径一致）。
+	// 有密钥但禁用 → 可用渠道/密钥为零 → Degraded（spec §5；与 readyz/Router 过滤口径一致）。
 	a3 := newTestApp(t, up.URL, true)
-	if err := a3.Store().Accounts().SetEnabled("a1", false); err != nil {
+	if err := a3.Store().ChannelKeys().SetEnabled("k1", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := a3.StartGateway(); err != nil {

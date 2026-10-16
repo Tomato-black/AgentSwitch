@@ -26,12 +26,11 @@ func writeErr(w http.ResponseWriter, status int, errType, msg string) {
 }
 
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
-	accts, err := s.deps.Accounts()
-	if err != nil || len(accts) == 0 || s.deps.Token() == "" {
+	if !s.deps.HasUsableChannel() || s.deps.Token() == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(503)
 		json.NewEncoder(w).Encode(map[string]any{"status": "degraded",
-			"reason": "no usable account or token"})
+			"reason": "no usable channel/key or token"})
 		return
 	}
 	w.WriteHeader(200)
@@ -43,20 +42,14 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 401, protocol.ErrTypeAuth, "invalid gateway token")
 		return
 	}
-	if _, err := s.deps.Accounts(); err != nil {
-		writeErr(w, 500, protocol.ErrTypeAPI, "internal error")
-		return
-	}
-	// 别名来自 Alias 闭包无法枚举——Deps.ListAliases 专门用于枚举。
-	aliases := s.deps.ListAliases()
 	type model struct {
 		ID          string `json:"id"`
 		Type        string `json:"type"`
 		DisplayName string `json:"display_name"`
 	}
 	data := []model{}
-	for _, a := range aliases {
-		data = append(data, model{ID: a, Type: "model", DisplayName: a})
+	for _, m := range s.deps.ListPublicModels() {
+		data = append(data, model{ID: m, Type: "model", DisplayName: m})
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"data": data, "has_more": false})
@@ -65,15 +58,17 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
 	rec := telemetry.RequestRecord{ID: telemetryID(), StartedAt: started}
+	switches := 0
 	defer func() {
 		rec.DurationMs = time.Since(started).Milliseconds()
-		// 请求日志行（I5/spec §10 审计）：只记脱敏元数据——request_id/模型映射/
-		// 账号 id/状态/耗时/错误类/是否流式；零密钥、零请求体、零 Authorization。
+		rec.FailoverCount = switches
+		// 请求日志行（I5/spec §10 审计）：只记脱敏元数据；零密钥、零请求体、零 Authorization。
 		if s.deps.Log != nil {
 			s.deps.Log.Info("request", "request_id", rec.ID, "model", rec.Model,
-				"upstream_model", rec.UpstreamModel, "account", rec.Account,
-				"status", rec.Status, "duration_ms", rec.DurationMs,
-				"error_class", rec.ErrorClass, "streaming", rec.Streaming)
+				"upstream_model", rec.UpstreamModel, "channel", rec.Channel,
+				"account", rec.Account, "status", rec.Status,
+				"duration_ms", rec.DurationMs, "error_class", rec.ErrorClass,
+				"streaming", rec.Streaming, "switches", switches)
 		}
 		if s.deps.Ring != nil {
 			s.deps.Ring.Add(rec)
@@ -110,8 +105,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 413, protocol.ErrTypeInvalidRequest, "request body too large")
 		return
 	}
-	// 安全顺序：必须先 Parse（字面 null body 会死在 "model is required"），
-	// 否则 RewriteModel 的 nil-map panic 可达。
+	// 安全顺序：必须先 Parse（字面 null body 会死在 "model is required"）。
 	cr, err := protocol.ParseChatRequest(body)
 	if err != nil {
 		rec.Status, rec.ErrorClass = 400, protocol.ErrTypeInvalidRequest
@@ -120,49 +114,26 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	rec.Model, rec.Streaming = cr.Model, cr.Stream
 
-	upstream, ok, err := s.deps.Alias(cr.Model)
+	cands, err := s.deps.Candidates(cr.Model)
 	if err != nil {
 		rec.Status, rec.ErrorClass = 500, protocol.ErrTypeAPI
-		writeErr(w, 500, protocol.ErrTypeAPI, "alias lookup failed")
+		writeErr(w, 500, protocol.ErrTypeAPI, "candidates unavailable")
 		return
 	}
-	if !ok {
+	if len(cands) == 0 {
 		rec.Status, rec.ErrorClass = 404, protocol.ErrTypeNotFound
 		writeErr(w, 404, protocol.ErrTypeNotFound,
-			"unknown model "+cr.Model+"; aliases: "+strings.Join(s.deps.ListAliases(), ", "))
+			"unknown model "+cr.Model+"; models: "+strings.Join(s.deps.ListPublicModels(), ", "))
 		return
 	}
-	rec.UpstreamModel = upstream
-	rewritten, err := protocol.RewriteModel(body, upstream)
-	if err != nil {
-		rec.Status, rec.ErrorClass = 400, protocol.ErrTypeInvalidRequest
-		writeErr(w, 400, protocol.ErrTypeInvalidRequest, "invalid body")
-		return
-	}
-
-	accts, err := s.deps.Accounts()
-	if err != nil {
-		rec.Status, rec.ErrorClass = 500, protocol.ErrTypeAPI
-		writeErr(w, 500, protocol.ErrTypeAPI, "accounts unavailable")
-		return
-	}
-	decision, err := s.deps.Router.Resolve(accts)
-	if err != nil {
+	decision := s.deps.Router.Resolve(cr.Model, cands)
+	if len(decision.Ordered) == 0 {
 		rec.Status, rec.ErrorClass = 503, "no_candidate"
-		writeErr(w, 503, protocol.ErrTypeAPI, "no usable account: "+err.Error())
-		return
-	}
-	rec.Account = decision.Chosen.ID
-	apiKey, err := s.deps.Cred.Get(decision.Chosen.SecretKey)
-	if err != nil {
-		rec.Status, rec.ErrorClass = 500, "credential"
-		writeErr(w, 500, protocol.ErrTypeAPI, "credential unavailable for account "+decision.Chosen.Name)
-		return
-	}
-	baseURL, allowPrivate, err := s.deps.ProviderConfig()
-	if err != nil {
-		rec.Status, rec.ErrorClass = 500, protocol.ErrTypeAPI
-		writeErr(w, 500, protocol.ErrTypeAPI, "provider config error")
+		reasons := make([]string, 0, len(decision.Filtered))
+		for _, f := range decision.Filtered {
+			reasons = append(reasons, f.Candidate.ChannelName+"/"+f.Candidate.KeyName+":"+f.Reason)
+		}
+		writeErr(w, 503, protocol.ErrTypeAPI, "no usable candidate (filtered: "+strings.Join(reasons, "; ")+")")
 		return
 	}
 
@@ -172,21 +143,74 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel = context.WithTimeout(ctx, lim.RequestTimeout)
 		defer cancel()
 	}
-	res, err := s.deps.Adapter.Do(ctx, provider.DoRequest{
-		BaseURL: baseURL, AllowPrivate: allowPrivate, APIKey: string(apiKey),
-		UpstreamModel: upstream, RawBody: rewritten, Stream: cr.Stream,
-	})
-	if err != nil {
-		// 含 3xx（Adapter 返回 "redirect denied"）在内的一切 Do 错误：保守 502。
-		rec.Status, rec.ErrorClass = 502, string(provider.ClassConnect)
-		writeErr(w, 502, protocol.ErrTypeAPI, "upstream connect failed")
-		return
-	}
-	defer res.Body.Close()
-	rec.Status = res.StatusCode
-	if res.StatusCode >= 400 {
-		snippet, _ := io.ReadAll(io.LimitReader(res.Body, 64<<10))
-		rec.ErrorClass = string(provider.Classify(res.StatusCode, res.RetryAfterSec, snippet))
+
+	committed := false
+	lastClass := provider.ClassUnknown
+	for _, c := range decision.Ordered {
+		if ctx.Err() != nil { // 客户端已走：不再发任何上游请求（docx §6.3 取消不转移）
+			return
+		}
+		// 发送前二次校验（docx §7；TryAcquire 锁内原子，不写状态）
+		if s.deps.Cooldowns != nil {
+			if _, ok := s.deps.Cooldowns.TryAcquire(c.KeyID, time.Now()); !ok {
+				switches++
+				continue
+			}
+		}
+		apiKey, err := s.deps.Cred.Get(c.SecretKey)
+		if err != nil {
+			rec.Status, rec.ErrorClass = 500, "credential"
+			writeErr(w, 500, protocol.ErrTypeAPI, "credential unavailable for key "+c.KeyName)
+			return
+		}
+		adapter, err := s.deps.AdapterFor(c.Protocol)
+		if err != nil {
+			rec.Status, rec.ErrorClass = 500, protocol.ErrTypeAPI
+			writeErr(w, 500, protocol.ErrTypeAPI, "adapter unavailable: "+err.Error())
+			return
+		}
+		rewritten, err := protocol.RewriteModel(body, c.UpstreamModel)
+		if err != nil {
+			rec.Status, rec.ErrorClass = 400, protocol.ErrTypeInvalidRequest
+			writeErr(w, 400, protocol.ErrTypeInvalidRequest, "invalid body")
+			return
+		}
+		res, err := adapter.Do(ctx, provider.DoRequest{
+			BaseURL: c.BaseURL, AllowPrivate: c.AllowPrivate, APIKey: string(apiKey),
+			UpstreamModel: c.UpstreamModel, RawBody: rewritten, Stream: cr.Stream,
+		})
+		if err != nil {
+			// Do 错误（连接层/3xx/请求转换失败）：冷却后换下一候选——此刻未向
+			// 客户端写过任何字节，属可转移窗口。
+			lastClass = provider.ClassConnect
+			if s.deps.Cooldowns != nil {
+				s.deps.Cooldowns.MarkClassified(c.KeyID, provider.ClassConnect, 0, time.Now())
+			}
+			switches++
+			continue
+		}
+		if res.StatusCode >= 400 {
+			snippet, _ := io.ReadAll(io.LimitReader(res.Body, 64<<10))
+			res.Body.Close()
+			class := provider.Classify(res.StatusCode, res.RetryAfterSec, snippet)
+			if class == provider.ClassParam {
+				// 400 类=客户端自身问题：不冷却、不转移，原样回传（docx §6.3）
+				rec.Status, rec.ErrorClass = res.StatusCode, string(class)
+				rec.Account, rec.Channel = c.KeyName, c.ChannelName
+				writeUpstreamError(w, res.StatusCode, snippet, res.Header)
+				return
+			}
+			lastClass = class
+			if s.deps.Cooldowns != nil {
+				s.deps.Cooldowns.MarkClassified(c.KeyID, class, res.RetryAfterSec, time.Now())
+			}
+			switches++
+			continue
+		}
+		// 2xx：提交点——写响应头之后绝不转移（首字节后不重放，docx §6.3）
+		committed = true
+		rec.Status = res.StatusCode
+		rec.UpstreamModel, rec.Account, rec.Channel = c.UpstreamModel, c.KeyName, c.ChannelName
 		for _, h := range responseHeaderWhitelist {
 			if v := res.Header.Get(h); v != "" {
 				w.Header().Set(h, v)
@@ -194,21 +218,31 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(res.StatusCode)
-		// 上游已为 envelope 形状则原样透传，否则包装保证 {"type":"error"} 形状。
-		w.Write(upstreamErrorBody(snippet, res.StatusCode))
-		return
+		if cr.Stream {
+			copyStream(w, res.Body)
+		} else {
+			io.Copy(w, res.Body)
+		}
+		res.Body.Close()
+		break
 	}
+	if !committed {
+		rec.Status, rec.ErrorClass = 502, string(lastClass)
+		writeErr(w, 502, protocol.ErrTypeAPI, "all candidates failed")
+	}
+}
+
+// writeUpstreamError 透传白名单头 + 原样/包装的错误体（原 handleMessages 内
+// 内联逻辑提取；upstreamErrorBody 语义不变）。
+func writeUpstreamError(w http.ResponseWriter, status int, snippet []byte, header http.Header) {
 	for _, h := range responseHeaderWhitelist {
-		if v := res.Header.Get(h); v != "" {
+		if v := header.Get(h); v != "" {
 			w.Header().Set(h, v)
 		}
 	}
-	w.WriteHeader(res.StatusCode)
-	if cr.Stream {
-		copyStream(w, res.Body)
-	} else {
-		io.Copy(w, res.Body)
-	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	w.Write(upstreamErrorBody(snippet, status))
 }
 
 // copyStream 逐块转发并 flush；客户端断开由上游 ctx 取消收尾。

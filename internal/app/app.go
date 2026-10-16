@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"AgentSwitch/internal/account"
 	"AgentSwitch/internal/config"
 	"AgentSwitch/internal/credential"
 	"AgentSwitch/internal/gateway"
@@ -67,6 +66,8 @@ type App struct {
 	ring        *telemetry.Ring
 	creds       credential.Manager
 	gw          *gateway.Server
+	cooldowns   *router.Cooldowns
+	adapters    map[string]provider.Adapter
 	state       StateInfo
 	onState     []func(StateInfo)
 	onRecord    []func(telemetry.RequestRecord)
@@ -106,6 +107,11 @@ func Open(opts Options) (*App, error) {
 		// 用户未确认时在 Set 之前就报错；Manager 层放行是其配套，否则确认后仍失败。
 		// settings 的 credential.fallback_enabled 留作后续 UI 记忆偏好（P0-A 不接）。
 		creds: credential.Manager{Primary: credential.OSKeychain{}, Fallback: fb, AllowFallback: true},
+	}
+	a.cooldowns = router.NewCooldowns()
+	a.adapters = map[string]provider.Adapter{
+		"anthropic": provider.NewAnthropicAdapter(),
+		"openai":    provider.NewOpenAIAdapter(logger),
 	}
 	// 确保令牌存在（settingsMu 临界区，与 RegenerateToken/SaveSettings 同口径）
 	if err := func() error {
@@ -187,27 +193,77 @@ func (a *App) currentToken() string {
 	return s.GatewayToken
 }
 
-func (a *App) usableAccounts() []account.Account {
-	rows, err := a.store.Accounts().List()
+// Cooldowns 暴露冷却存储（bridge PoolStatus 读取用）。
+func (a *App) Cooldowns() *router.Cooldowns { return a.cooldowns }
+
+// candidates 装配公开模型的候选集：enabled 渠道 × enabled 密钥 × enabled
+// channel_models(public=X)（spec §6.1），并标注冷却快照。SQL 已按渠道/密钥
+// 优先级有序；router 内再排序一次是双保险。
+func (a *App) candidates(public string) ([]router.Candidate, error) {
+	chans, err := a.store.Channels().List()
+	if err != nil {
+		return nil, err
+	}
+	cool := map[string]router.CooldownEntry{}
+	for _, e := range a.cooldowns.Snapshot(time.Now()) {
+		cool[e.KeyID] = e
+	}
+	var out []router.Candidate
+	for _, ch := range chans {
+		if !ch.Enabled {
+			continue
+		}
+		models, err := a.store.ChannelModels().ListByChannel(ch.ID)
+		if err != nil {
+			return nil, err
+		}
+		upstream, found := "", false
+		for _, m := range models {
+			if m.Enabled && m.PublicModel == public {
+				upstream, found = m.UpstreamModel, true
+				break
+			}
+		}
+		if !found {
+			continue
+		}
+		keys, err := a.store.ChannelKeys().ListByChannel(ch.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, k := range keys {
+			if !k.Enabled {
+				continue
+			}
+			c := router.Candidate{ChannelID: ch.ID, ChannelName: ch.Name,
+				KeyID: k.ID, KeyName: k.Name, SecretKey: k.SecretKey,
+				Protocol: ch.Protocol, BaseURL: ch.BaseURL,
+				AllowPrivate: ch.AllowPrivateUpstream, UpstreamModel: upstream,
+				ChannelPriority: ch.Priority, KeyPriority: k.Priority}
+			if e, ok := cool[k.ID]; ok {
+				c.CoolingUntil, c.CoolingReason = e.Until, e.Reason
+			}
+			out = append(out, c)
+		}
+	}
+	return out, nil
+}
+
+func (a *App) publicModels() []string {
+	ms, err := a.store.ChannelModels().PublicModels()
 	if err != nil {
 		return nil
 	}
-	out := make([]account.Account, 0, len(rows))
-	for _, r := range rows {
-		if !r.Enabled {
-			continue // 可用账号 = 启用账号（spec §5：Degraded 判定与 readyz/Router 同口径）
-		}
-		out = append(out, account.Account{
-			ID: r.ID, ProviderID: r.ProviderID, Name: r.Name,
-			SecretKey: r.SecretKey, SecretBackend: r.SecretBackend,
-			Priority: r.Priority, Enabled: r.Enabled,
-		})
-	}
-	return out
+	return ms
+}
+
+func (a *App) hasUsableChannel() bool {
+	ok, err := a.store.Channels().HasUsableKey()
+	return err == nil && ok
 }
 
 // StartGateway 组装 gateway.Deps 并启动：Starting → Running/Degraded
-// （零启用账号 → Degraded 带 reason）；任一步失败 → Failed（reason=err）。
+// （零可用渠道/密钥 → Degraded 带 reason）；任一步失败 → Failed（reason=err）。
 // lifecycleMu 串行化全函数；已在运行时拒绝且不改变状态（状态必须来自实际服务状态）。
 func (a *App) StartGateway() error {
 	a.lifecycleMu.Lock()
@@ -233,45 +289,21 @@ func (a *App) StartGateway() error {
 				RequestTimeout: time.Duration(s.RequestTimeoutSeconds) * time.Second,
 			}
 		},
-		Accounts: func() ([]account.Account, error) { return a.usableAccounts(), nil },
-		Alias: func(public string) (string, bool, error) {
-			m, err := a.store.Models().GetByPublic(public)
-			if err == storage.ErrNotFound {
-				return "", false, nil
+		Candidates: a.candidates,
+		Cooldowns:  a.cooldowns,
+		Cred:       &a.creds,
+		Router:     router.PriorityRouter{},
+		AdapterFor: func(protocol string) (provider.Adapter, error) {
+			ad, ok := a.adapters[protocol]
+			if !ok {
+				return nil, fmt.Errorf("unknown protocol %q", protocol)
 			}
-			if err != nil {
-				return "", false, err
-			}
-			return m.UpstreamModel, m.Enabled, nil
+			return ad, nil
 		},
-		ListAliases: func() []string {
-			ms, _ := a.store.Models().List()
-			var out []string
-			for _, m := range ms {
-				if m.Enabled {
-					out = append(out, m.PublicModel)
-				}
-			}
-			return out
-		},
-		// Manager 的方法在 *Manager 上，取字段地址满足 credential.Store。
-		Cred:    &a.creds,
-		Router:  router.Single{},
-		Adapter: provider.NewAnthropicAdapter(),
-		ProviderConfig: func() (string, bool, error) {
-			ps, err := a.store.Providers().List()
-			if err != nil {
-				return "", false, err
-			}
-			for _, p := range ps {
-				if p.Enabled && p.Protocol == "anthropic" {
-					return p.BaseURL, p.AllowPrivateUpstream, nil
-				}
-			}
-			return "", false, fmt.Errorf("no enabled anthropic provider")
-		},
-		Log:  a.log,
-		Ring: a.ring,
+		ListPublicModels: a.publicModels,
+		HasUsableChannel: a.hasUsableChannel,
+		Log:              a.log,
+		Ring:             a.ring,
 		OnRecord: func(rec telemetry.RequestRecord) {
 			a.mu.Lock()
 			cbs := append([]func(telemetry.RequestRecord){}, a.onRecord...)
@@ -291,9 +323,9 @@ func (a *App) StartGateway() error {
 	a.gw = gw
 	a.mu.Unlock()
 	si := StateInfo{State: StateRunning, Addr: addr, Since: time.Now(), Version: a.State().Version}
-	if len(a.usableAccounts()) == 0 {
+	if !a.hasUsableChannel() {
 		si.State = StateDegraded
-		si.DegradedReason = "no enabled account"
+		si.DegradedReason = "no usable channel/key"
 	}
 	a.log.Info("gateway started", "addr", addr, "state", si.State)
 	a.setState(si)

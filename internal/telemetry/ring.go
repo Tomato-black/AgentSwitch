@@ -11,6 +11,7 @@ type RequestRecord struct {
 	Model         string
 	UpstreamModel string
 	Account       string
+	Channel       string // 渠道名（渠道化后 Account 语义 = 密钥名）
 	ErrorClass    string
 	StartedAt     time.Time
 	Status        int

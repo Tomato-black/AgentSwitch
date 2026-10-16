@@ -1,38 +1,47 @@
 package router
 
 import (
-	"errors"
 	"testing"
-
-	"AgentSwitch/internal/account"
+	"time"
 )
 
-func TestSinglePicksLowestPriorityNumber(t *testing.T) {
-	accounts := []account.Account{
-		{ID: "b", Priority: 20, Enabled: true},
-		{ID: "a", Priority: 10, Enabled: true},
-		{ID: "c", Priority: 10, Enabled: false},
+func cand(id string, cp, kp int, cooling bool) Candidate {
+	c := Candidate{ChannelID: "c" + id, KeyID: id, UpstreamModel: "u-" + id,
+		ChannelPriority: cp, KeyPriority: kp}
+	if cooling {
+		c.CoolingUntil = time.Now().Add(time.Minute)
+		c.CoolingReason = "rate_limited"
 	}
-	d, err := Single{}.Resolve(accounts)
-	if err != nil {
-		t.Fatal(err)
+	return c
+}
+
+func TestPriorityRouterOrderingAndFiltering(t *testing.T) {
+	cands := []Candidate{cand("k3", 10, 20, false), cand("k1", 10, 10, false),
+		cand("k2", 5, 99, false), cand("kc", 10, 10, true)}
+	d := PriorityRouter{}.Resolve("m", cands)
+	if len(d.Ordered) != 3 || len(d.Filtered) != 1 {
+		t.Fatalf("ordered %d filtered %d", len(d.Ordered), len(d.Filtered))
 	}
-	if d.Chosen.ID != "a" {
-		t.Fatalf("chosen %s", d.Chosen.ID)
+	// 期望序：k2(渠道5) → k1(渠道10,key10) → k3(渠道10,key20)
+	want := []string{"k2", "k1", "k3"}
+	for i, id := range want {
+		if d.Ordered[i].KeyID != id {
+			t.Fatalf("pos %d = %s want %s", i, d.Ordered[i].KeyID, id)
+		}
 	}
-	if len(d.Candidates) != 3 {
-		t.Fatalf("candidates %d", len(d.Candidates))
+	if d.Filtered[0].Reason != "cooling:rate_limited" || d.Filtered[0].Candidate.KeyID != "kc" {
+		t.Fatalf("filtered: %+v", d.Filtered[0])
 	}
-	if !d.Candidates[2].Skipped || d.Candidates[2].Reason == "" {
-		t.Fatal("disabled account must be recorded skipped with reason")
+	if d.Model != "m" {
+		t.Fatalf("model %q", d.Model)
 	}
 }
 
-func TestSingleNoCandidate(t *testing.T) {
-	if _, err := (Single{}).Resolve(nil); !errors.Is(err, ErrNoCandidate) {
-		t.Fatalf("got %v", err)
-	}
-	if _, err := (Single{}).Resolve([]account.Account{{ID: "x", Enabled: false}}); !errors.Is(err, ErrNoCandidate) {
-		t.Fatalf("all disabled: %v", err)
+func TestPriorityRouterExpiredCoolingPasses(t *testing.T) {
+	c := cand("k", 10, 10, false)
+	c.CoolingUntil = time.Now().Add(-time.Second) // 已过期
+	d := PriorityRouter{}.Resolve("m", []Candidate{c})
+	if len(d.Ordered) != 1 || len(d.Filtered) != 0 {
+		t.Fatalf("expired cooling must pass: %+v", d)
 	}
 }

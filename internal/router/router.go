@@ -1,59 +1,67 @@
+// Package router 是路由决策层：纯函数，不持共享可变状态（冷却状态由 gateway
+// 持有并以快照形式随候选传入，docx §6.3 可解释决策在这里产出）。
 package router
 
 import (
-	"errors"
 	"sort"
-
-	"AgentSwitch/internal/account"
+	"time"
 )
 
-var ErrNoCandidate = errors.New("no candidate account")
-
+// Candidate 是一个可尝试的「渠道×密钥×模型」三元组（gateway/app 从 storage
+// join 装配；CoolingUntil/Reason 来自冷却快照）。
 type Candidate struct {
-	Account account.Account
-	Skipped bool
-	Reason  string
+	ChannelID, ChannelName string
+	KeyID, KeyName         string
+	SecretKey              string // 凭据引用（本体在 SecretStore）
+	Protocol, BaseURL      string
+	AllowPrivate           bool
+	UpstreamModel          string
+	ChannelPriority        int
+	KeyPriority            int
+	CoolingUntil           time.Time // 零值=未冷却
+	CoolingReason          string
 }
 
+// FilteredCandidate 是被过滤掉的候选与原因（可解释记录，docx §6.3）。
+type FilteredCandidate struct {
+	Candidate Candidate
+	Reason    string
+}
+
+// Decision 是一次路由决策：Ordered 为尝试顺序，Filtered 附带剔除原因。
 type Decision struct {
-	Chosen     account.Account
-	Candidates []Candidate
-	Reason     string
+	Model    string
+	Ordered  []Candidate
+	Filtered []FilteredCandidate
 }
 
+// Router 依公开模型从候选集产出有序尝试计划。
 type Router interface {
-	Resolve(accounts []account.Account) (Decision, error)
+	Resolve(model string, cands []Candidate) Decision
 }
 
-type Single struct{}
+type PriorityRouter struct{}
 
-// Resolve 过滤禁用账号，按 priority 升序、id 升序选出唯一候选（P0-B 换实现不换接口）。
-// Candidates 先列排序后的启用账号，再附被跳过的禁用账号。
-func (Single) Resolve(accounts []account.Account) (Decision, error) {
-	var d Decision
-	var ok []account.Account
-	var skipped []Candidate
-	for _, a := range accounts {
-		if !a.Enabled {
-			skipped = append(skipped, Candidate{Account: a, Skipped: true, Reason: "disabled"})
+// Resolve 剔除冷却中候选（记原因），其余按 渠道优先级→密钥优先级→KeyID 稳定全序。
+func (PriorityRouter) Resolve(model string, cands []Candidate) Decision {
+	d := Decision{Model: model}
+	now := time.Now()
+	for _, c := range cands {
+		if !c.CoolingUntil.IsZero() && c.CoolingUntil.After(now) {
+			d.Filtered = append(d.Filtered, FilteredCandidate{Candidate: c, Reason: "cooling:" + c.CoolingReason})
 			continue
 		}
-		ok = append(ok, a)
+		d.Ordered = append(d.Ordered, c)
 	}
-	sort.Slice(ok, func(i, j int) bool {
-		if ok[i].Priority != ok[j].Priority {
-			return ok[i].Priority < ok[j].Priority
+	sort.Slice(d.Ordered, func(i, j int) bool {
+		a, b := d.Ordered[i], d.Ordered[j]
+		if a.ChannelPriority != b.ChannelPriority {
+			return a.ChannelPriority < b.ChannelPriority
 		}
-		return ok[i].ID < ok[j].ID
+		if a.KeyPriority != b.KeyPriority {
+			return a.KeyPriority < b.KeyPriority
+		}
+		return a.KeyID < b.KeyID
 	})
-	for _, a := range ok {
-		d.Candidates = append(d.Candidates, Candidate{Account: a})
-	}
-	d.Candidates = append(d.Candidates, skipped...)
-	if len(ok) == 0 {
-		return d, ErrNoCandidate
-	}
-	d.Chosen = ok[0]
-	d.Reason = "single-candidate: first enabled by priority"
-	return d, nil
+	return d
 }

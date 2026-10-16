@@ -24,8 +24,8 @@ func TestConfigChangeTakesEffectWithoutRestart(t *testing.T) {
 	defer up.Close()
 
 	a := newTestApp(t, up.URL, true)
-	if err := a.Store().Models().Save(storage.ModelMapping{
-		ID: "m1", PublicModel: "alias", UpstreamModel: "model-v1", Enabled: true,
+	if err := a.Store().ChannelModels().Save(storage.ChannelModel{
+		ID: "m1", ChannelID: "c1", PublicModel: "alias", UpstreamModel: "model-v1", Enabled: true,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -51,12 +51,12 @@ func TestConfigChangeTakesEffectWithoutRestart(t *testing.T) {
 		t.Fatalf("first call upstream model %q", got)
 	}
 	// 运行中改别名 → 下一请求生效（无需重启网关/agent）
-	m, err := a.Store().Models().GetByPublic("alias")
+	m, err := a.Store().ChannelModels().Get("m1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	m.UpstreamModel = "model-v2"
-	if err := a.Store().Models().Save(m); err != nil {
+	if err := a.Store().ChannelModels().Save(m); err != nil {
 		t.Fatal(err)
 	}
 	if got := call(); got != "model-v2" {
