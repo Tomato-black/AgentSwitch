@@ -5,11 +5,19 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/egoist/mygo"
+
 	"AgentSwitch/internal/app"
 	"AgentSwitch/internal/desktop"
 )
 
 func main() {
+	// 单实例锁前移到 app.Open 之前（审查 minor 升级）：抢锁失败直接返回——
+	// 若先开库再抢锁，失败路径会带着已打开的库句柄与可能已跑的迁移退出
+	// （句柄泄漏 + 与持锁实例的并发迁移竞态）。
+	if !mygo.App.RequestSingleInstanceLock() {
+		return
+	}
 	base, err := os.UserConfigDir()
 	if err != nil {
 		log.Fatal(err)

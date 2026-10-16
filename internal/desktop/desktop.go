@@ -143,9 +143,8 @@ func Run(a *app.App) error {
 	mygo.Bind(svc.Accounts)
 	mygo.Bind(svc.Models)
 
-	if !mygo.App.RequestSingleInstanceLock() {
-		return nil
-	}
+	// 单实例锁已在入口（cmd/agentswitch/main.go）取——那里的抢锁失败在
+	// app.Open 之前返回，不泄漏库句柄、不留并发迁移窗口；此处不得再取锁。
 	u := newUIState(svc, a)
 	// win 经 atomic 读写：WhenReady/托盘重开（主线程）写，OnState/OnRecord
 	// 回调（网关 goroutine）读——消除裸指针的数据竞争。
@@ -188,6 +187,13 @@ func Run(a *app.App) error {
 				})
 			}
 		})
+		// 网关自动启动（I6 裁定，spec §5 字面：应用启动即运行）：注册完状态/
+		// 记录回调再启动，首帧状态变化不丢。失败只记日志——状态机已进 Failed，
+		// 由概览页（组 4 已放行 failed 态启动按钮）呈现与重试；端口被占等场景
+		// 不必静默死在后台。
+		if err := a.StartGateway(); err != nil {
+			a.Log().Info("gateway auto-start failed", "err", err.Error())
+		}
 	})
 
 	// 关窗不退出：最后一个窗口关闭时保持运行（托盘驻留）
