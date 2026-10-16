@@ -14,8 +14,8 @@ import (
 // 路径取 bridge.Status.Port（Gateway.Status 从 config.Load 填充）。
 const defaultSnippetPort = 17890
 
-// overviewView 是概览页：状态/操作、设置面板、访问令牌、Claude Code 配置
-// 片段、首关教育与最近请求表。
+// overviewView 是概览页：状态/操作（含恒显日志路径提示）、设置面板、访问
+// 令牌、Claude Code 配置片段与最近请求表（首关教育提示在 view 层全页渲染）。
 func (u *uiState) overviewView(c *ui.Context) {
 	gs := u.svc.Gateway.Status() // 每帧取一次：设置回显与片段端口共用
 	ui.Column(c).Gap(8).Children(func() {
@@ -137,20 +137,6 @@ func (u *uiState) overviewView(c *ui.Context) {
 		}
 		if ui.Button(c, "复制配置片段").Clicked() {
 			mygo.Clipboard.Write(transfer.TextData(snippet))
-		}
-
-		// 首关教育（从 T12 的 view 迁入）
-		if u.closeNotice && !u.closeConfirmed {
-			ui.Text(c, "窗口关闭后应用将驻留托盘，网关继续运行。")
-			if ui.PrimaryButton(c, "继续关闭窗口").Clicked() {
-				u.closeConfirmed = true
-				if w := mygo.FocusedWindow(); w != nil {
-					w.Close()
-				}
-			}
-			if ui.Button(c, "取消").Clicked() {
-				u.closeNotice = false
-			}
 		}
 
 		// 最近请求：六列（时间/模型/账号/状态/耗时/错误）

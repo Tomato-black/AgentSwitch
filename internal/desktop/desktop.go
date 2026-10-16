@@ -88,8 +88,9 @@ func newUIState(svc Services, a *app.App) *uiState {
 	return u
 }
 
-// view 顶部渲染导航行（概览/供应商/账号/模型），再按 u.page 分发页面；
-// 未识别的 page 落到概览。
+// view 顶部渲染导航行（概览/供应商/账号/模型），随后渲染首关教育提示块
+// （I4：任何页都要可见——停在非概览页点 X 时提示不能缺席），再按 u.page
+// 分发页面；未识别的 page 落到概览。
 func (u *uiState) view(c *ui.Context) {
 	ui.Row(c).Gap(8).Children(func() {
 		if ui.Button(c, "概览").Clicked() {
@@ -105,6 +106,19 @@ func (u *uiState) view(c *ui.Context) {
 			u.page = "models"
 		}
 	})
+	// 首关教育（拦截由 openWindow 的 OnClose 置 closeNotice）：全页可见。
+	if u.closeNotice && !u.closeConfirmed {
+		ui.Text(c, "窗口关闭后应用将驻留托盘，网关继续运行。")
+		if ui.PrimaryButton(c, "继续关闭窗口").Clicked() {
+			u.closeConfirmed = true
+			if w := mygo.FocusedWindow(); w != nil {
+				w.Close()
+			}
+		}
+		if ui.Button(c, "取消").Clicked() {
+			u.closeNotice = false
+		}
+	}
 	switch u.page {
 	case "providers":
 		u.providersView(c)
