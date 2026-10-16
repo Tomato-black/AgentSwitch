@@ -111,13 +111,22 @@ func (u *uiState) overviewView(c *ui.Context) {
 		// 降级说明（简报修正条款 3）：TextArea.ReadOnly 编译通过，但 Tester
 		// 只收集 labels，TextArea 的值不进 labels——HasText("ANTHROPIC_BASE_URL")
 		// 拿不到，故按条款降级为逐行只读 ui.Text 展示（复制仍走复制按钮）。
+		//
+		// 展示与复制分离（评审 Important：显示前掩码不变量）：展示行在未点
+		// "显示"时令牌掩码为 ***，复制按钮始终写真实片段——可复制但不可见。
 		ui.Text(c, "Claude Code 配置片段:")
 		port := gs.Port
 		if port <= 0 {
 			port = defaultSnippetPort
 		}
-		snippet := fmt.Sprintf("export ANTHROPIC_BASE_URL=http://127.0.0.1:%d\nexport ANTHROPIC_AUTH_TOKEN=%s", port, u.token)
-		for _, line := range strings.Split(snippet, "\n") {
+		base := fmt.Sprintf("export ANTHROPIC_BASE_URL=http://127.0.0.1:%d", port)
+		snippet := base + "\nexport ANTHROPIC_AUTH_TOKEN=" + u.token // 复制用：真实片段
+		shownTok := "***"                                            // 展示默认掩码
+		if u.showToken {
+			shownTok = u.token
+		}
+		display := base + "\nexport ANTHROPIC_AUTH_TOKEN=" + shownTok
+		for _, line := range strings.Split(display, "\n") {
 			ui.Text(c, line)
 		}
 		if ui.Button(c, "复制配置片段").Clicked() {
