@@ -86,14 +86,29 @@ func TestAnthropicAdapterHeadersAndNoLocalTokenLeak(t *testing.T) {
 }
 
 func TestAdapterDeniesRedirect(t *testing.T) {
+	// 重定向目标：独立本地服务器，计数收到的请求数以直接证明“未跟随”。
+	var targetHits int
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetHits++
+		w.Write([]byte(`followed`))
+	}))
+	defer target.Close()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "http://elsewhere.example.com/", http.StatusFound)
+		http.Redirect(w, r, target.URL+"/elsewhere", http.StatusFound)
 	}))
 	defer srv.Close()
 	a := NewAnthropicAdapter()
-	_, err := a.Do(context.Background(), DoRequest{BaseURL: srv.URL, AllowPrivate: true, APIKey: "k", RawBody: []byte(`{}`)})
+	res, err := a.Do(context.Background(), DoRequest{BaseURL: srv.URL, AllowPrivate: true, APIKey: "k", RawBody: []byte(`{}`)})
 	if err == nil {
 		t.Fatal("redirect must be denied")
+	}
+	// 拒绝跟随时 3xx 必须原样浮出为 302；CheckRedirect 回归（跟随）会让 Do
+	// 在目标处拿到 200 或在 DNS/connect 处失败而非返回 302，断言必然红。
+	if res.StatusCode != http.StatusFound {
+		t.Fatalf("denied redirect must surface %d, got status %d (err=%v)", http.StatusFound, res.StatusCode, err)
+	}
+	if targetHits != 0 {
+		t.Fatalf("redirect target must not be followed, got %d hits", targetHits)
 	}
 }
 
