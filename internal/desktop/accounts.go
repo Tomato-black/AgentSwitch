@@ -18,12 +18,10 @@ type accFormData struct {
 	msg, editID                                           string // editID 非空 = 编辑该 id
 }
 
-// accountsView 是账号页：页顶降级警示条、六列表格（名称/供应商/优先级/启用/
-// 密钥尾4/存储）、表单（名称/供应商下拉/密钥/优先级/启用/允许降级）与操作行
-// （保存·更新、载入所选、停用/启用、轮换密钥、测试、删除两段式确认）。
-// 注：密钥尾4 列取自 List 的持久化 key_tail（spec §12.4，Create/轮换时写入）；
-// migration 002 之前建的历史行留空直到下次轮换。
+// accountsView 是账号页（spec §5.3）：页顶降级警示横幅（Warning 文字 +
+// 边框，文案不变）、六列表（密钥尾4/存储等宽）、丝印表单与操作行。
 func (u *uiState) accountsView(c *ui.Context) {
+	t := c.Theme()
 	accounts := u.svc.Accounts.List()
 	provs := u.svc.Providers.List()
 	provNames := make([]string, 0, len(provs))
@@ -32,12 +30,19 @@ func (u *uiState) accountsView(c *ui.Context) {
 		provNames = append(provNames, p.Name)
 		provByID[p.Name] = p.ID
 	}
-	ui.Column(c).Gap(8).Children(func() {
-		ui.Text(c, "账号")
-		// 降级警示条：任一账号的密钥落在 fallback-file 就在页顶常驻提示
-		// （简报 credentialFallbackInUse）。
+	ui.Column(c).Gap(12).Children(func() {
+		ui.Row(c).Gap(8).Children(func() {
+			ui.Text(c, "账号").Bold().FontSize(t.FontSize + 2)
+			ui.Text(c, strconv.Itoa(len(accounts))).TextColor(t.TextMuted)
+		})
+		// 降级警示横幅：任一账号密钥落 fallback-file 即页顶常驻（文案逐字保留）
 		if credentialFallbackInUse(accounts) {
-			ui.Text(c, "警告：凭据使用文件降级存储（未启用系统密钥环）")
+			ui.Row(c).Gap(8).Padding(8).Border(1, t.Warning).Children(func() {
+				ui.Text(c, "警告：凭据使用文件降级存储（未启用系统密钥环）").TextColor(t.Warning).Grow(1)
+			})
+		}
+		if len(accounts) == 0 {
+			ui.Text(c, "尚无账号——在下方表单添加第一个").TextColor(t.TextMuted)
 		}
 		cols := []ui.TableColumn{{Title: "名称"}, {Title: "供应商"}, {Title: "优先级"},
 			{Title: "启用"}, {Title: "密钥尾4"}, {Title: "存储"}}
@@ -49,39 +54,46 @@ func (u *uiState) accountsView(c *ui.Context) {
 			case 1:
 				ui.Text(c, provNameOf(provs, a.ProviderID)).SingleLine()
 			case 2:
-				ui.Text(c, strconv.Itoa(a.Priority)).SingleLine()
+				ui.Text(c, strconv.Itoa(a.Priority)).SingleLine().Font(monoFont)
 			case 3:
 				if a.Enabled {
-					ui.Text(c, "是")
+					ui.Badge(c, "启用")
 				} else {
-					ui.Text(c, "否")
+					ui.Text(c, "停用").TextColor(t.TextMuted)
 				}
 			case 4:
-				ui.Text(c, a.KeyTail).SingleLine()
+				ui.Text(c, a.KeyTail).SingleLine().Font(monoFont)
 			case 5:
-				ui.Text(c, a.SecretBackend).SingleLine()
+				ui.Text(c, a.SecretBackend).SingleLine().Font(monoFont)
 			}
 		}).Grow(1)
+		ui.Divider(c)
 
-		ui.Text(c, "名称:")
-		ui.TextInput(c, &u.accForm.name)
-		ui.Text(c, "供应商:")
-		ui.Select(c, &u.accForm.providerName, provNames)
-		ui.Text(c, "API Key（保存后不可回显）:")
-		ui.TextInput(c, &u.accForm.apiKey)
-		ui.Text(c, "优先级（数字越小越优先）:")
-		ui.TextInput(c, &u.accForm.priorityInput)
-		ui.Row(c).Gap(8).Children(func() {
-			ui.Text(c, "启用")
+		// 表单：三行丝印（名称+优先级一行；供应商一行；密钥独占）
+		ui.Row(c).Gap(12).Children(func() {
+			ui.Text(c, "名称:").Width(120).TextColor(t.TextMuted)
+			ui.TextInput(c, &u.accForm.name).Grow(1)
+			ui.Text(c, "优先级（数字越小越优先）:").Width(160).TextColor(t.TextMuted)
+			ui.TextInput(c, &u.accForm.priorityInput).Grow(1)
+		})
+		ui.Row(c).Gap(12).Children(func() {
+			ui.Text(c, "供应商:").Width(120).TextColor(t.TextMuted)
+			ui.Select(c, &u.accForm.providerName, provNames).Grow(1)
+		})
+		ui.Row(c).Gap(12).Children(func() {
+			ui.Text(c, "API Key（保存后不可回显）:").Width(160).TextColor(t.TextMuted)
+			ui.TextInput(c, &u.accForm.apiKey).Grow(1)
+		})
+		ui.Row(c).Gap(16).Children(func() {
+			ui.Text(c, "启用").TextColor(t.TextMuted)
 			ui.Switch(c, &u.accForm.enabled)
-			ui.Text(c, "允许文件降级")
+			ui.Text(c, "允许文件降级").TextColor(t.TextMuted)
 			ui.Switch(c, &u.accForm.allowFallback)
 		})
 		if u.accForm.msg != "" {
 			ui.Text(c, u.accForm.msg)
 		}
 		ui.Row(c).Gap(8).Children(func() {
-			// 保存（editID 空 = Create）/ 更新（editID 非空 = Update，含密钥轮换）
 			label := "保存"
 			if u.accForm.editID != "" {
 				label = "更新"
@@ -89,9 +101,6 @@ func (u *uiState) accountsView(c *ui.Context) {
 			if ui.PrimaryButton(c, label).Clicked() {
 				u.submitAccount(provByID)
 			}
-			// 载入所选：accList.Selected 是 *int（nil=未选，-1=无），判空并夹
-			// 紧界后按 *sel 索引（与供应商页同模式）；整表回填，密钥不回显；
-			// 顺带清删除确认位（防 A 行武装、载入 B 行后"确认删除"落刀 B）。
 			if ui.Button(c, "载入所选").Clicked() {
 				if sel := u.accList.Selected; sel != nil && *sel >= 0 && *sel < len(accounts) {
 					a := accounts[*sel]
@@ -109,8 +118,6 @@ func (u *uiState) accountsView(c *ui.Context) {
 					_ = u.svc.Accounts.SetEnabled(a.ID, !a.Enabled)
 				}
 			}
-			// 轮换密钥：须已载入（editID）且输入了新密钥；成功后清空输入
-			// ——密钥同样不残留、不回显。
 			if ui.Button(c, "轮换密钥").Clicked() && u.accForm.editID != "" && u.accForm.apiKey != "" {
 				if err := u.svc.Accounts.RotateSecret(u.accForm.editID, u.accForm.apiKey, u.accForm.allowFallback); err != nil {
 					u.accForm.msg = err.Error()
@@ -119,9 +126,6 @@ func (u *uiState) accountsView(c *ui.Context) {
 					u.accForm.apiKey = ""
 				}
 			}
-			// 测试（裁定 1，spec §9/§12.4）：同步分级探测，与供应商页"测试
-			// 连通"同形态——id 取载入的 editID，否则所选行；结果进账号页
-			// 专属 accTestMsg。
 			if ui.Button(c, "测试").Clicked() {
 				id := u.accForm.editID
 				if id == "" {
@@ -138,14 +142,12 @@ func (u *uiState) accountsView(c *ui.Context) {
 					}
 				}
 			}
-			// 删除两段式：首击只置确认位（须已载入 editID）。
 			if ui.Button(c, "删除").Clicked() && u.accForm.editID != "" {
 				u.accConfirmDelete = true
 			}
 			if u.accConfirmDelete {
 				if ui.Button(c, "确认删除").Clicked() {
 					if err := u.svc.Accounts.Remove(u.accForm.editID); err != nil {
-						// 失败：保留 editID 供重试，错误进 msg
 						u.accForm.msg = err.Error()
 					} else {
 						u.resetAccForm()

@@ -300,3 +300,13 @@ func TestNavigationCoversAllPages(t *testing.T) {
 		t.Fatalf("page %q, want models", u.page)
 	}
 }
+
+// TestAccountsEmptyHint 覆盖空表引导（spec §5.4）。
+func TestAccountsEmptyHint(t *testing.T) {
+	u, _, _ := testUIWithCreds(t)
+	u.page = "accounts"
+	tt := ui.NewTester(u.accountsView, 1000, 700)
+	if !tt.HasText("尚无账号") {
+		t.Fatalf("empty hint missing: %v", tt.Texts())
+	}
+}
