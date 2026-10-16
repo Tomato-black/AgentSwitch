@@ -43,11 +43,15 @@ func TestProviderCRUD(t *testing.T) {
 		t.Fatalf("get: %+v %v", got, err)
 	}
 	got.BaseURL = "https://api2.example.com"
+	got.Protocol = "openai"
 	if err := s.Providers().Save(got); err != nil {
 		t.Fatal(err)
 	}
 	if g2, _ := s.Providers().Get(p.ID); g2.BaseURL != "https://api2.example.com" {
 		t.Fatal("update not persisted")
+	}
+	if g2, _ := s.Providers().Get(p.ID); g2.Protocol != "openai" {
+		t.Fatalf("protocol update not persisted: %q", g2.Protocol)
 	}
 	if err := s.Providers().Delete(p.ID); err != nil {
 		t.Fatal(err)

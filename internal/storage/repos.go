@@ -75,7 +75,7 @@ func (r *providerRepo) Save(p Provider) error {
 	p.UpdatedAt = time.Now()
 	_, err = r.db.Exec(`INSERT INTO providers(id,name,protocol,base_url,enabled,allow_private_upstream,created_at,updated_at)
 		VALUES(?,?,?,?,?,?,?,?)
-		ON CONFLICT(id) DO UPDATE SET name=excluded.name, base_url=excluded.base_url,
+		ON CONFLICT(id) DO UPDATE SET name=excluded.name, protocol=excluded.protocol, base_url=excluded.base_url,
 			enabled=excluded.enabled, allow_private_upstream=excluded.allow_private_upstream, updated_at=excluded.updated_at`,
 		p.ID, p.Name, p.Protocol, p.BaseURL, boolInt(p.Enabled), boolInt(p.AllowPrivateUpstream),
 		p.CreatedAt.Format(time.RFC3339), p.UpdatedAt.Format(time.RFC3339))
