@@ -638,7 +638,8 @@ func TestNoSwitchAfterFirstByte(t *testing.T) {
 	}
 }
 
-// docx §13：客户端取消 → 直接取消上游、不转移下一候选。
+// docx §13：客户端取消 → 直接取消上游、不转移下一候选，且对候选零状态副作用
+// （不冷却、switches 不计）。
 func TestClientCancelNoSwitch(t *testing.T) {
 	var calls2 int
 	good := fakeUpstream(t, 200, `{"id":"ok"}`, &calls2)
@@ -650,8 +651,12 @@ func TestClientCancelNoSwitch(t *testing.T) {
 		<-r.Context().Done() // 挂住直到网关取消
 	}))
 	defer slow.Close()
-	tw, _ := twoCands(t, slow.URL, good.URL)
-	s := newGW(t, slow.URL, tw)
+	tw, cds := twoCands(t, slow.URL, good.URL)
+	var ring *telemetry.Ring
+	s := newGW(t, slow.URL, func(d *Deps) {
+		tw(d)
+		ring = d.Ring
+	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, "POST", "/v1/messages",
@@ -665,6 +670,19 @@ func TestClientCancelNoSwitch(t *testing.T) {
 	s.Handler().ServeHTTP(w, req) // 客户端已断，写响应无害
 	if calls2 != 0 {
 		t.Fatalf("cancel must not switch, calls2=%d", calls2)
+	}
+	// 取消零副作用：密钥不得留冷却状态（Do 返回的 context.Canceled 是客户端
+	// 断开，不是上游故障）。
+	if snap := cds.Snapshot(time.Now()); len(snap) != 0 {
+		t.Fatalf("cancel must leave no cooldown state: %+v", snap)
+	}
+	// switches 不计（Ring 记录 FailoverCount==0）。
+	recs := ring.List()
+	if len(recs) == 0 {
+		t.Fatal("ring must hold the request record")
+	}
+	if recs[0].FailoverCount != 0 {
+		t.Fatalf("cancel must not count switches: FailoverCount=%d", recs[0].FailoverCount)
 	}
 }
 

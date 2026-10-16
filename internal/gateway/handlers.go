@@ -187,6 +187,12 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 			UpstreamModel: c.UpstreamModel, RawBody: rewritten, Stream: cr.Stream,
 		})
 		if err != nil {
+			// 客户端已取消：对候选零状态副作用，直接收尾（docx §6.3 取消即停）。
+			// 循环顶的守卫只挡「下一候选」，挡不住本分支的标记动作——取消引发的
+			// Do 错误是客户端断开而非上游故障，不得冷却、不得计 switches。
+			if ctx.Err() != nil {
+				return
+			}
 			// Do 错误（连接层/3xx/请求转换失败）：冷却后换下一候选——此刻未向
 			// 客户端写过任何字节，属可转移窗口。
 			lastClass = provider.ClassConnect
