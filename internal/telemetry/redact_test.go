@@ -19,6 +19,20 @@ func TestMaskToken(t *testing.T) {
 	}
 }
 
+func TestMaskTokenNonSchemeValues(t *testing.T) {
+	got := MaskToken("session=topsecret; theme=dark")
+	if strings.Contains(got, "topsecret") || strings.Contains(got, "theme") {
+		t.Fatalf("cookie value leaked: %q", got)
+	}
+	if !strings.HasSuffix(got, "***") {
+		t.Fatalf("missing mask: %q", got)
+	}
+	sc := MaskToken("session=topsecret; Path=/; HttpOnly")
+	if strings.Contains(sc, "topsecret") || !strings.HasSuffix(sc, "***") {
+		t.Fatalf("set-cookie value leaked: %q", sc)
+	}
+}
+
 func TestRedactHeaders(t *testing.T) {
 	h := http.Header{}
 	h.Set("Authorization", "Bearer secret-token-value")
