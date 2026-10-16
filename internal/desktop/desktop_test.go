@@ -6,6 +6,7 @@ import (
 
 	"AgentSwitch/internal/app"
 	"AgentSwitch/internal/bridge"
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -45,5 +46,18 @@ func TestCloseNoticeBlocksFirstClose(t *testing.T) {
 	}
 	if !u.closeConfirmed {
 		t.Fatal("confirm not recorded")
+	}
+}
+
+// TestNeedsReopen 覆盖托盘"打开主窗口"的重建判据：无窗口 → 重建；存活
+// （未销毁）窗口 → 复用 Restore/Focus。destroyed=true 的一例依赖真实关闭
+// 的窗口（destroyed 字段未导出），无头测试无法伪造，由 mygo 的
+// Window.IsDestroyed（window.go:597-598）保证，此处只测两条可构造路径。
+func TestNeedsReopen(t *testing.T) {
+	if !needsReopen(nil) {
+		t.Fatal("nil window should reopen")
+	}
+	if needsReopen(&mygo.Window{}) {
+		t.Fatal("live window should be reused")
 	}
 }

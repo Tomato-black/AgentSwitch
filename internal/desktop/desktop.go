@@ -6,6 +6,7 @@ import (
 	"context"
 	_ "embed"
 	"log"
+	"sync/atomic"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -84,7 +85,9 @@ func Run(a *app.App) error {
 		return nil
 	}
 	u := newUIState(svc, a)
-	var win *mygo.Window
+	// win 经 atomic 读写：WhenReady/托盘重开（主线程）写，OnState/OnRecord
+	// 回调（网关 goroutine）读——消除裸指针的数据竞争。
+	var win atomic.Pointer[mygo.Window]
 
 	mygo.App.WhenReady(func() {
 		if tray, err := mygo.NewTray(mygo.TrayOptions{
@@ -92,9 +95,9 @@ func Run(a *app.App) error {
 			ToolTip: "AgentSwitch",
 			Menu: mygo.NewMenu([]*mygo.MenuItem{
 				{Label: "打开主窗口", Click: func(*mygo.MenuItem, *mygo.Window) {
-					if win != nil {
-						win.Restore()
-						win.Focus()
+					if w := win.Load(); !needsReopen(w) {
+						w.Restore()
+						w.Focus()
 					} else {
 						openWindow(u, &win)
 					}
@@ -108,21 +111,14 @@ func Run(a *app.App) error {
 			_ = tray
 		}
 		openWindow(u, &win)
-		win.OnClose(func(e *mygo.CloseEvent) {
-			if !u.closeConfirmed {
-				e.PreventDefault()
-				u.closeNotice = true
-				win.Update(func() {}) // 触发重绘显示提示
-			}
-		})
 		a.OnState(func(si app.StateInfo) {
-			if win != nil {
-				win.Update(func() { u.status = si })
+			if w := win.Load(); w != nil {
+				w.Update(func() { u.status = si })
 			}
 		})
 		a.OnRecord(func(rec telemetry.RequestRecord) {
-			if win != nil {
-				win.Update(func() {
+			if w := win.Load(); w != nil {
+				w.Update(func() {
 					u.recent = append([]telemetry.RequestRecord{rec}, u.recent...)
 					if len(u.recent) > 100 {
 						u.recent = u.recent[:100]
@@ -136,6 +132,13 @@ func Run(a *app.App) error {
 	mygo.App.OnWindowAllClosed(func() { /* 故意为空 */ })
 
 	mygo.App.OnBeforeQuit(func(e *mygo.QuitEvent) {
+		// 首关教育只针对交互关闭（点 X）。mygo prepareQuit 先跑本钩子
+		// （app.go:184-187），随后 a.quitting=true 并逐窗 w.close()
+		// （app.go:189-194）——任一 OnClose PreventDefault 即复位 quitting
+		// 中止退出。若不在第一行放行，托盘 RoleQuit/Ctrl+Q 在"窗口开着且
+		// 未确认过教育提示"（最常见态）下：清理已做、退出被拦、UI 停在
+		// 已关闭 DB 的尸体上。
+		u.closeConfirmed = true
 		ctx, cancel := context.WithTimeout(context.Background(),
 			time.Duration(graceSeconds(a))*time.Second)
 		defer cancel()
@@ -149,11 +152,28 @@ func Run(a *app.App) error {
 	return mygo.App.Run()
 }
 
-func openWindow(u *uiState, win **mygo.Window) {
-	*win = mygo.NewWindow(mygo.WindowOptions{
+// needsReopen 报告托盘"打开主窗口"是否应重建窗口：无窗口，或窗口已销毁
+// （mygo destroy 后 native=nil/destroyed=true，window.go:1605-1606，此时
+// Restore/Focus 是 no-op，重建分支才可达）。
+func needsReopen(w *mygo.Window) bool { return w == nil || w.IsDestroyed() }
+
+// openWindow 建主窗、登记进 win 并挂首关拦截。OnClose 挂在这里而非仅挂
+// 首窗：托盘重开的每个窗口都自带拦截，不依赖"销毁过 ⇒ closeConfirmed"
+// 这条跨模块不变式。
+func openWindow(u *uiState, win *atomic.Pointer[mygo.Window]) *mygo.Window {
+	w := mygo.NewWindow(mygo.WindowOptions{
 		Title: "AgentSwitch", Width: 1080, Height: 720, StateKey: "main",
 		Content: ui.View(u.view),
 	})
+	win.Store(w)
+	w.OnClose(func(e *mygo.CloseEvent) {
+		if !u.closeConfirmed {
+			e.PreventDefault()
+			u.closeNotice = true
+			w.Update(func() {}) // 触发重绘显示提示
+		}
+	})
+	return w
 }
 
 func graceSeconds(a *app.App) int {
