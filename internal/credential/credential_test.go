@@ -64,6 +64,9 @@ func (f *fakeStore) Get(k string) ([]byte, error) {
 	return v, nil
 }
 func (f *fakeStore) Delete(k string) error {
+	if f.unavailable {
+		return ErrUnavailable
+	}
 	delete(f.m, k)
 	return nil
 }
@@ -87,4 +90,33 @@ func TestManagerRefusesFallbackWhenNotAllowed(t *testing.T) {
 	if err := m.Set("k", []byte("v")); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("want ErrUnavailable, got %v", err)
 	}
+}
+
+func TestManagerDelete(t *testing.T) {
+	t.Run("primary unavailable falls back when allowed", func(t *testing.T) {
+		primary := &fakeStore{unavailable: true}
+		fb := NewFallbackFile(filepath.Join(t.TempDir(), "fb.json"))
+		if err := fb.Set("k", []byte("v")); err != nil {
+			t.Fatal(err)
+		}
+		m := Manager{Primary: primary, Fallback: fb, AllowFallback: true}
+		if err := m.Delete("k"); err != nil {
+			t.Fatalf("delete: %v", err)
+		}
+		if _, err := fb.Get("k"); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("fallback still holds key, get err = %v", err)
+		}
+	})
+
+	t.Run("primary unavailable refused when fallback not allowed", func(t *testing.T) {
+		primary := &fakeStore{unavailable: true}
+		fb := NewFallbackFile(filepath.Join(t.TempDir(), "fb.json"))
+		if err := fb.Set("k", []byte("v")); err != nil {
+			t.Fatal(err)
+		}
+		m := Manager{Primary: primary, Fallback: fb, AllowFallback: false}
+		if err := m.Delete("k"); !errors.Is(err, ErrUnavailable) {
+			t.Fatalf("want ErrUnavailable, got %v", err)
+		}
+	})
 }

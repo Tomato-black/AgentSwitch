@@ -60,9 +60,12 @@ func (m *Manager) Get(key string) ([]byte, error) {
 
 // Delete removes the key from both stores, tolerating a miss in either:
 // a secret that only ever lived in the fallback file must still delete cleanly.
+// An unavailable Primary follows the same rule as Set/Get: with fallback
+// allowed its ErrUnavailable is swallowed and the Fallback's result governs;
+// otherwise the error propagates unchanged.
 func (m *Manager) Delete(key string) error {
 	err := m.Primary.Delete(key)
-	if errors.Is(err, ErrNotFound) {
+	if errors.Is(err, ErrNotFound) || m.useFallback(err) {
 		err = nil
 	}
 	if m.Fallback != nil {
