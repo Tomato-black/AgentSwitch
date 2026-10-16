@@ -4776,3 +4776,16 @@ git commit -m "docs: README 与 CLAUDE.md 命令更新；端到端切换回归�
 1. **Spec 覆盖**：§2 决策 1-9 → Task 1/4/5/11/6/9；§5 进程模型 → Task 10/12；§6 包结构 → 各任务按目录落位；§7 数据模型 → Task 4；§8 凭据 → Task 5/11；§9 桥接 → Task 11；§10 流水线 → Task 7/8/9；§11 安全 → Task 6/9（令牌/限额/https/重定向/白名单）；§12 UI → Task 12-15；§13 日志 → Task 2/9/10；§14 测试 → 各任务 TDD + Task 16；§15 验收 → Task 16 + 手动清单（README）。无缺口。
 2. **占位符**：无 TBD/TODO；Task 3/9/13 中的"实现时修正"是对已写代码的具体修正指令（含完整替代代码），非空缺。
 3. **类型一致性**：`bridge.Accounts.Creds credential.Store` 与 Task 5 的 Manager 满足接口一致；`app.Creds()` 在 Task 11 约定、Task 12 使用；`gateway.Deps.ListAliases` 在 Task 9 修正指令中补入、Task 10 使用；`bridge.Status.Port/TimeoutSeconds` 在 Task 13 修正指令中补入；`accFormData.providerName` 在 Task 15 明确加入。
+
+---
+
+## P0-A′ 完成后的后续项（最终审查分诊留档，2026-10-16）
+
+合并后最终审查的分诊结论，多数可留后续，此处留档以免丢失：
+
+1. **P0-B：多账号池、优先级排序、故障转移与冷却**——下一步主体工作。接口已就位：`router.Router`（现为 `router.Single`，换实现不换接口）；`provider.ErrorClass`（quota/rate-limit/auth/server/param/connect 分类已就绪，供冷却与跨账号切换判断）。须遵守不变量：首字节前才可切换、冷却原子更新、发请求前二次校验账号状态（spec §6.3/§7）。
+2. **真实上游验收（spec §15.1）**——凭据到位后按 README「首次使用」流程走通一次：配置供应商/账号/别名 → Claude Code 真实请求 → UI 改别名/账号即时生效。
+3. **其余 minors（最终审查分诊表已分类，此处备忘）**：
+   - `bridge.Accounts` 注入 nil `Creds` 无自愈——`Providers` 已有 `creds()` 回退 `a.Creds()` 的自愈（8605759），`Accounts` 各方法仍直接用 `s.Creds`，未对齐；
+   - RequestEvent/SwitchEvent/AuditEvent 事件落库属 P0-C——当前仅内存 `telemetry.Ring`（100 条）；
+   - SQLite `-wal`/`-shm` 伴生文件权限收紧——`storage.Open` 只 chmod 主库 0600（db.go），WAL 伴生文件未显式处理。

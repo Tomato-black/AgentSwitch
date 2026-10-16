@@ -8,7 +8,7 @@ AgentSwitch：面向本地 AI Agent 的**模型 API 网关**——为 Claude Cod
 
 技术选型（v2.0 设计稿确定）：Go 实现网关核心，**MyGo**（https://github.com/egoist/mygo，桌面框架）做桌面壳与前后端桥接，前端 TypeScript + HTML/CSS，数据用 SQLite，凭据存 OS 密钥存储。
 
-当前仓库仅为 GoLand 初始骨架：`go.mod`（module `AgentSwitch`，Go 1.25，无第三方依赖）+ `main.go`（GoLand 模板示例，将被设计文档 §12 的目录结构取代）。尚无 README、测试、前端工程。
+当前仓库已完成 P0-A′ 桌面优先 MVP（实现计划：`docs/superpowers/plans/2026-10-15-agentswitch-p0a-desktop-first.md`）：单二进制桌面应用，入口 `cmd/agentswitch`，Go 1.27.2，依赖 mygo v0.5.1 与 modernc.org/sqlite；核心包在 `internal/{app,bridge,config,credential,desktop,gateway,protocol,provider,router,storage,telemetry,account}`，测试全部离线（httptest Fake Provider），`README.md` 含首次使用流程。相对 v2.0 目标结构（§12）的落地差异：管理面以进程内 `bridge`（`mygo.Bind` 桌面桥接、无独立管理端口）替代 `controlapi`；UI 为 MyGo 原生视图（`internal/desktop`），未建 `frontend/` 工程；migrations 内嵌在 `internal/storage`。下一步 P0-B（多账号池与故障转移），后续项留档见该计划文档末尾。
 
 **权威设计文档**是仓库根目录的 docx（磁盘上文件名经 URL 编码，实际为 `AgentSwitch_MyGo桌面应用重新设计方案_v2.0.docx`）。任何功能实现前先查文档对应章节；代码与文档冲突时，以文档为准并指出来。文档是 zip 格式，可用以下命令提取纯文本：
 
