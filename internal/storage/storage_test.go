@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -98,5 +100,49 @@ func TestModelUniquePublic(t *testing.T) {
 	}
 	if _, err := s.Models().GetByPublic("nope"); err != ErrNotFound {
 		t.Fatalf("want ErrNotFound, got %v", err)
+	}
+}
+
+// TestForeignKeysOnEveryConnection 覆盖 PRAGMA 必须逐连接生效：
+// 从池里取出两条连接（第二条必为新建），各自断言 foreign_keys=1、busy_timeout=5000。
+func TestForeignKeysOnEveryConnection(t *testing.T) {
+	s := tempStore(t)
+	ds, ok := s.(*dbStore)
+	if !ok {
+		t.Fatalf("Store = %T, want *dbStore", s)
+	}
+	ctx := context.Background()
+	c1, err := ds.db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c1.Close()
+	c2, err := ds.db.Conn(ctx) // c1 仍占用池中连接，此调用强制新开一条
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c2.Close()
+	for i, c := range []*sql.Conn{c1, c2} {
+		var fk int
+		if err := c.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&fk); err != nil {
+			t.Fatalf("conn%d foreign_keys: %v", i+1, err)
+		}
+		if fk != 1 {
+			t.Fatalf("conn%d foreign_keys = %d, want 1", i+1, fk)
+		}
+	}
+	var bt int
+	if err := c2.QueryRowContext(ctx, `PRAGMA busy_timeout`).Scan(&bt); err != nil {
+		t.Fatalf("conn2 busy_timeout: %v", err)
+	}
+	if bt != 5000 {
+		t.Fatalf("conn2 busy_timeout = %d, want 5000", bt)
+	}
+	var jm string
+	if err := c2.QueryRowContext(ctx, `PRAGMA journal_mode`).Scan(&jm); err != nil {
+		t.Fatalf("conn2 journal_mode: %v", err)
+	}
+	if jm != "wal" {
+		t.Fatalf("conn2 journal_mode = %q, want wal", jm)
 	}
 }

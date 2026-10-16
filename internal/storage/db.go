@@ -35,15 +35,17 @@ CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 type dbStore struct{ db *sql.DB }
 
 func Open(path string) (Store, error) {
-	db, err := sql.Open("sqlite", path)
+	// PRAGMA 经 DSN 下发，modernc 驱动对每条新建连接都会执行
+	// （db.Exec("PRAGMA ...") 只作用于池当时借出的一条连接，并发下级联会静默失效）。
+	dsn := "file:" + path + "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
-	for _, pragma := range []string{"PRAGMA journal_mode=WAL", "PRAGMA foreign_keys=ON", "PRAGMA busy_timeout=5000"} {
-		if _, err := db.Exec(pragma); err != nil {
-			db.Close()
-			return nil, err
-		}
+	// Ping 立即建连并跑 DSN pragma，尽早暴露坏 DSN/不可写路径。
+	if err := db.Ping(); err != nil {
+		db.Close()
+		return nil, err
 	}
 	if err := os.Chmod(path, 0o600); err != nil {
 		db.Close()
