@@ -172,7 +172,7 @@ func (s Providers) Test(id string) provider.ProbeResult {
 			break
 		}
 	}
-	return provider.Probe(context15(), p.BaseURL, apiKey, p.AllowPrivateUpstream)
+	return provider.Probe(context15(), "anthropic", p.BaseURL, apiKey, p.AllowPrivateUpstream)
 }
 
 type AccountView struct {
@@ -327,7 +327,7 @@ func (s Accounts) Test(id string) provider.ProbeResult {
 	if err != nil {
 		return provider.ProbeResult{Stage: "credential", Error: err.Error()}
 	}
-	return provider.Probe(context15(), p.BaseURL, string(key), p.AllowPrivateUpstream)
+	return provider.Probe(context15(), "anthropic", p.BaseURL, string(key), p.AllowPrivateUpstream)
 }
 
 // tail4 取密钥本体尾 4 位（不足 4 位时掩码为 "****"）。

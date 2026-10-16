@@ -69,7 +69,14 @@ func (a *AnthropicAdapter) Do(ctx context.Context, r DoRequest) (ChatResult, err
 	if r.Stream {
 		req.Header.Set("Accept", "text/event-stream")
 	}
-	resp, err := a.Client.Do(req)
+	return sendUpstream(ctx, a.Client, req)
+}
+
+// sendUpstream 执行请求并归一化结果：3xx 拒绝为 error（CheckRedirect 返回
+// ErrUseLastResponse 后 3xx 以"正常响应"浮出，必须显式拒绝且不跟随）；
+// 4xx/5xx 限长读体后作为正常结果返回（分类交给调用方）；2xx 透传 Body。
+func sendUpstream(ctx context.Context, client *http.Client, req *http.Request) (ChatResult, error) {
+	resp, err := client.Do(req)
 	if err != nil {
 		return ChatResult{}, fmt.Errorf("connect: %w", err)
 	}
@@ -79,8 +86,6 @@ func (a *AnthropicAdapter) Do(ctx context.Context, r DoRequest) (ChatResult, err
 			ra = n
 		}
 	}
-	// CheckRedirect 返回 ErrUseLastResponse 后，3xx 会以“正常响应”浮出（err==nil）；
-	// 这里显式拒绝：结果保留供分类，同时必须返回错误（重定向绝不跟随）。
 	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 		resp.Body.Close()
@@ -104,7 +109,8 @@ type ProbeResult struct {
 }
 
 // Probe 分级探测：dns → connect → auth（发一条最小请求，只报告分级与脱敏错误）。
-func Probe(ctx context.Context, baseURL, apiKey string, allowPrivate bool) ProbeResult {
+// protocol 决定探测端点与鉴权头（anthropic→/v1/messages，openai→/v1/chat/completions）。
+func Probe(ctx context.Context, protocol, baseURL, apiKey string, allowPrivate bool) ProbeResult {
 	if err := ValidateBaseURL(baseURL, allowPrivate); err != nil {
 		return ProbeResult{Stage: "validate", Error: err.Error()}
 	}
@@ -113,9 +119,12 @@ func Probe(ctx context.Context, baseURL, apiKey string, allowPrivate bool) Probe
 	if _, err := net.DefaultResolver.LookupHost(ctx, host); err != nil && !isLoopbackHost(host) {
 		return ProbeResult{Stage: "dns", Error: fmt.Sprintf("resolve %s failed", host)}
 	}
-	a := NewAnthropicAdapter()
 	body := []byte(`{"model":"__probe__","max_tokens":1,"messages":[{"role":"user","content":"ping"}]}`)
-	res, err := a.Do(ctx, DoRequest{BaseURL: baseURL, AllowPrivate: allowPrivate, APIKey: apiKey, RawBody: body})
+	var ad Adapter = NewAnthropicAdapter()
+	if protocol == "openai" {
+		ad = NewOpenAIAdapter(nil)
+	}
+	res, err := ad.Do(ctx, DoRequest{BaseURL: baseURL, AllowPrivate: allowPrivate, APIKey: apiKey, RawBody: body})
 	if err != nil {
 		return ProbeResult{Stage: "connect", Error: MaskErr(err)}
 	}

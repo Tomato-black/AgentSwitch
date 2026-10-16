@@ -2,7 +2,9 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 )
 
@@ -27,4 +29,17 @@ type ChatResult struct {
 // Adapter 抽象一次上游调用；实现负责协议头、路径与安全校验。
 type Adapter interface {
 	Do(ctx context.Context, r DoRequest) (ChatResult, error)
+}
+
+// AdapterForProtocol 按渠道协议分派 adapter（spec §5.1）；未知协议报错。
+// log 仅 openai adapter 使用（丢弃字段的提醒行），可为 nil。
+func AdapterForProtocol(p string, log *slog.Logger) (Adapter, error) {
+	switch p {
+	case "anthropic":
+		return NewAnthropicAdapter(), nil
+	case "openai":
+		return NewOpenAIAdapter(log), nil
+	default:
+		return nil, fmt.Errorf("unknown protocol %q", p)
+	}
 }
