@@ -1,0 +1,90 @@
+package credential
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestAccountKey(t *testing.T) {
+	if AccountKey("abc") != "account:abc" {
+		t.Fatal(AccountKey("abc"))
+	}
+}
+
+func TestFallbackRoundTripAndMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secrets.json")
+	f := NewFallbackFile(path)
+	if err := f.Set("account:1", []byte("sk-secret")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := f.Get("account:1")
+	if err != nil || string(got) != "sk-secret" {
+		t.Fatalf("get: %q %v", got, err)
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %v want 0600", st.Mode().Perm())
+	}
+	if err := f.Delete("account:1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Get("account:1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("want ErrNotFound, got %v", err)
+	}
+}
+
+type fakeStore struct {
+	m           map[string][]byte
+	unavailable bool
+}
+
+func (f *fakeStore) Set(k string, v []byte) error {
+	if f.unavailable {
+		return ErrUnavailable
+	}
+	if f.m == nil {
+		f.m = map[string][]byte{}
+	}
+	f.m[k] = v
+	return nil
+}
+func (f *fakeStore) Get(k string) ([]byte, error) {
+	if f.unavailable {
+		return nil, ErrUnavailable
+	}
+	v, ok := f.m[k]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return v, nil
+}
+func (f *fakeStore) Delete(k string) error {
+	delete(f.m, k)
+	return nil
+}
+
+func TestManagerFallsBackWhenAllowed(t *testing.T) {
+	primary := &fakeStore{unavailable: true}
+	fb := NewFallbackFile(filepath.Join(t.TempDir(), "fb.json"))
+	m := Manager{Primary: primary, Fallback: fb, AllowFallback: true}
+	if err := m.Set("k", []byte("v")); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := m.Get("k"); err != nil || string(got) != "v" {
+		t.Fatalf("fallback get: %q %v", got, err)
+	}
+}
+
+func TestManagerRefusesFallbackWhenNotAllowed(t *testing.T) {
+	primary := &fakeStore{unavailable: true}
+	fb := NewFallbackFile(filepath.Join(t.TempDir(), "fb.json"))
+	m := Manager{Primary: primary, Fallback: fb, AllowFallback: false}
+	if err := m.Set("k", []byte("v")); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("want ErrUnavailable, got %v", err)
+	}
+}
