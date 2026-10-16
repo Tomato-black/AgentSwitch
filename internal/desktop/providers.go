@@ -1,15 +1,25 @@
 package desktop
 
 import (
+	"strconv"
+
 	"github.com/egoist/mygo/ui"
 )
 
-// providersView 是供应商页：供应商表、新建/编辑表单（名称/协议/Base URL/
-// 启用+允许私网）、保存（Create/Update）、载入所选、删除二次确认与连通测试。
+// providersView 是供应商页（spec §5.2）：页头记数、供应商表（启用列
+// Badge）、丝印式表单（固定宽弱色标签 + 字段同行）与操作行。
 func (u *uiState) providersView(c *ui.Context) {
+	t := c.Theme()
 	provs := u.svc.Providers.List()
-	ui.Column(c).Gap(8).Children(func() {
-		ui.Text(c, "供应商")
+	ui.Column(c).Gap(12).Children(func() {
+		// 页头：标题 + TextMuted 记数（不用间隔点连接）
+		ui.Row(c).Gap(8).Children(func() {
+			ui.Text(c, "供应商").Bold().FontSize(t.FontSize + 2)
+			ui.Text(c, strconv.Itoa(len(provs))).TextColor(t.TextMuted)
+		})
+		if len(provs) == 0 {
+			ui.Text(c, "尚无供应商——在下方表单创建第一个").TextColor(t.TextMuted)
+		}
 		cols := []ui.TableColumn{{Title: "名称"}, {Title: "协议"}, {Title: "Base URL"}, {Title: "启用"}}
 		ui.Table(c, &u.provList, cols, len(provs), func(row, col int) {
 			p := provs[row]
@@ -19,34 +29,39 @@ func (u *uiState) providersView(c *ui.Context) {
 			case 1:
 				ui.Text(c, p.Protocol).SingleLine()
 			case 2:
-				ui.Text(c, p.BaseURL).SingleLine()
+				ui.Text(c, p.BaseURL).SingleLine().Font(monoFont)
 			case 3:
 				if p.Enabled {
-					ui.Text(c, "是")
+					ui.Badge(c, "启用")
 				} else {
-					ui.Text(c, "否")
+					ui.Text(c, "停用").TextColor(t.TextMuted)
 				}
 			}
 		}).Grow(1)
+		ui.Divider(c)
 
-		// 表单四要素：名称 / 协议 / Base URL / 启用+允许私网上游
-		ui.Text(c, "名称:")
-		ui.TextInput(c, &u.provForm.name)
-		ui.Text(c, "协议:")
-		ui.Select(c, &u.provForm.protocol, []string{"anthropic"})
-		ui.Text(c, "Base URL:")
-		ui.TextInput(c, &u.provForm.baseURL)
-		ui.Row(c).Gap(8).Children(func() {
-			ui.Text(c, "启用")
+		// 表单：丝印式两栏（spec §5.2；已知偏离：标签左对齐固定宽，
+		// 文字右对齐 API 未验证不假定）
+		ui.Row(c).Gap(12).Children(func() {
+			ui.Text(c, "名称:").Width(96).TextColor(t.TextMuted)
+			ui.TextInput(c, &u.provForm.name).Grow(1)
+			ui.Text(c, "协议:").Width(96).TextColor(t.TextMuted)
+			ui.Select(c, &u.provForm.protocol, []string{"anthropic"})
+		})
+		ui.Row(c).Gap(12).Children(func() {
+			ui.Text(c, "Base URL:").Width(96).TextColor(t.TextMuted)
+			ui.TextInput(c, &u.provForm.baseURL).Grow(1)
+		})
+		ui.Row(c).Gap(16).Children(func() {
+			ui.Text(c, "启用").TextColor(t.TextMuted)
 			ui.Switch(c, &u.provForm.enabled)
-			ui.Text(c, "允许私网上游")
+			ui.Text(c, "允许私网上游").TextColor(t.TextMuted)
 			ui.Switch(c, &u.provForm.allowPrivate)
 		})
 		if u.provForm.msg != "" {
 			ui.Text(c, u.provForm.msg)
 		}
 		ui.Row(c).Gap(8).Children(func() {
-			// 保存（editID 空 = Create）/ 更新（editID 非空 = Update）
 			saveLabel := "保存"
 			if u.provForm.editID != "" {
 				saveLabel = "更新"
@@ -68,9 +83,6 @@ func (u *uiState) providersView(c *ui.Context) {
 					}
 				}
 			}
-			// 载入所选：provList.Selected 是 *int（nil=未选，-1=无），
-			// 判空后按 *sel 索引（简报修正条款 2）。成功即清删除确认位：
-			// 防 A 行武装、载入 B 行后"确认删除"落刀 B。
 			if ui.Button(c, "载入所选").Clicked() {
 				if sel := u.provList.Selected; sel != nil && *sel >= 0 && *sel < len(provs) {
 					p := provs[*sel]
@@ -80,14 +92,12 @@ func (u *uiState) providersView(c *ui.Context) {
 					u.provConfirmDelete = false
 				}
 			}
-			// 删除：editID 非空才进入二次确认（与测试连通同门槛）
 			if ui.Button(c, "删除").Clicked() && u.provForm.editID != "" {
 				u.provConfirmDelete = true
 			}
 			if u.provConfirmDelete {
 				if ui.Button(c, "确认删除").Clicked() {
 					if err := u.svc.Providers.Remove(u.provForm.editID); err != nil {
-						// 失败：保留 editID 供重试，错误进 msg
 						u.provForm.msg = err.Error()
 					} else {
 						u.resetProvForm()
@@ -95,8 +105,6 @@ func (u *uiState) providersView(c *ui.Context) {
 					u.provConfirmDelete = false
 				}
 			}
-			// 测试连通：editID 非空才执行；同步调用——Probe 最多 15s 阻塞
-			// UI 线程，对 P0-A 可接受（简报修正条款 1）。
 			if ui.Button(c, "测试连通").Clicked() && u.provForm.editID != "" {
 				res := u.svc.Providers.Test(u.provForm.editID)
 				if res.OK {

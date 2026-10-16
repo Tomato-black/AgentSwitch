@@ -122,3 +122,13 @@ func TestNavigationSwitchesPage(t *testing.T) {
 		t.Fatalf("overview view missing: %v", tt.Texts())
 	}
 }
+
+// TestProvidersEmptyHint 覆盖空表引导（spec §5.4）。
+func TestProvidersEmptyHint(t *testing.T) {
+	u, _ := testUI(t)
+	u.page = "providers"
+	tt := ui.NewTester(u.providersView, 1000, 700)
+	if !tt.HasText("尚无供应商") {
+		t.Fatalf("empty hint missing: %v", tt.Texts())
+	}
+}

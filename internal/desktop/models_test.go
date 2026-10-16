@@ -90,3 +90,13 @@ func TestModelsCreateFlow(t *testing.T) {
 		t.Fatalf("form must reset after delete: %+v", u.modelForm)
 	}
 }
+
+// TestModelsEmptyHint 覆盖空表引导（spec §5.4）。
+func TestModelsEmptyHint(t *testing.T) {
+	u, _, _ := testUIWithCreds(t)
+	u.page = "models"
+	tt := ui.NewTester(u.modelsView, 900, 600)
+	if !tt.HasText("尚无模型别名") {
+		t.Fatalf("empty hint missing: %v", tt.Texts())
+	}
+}
