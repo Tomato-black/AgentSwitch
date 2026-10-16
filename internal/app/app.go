@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -78,6 +79,12 @@ func Open(opts Options) (*App, error) {
 	}
 	if opts.DBPath == "" {
 		return nil, fmt.Errorf("DBPath required")
+	}
+	// 首启（C1）：全新机器上配置目录父链不存在，sql.Open+Ping 直接失败
+	// "unable to open database file (14)"——先建目录（0700）再开库。
+	// 主入口用 os.UserConfigDir() 拼路径，父目录何时缺失不可预期。
+	if err := os.MkdirAll(filepath.Dir(opts.DBPath), 0o700); err != nil {
+		return nil, err
 	}
 	st, err := storage.Open(opts.DBPath)
 	if err != nil {

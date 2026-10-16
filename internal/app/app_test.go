@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -90,6 +91,43 @@ func TestLifecycleDegradedAndRunning(t *testing.T) {
 	}
 	if a3.State().State != StateDegraded || a3.State().DegradedReason == "" {
 		t.Fatalf("disabled account → degraded, got %s (%q)", a3.State().State, a3.State().DegradedReason)
+	}
+}
+
+// TestOpenCreatesNestedConfigDir 覆盖首启目录创建（C1）：全新机器上配置目录
+// 父链不存在时，Open 必须先 MkdirAll 再开库——否则 sql.Open+Ping 直接失败
+// "unable to open database file (14)"。同时断言目录权限收窄（0700 语义：
+// 无 group/other 访问）。
+func TestOpenCreatesNestedConfigDir(t *testing.T) {
+	root := t.TempDir()
+	nested := filepath.Join(root, "a", "b", "c")
+	db := filepath.Join(nested, "x.db")
+	if _, err := os.Stat(filepath.Join(root, "a")); !os.IsNotExist(err) {
+		t.Fatalf("precondition: parent chain must not exist, stat=%v", err)
+	}
+	logPath := filepath.Join(nested, "logs", "app.log")
+	a, err := Open(Options{DBPath: db, LogPath: logPath, Version: "test", Host: "127.0.0.1"})
+	if err != nil {
+		t.Fatalf("Open on fresh machine (missing parent dirs): %v", err)
+	}
+	t.Cleanup(func() { a.Close() })
+	fi, err := os.Stat(nested)
+	if err != nil || !fi.IsDir() {
+		t.Fatalf("config dir not created: %v", err)
+	}
+	if perm := fi.Mode().Perm(); perm&0o077 != 0 {
+		t.Fatalf("config dir perm = %o, want no group/other access (0700)", perm)
+	}
+	if _, err := os.Stat(db); err != nil {
+		t.Fatalf("db file not created: %v", err)
+	}
+	// 日志目录（telemetry.NewLogger 建）与配置目录同权：0700 语义一致。
+	lf, err := os.Stat(filepath.Join(nested, "logs"))
+	if err != nil || !lf.IsDir() {
+		t.Fatalf("log dir not created: %v", err)
+	}
+	if perm := lf.Mode().Perm(); perm&0o077 != 0 {
+		t.Fatalf("log dir perm = %o, want no group/other access (0700)", perm)
 	}
 }
 
