@@ -2,25 +2,29 @@ package main
 
 import (
 	"log"
+	"os"
+	"path/filepath"
 
-	"github.com/egoist/mygo"
-	"github.com/egoist/mygo/ui"
+	"AgentSwitch/internal/app"
+	"AgentSwitch/internal/desktop"
 )
 
 func main() {
-	mygo.App.WhenReady(func() {
-		mygo.NewWindow(mygo.WindowOptions{
-			Title:  "AgentSwitch",
-			Width:  1080,
-			Height: 720,
-			Content: ui.View(func(c *ui.Context) {
-				ui.Column(c).Gap(12).Children(func() {
-					ui.Text(c, "AgentSwitch")
-				})
-			}),
-		})
+	base, err := os.UserConfigDir()
+	if err != nil {
+		log.Fatal(err)
+	}
+	dir := filepath.Join(base, "AgentSwitch")
+	a, err := app.Open(app.Options{
+		DBPath:  filepath.Join(dir, "agentswitch.db"),
+		LogPath: filepath.Join(dir, "logs", "app.log"),
+		Version: "0.1.0",
+		Host:    "127.0.0.1",
 	})
-	if err := mygo.App.Run(); err != nil {
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := desktop.Run(a); err != nil {
 		log.Fatal(err)
 	}
 }
