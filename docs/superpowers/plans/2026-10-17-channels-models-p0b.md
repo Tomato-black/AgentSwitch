@@ -1465,6 +1465,8 @@ func (t *OpenAIStreamTransformer) drain() []byte {
 
 实现说明（写给执行者）：`openTool` 里 `tc.Index` 参数仅用于 map 键，块 index 用 `t.blockIdx` 单调分配；`close` 幂等由 `t.finished` 保证，`[DONE]` 与 finish_reason 双到时只收一次。
 
+> **supersede（2026-10-17 执行期裁定）**：上方流式代码与简报自己的测试、spec §5.3.3「收口一次性发 tool_use 块」三方冲突（增量 input_json_delta 会吞首段 arguments；0→1 index 切换不发新块）。落地实现改为：tool_call 按 index 累积，`content_block_start` 内携带完整解析后的 `input`、不发 input_json_delta；`message_delta` usage 增补 input_tokens；请求转换中 tool 消息前置于本块剩余文本。以 `internal/protocol/openai.go` 与 task-3-report 为准。
+
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `go test ./internal/protocol -v`
