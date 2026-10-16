@@ -23,7 +23,7 @@ go build ./...        # 编译全部包
 go run .              # 运行当前入口
 go vet ./...          # 静态检查
 go test ./...         # 全部测试
-go test ./internal/router -run TestFailover   # 跑单个测试
+go test ./internal/app -run TestConfigChangeTakesEffectWithoutRestart -v   # 跑单个测试
 go test -race ./...   # 涉及并发/冷却状态的测试必须带 -race
 go tool mygo dev      # 开发运行（热重载；入口 cmd/agentswitch，UI 在 internal/desktop）
 go tool mygo build    # 打包（产物在 build/）

@@ -295,6 +295,42 @@ func TestAuditLinesCarryActorAndResult(t *testing.T) {
 	}
 }
 
+// TestProvidersNilCredsSelfHeals 覆盖合并前卫生项：未注入 Creds 的 Providers
+// （测试助手常见形态）Remove/Test 走 nil 自愈回退 a.Creds()——原先直用 s.Creds
+// 对 nil 接口调用即 panic。级联删行不受影响（密钥 miss 由 Manager.Delete 容忍）。
+func TestProvidersNilCredsSelfHeals(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(up.Close)
+	a := tempApp(t)
+	creds := credential.Manager{
+		Primary:       credential.NewFallbackFile(filepath.Join(t.TempDir(), "s.json")),
+		AllowFallback: true,
+	}
+	ps := Providers{A: a, Creds: &creds}
+	p, err := ps.Create("main", "anthropic", up.URL, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	as := Accounts{A: a, Creds: &creds, KeychainAvailable: func() bool { return false }}
+	if _, err := as.Create("acc1", p.ID, "sk-ant-1234", 10, true, true); err != nil {
+		t.Fatal(err)
+	}
+	bare := Providers{A: a} // Creds 未注入
+	// Test 走回退：a.Creds() 读不到本地密钥 → 空 key 探 httptest 回环（离线）。
+	if r := bare.Test(p.ID); r.Stage != "auth" {
+		t.Fatalf("bare Test stage: %+v", r)
+	}
+	// Remove 走回退：原先此处 panic（nil 接口方法调用）。
+	if err := bare.Remove(p.ID); err != nil {
+		t.Fatalf("bare Remove: %v", err)
+	}
+	if len(as.List()) != 0 {
+		t.Fatalf("cascade delete failed: %+v", as.List())
+	}
+}
+
 func TestGatewayStatusShape(t *testing.T) {
 	a := tempApp(t)
 	g := Gateway{A: a}

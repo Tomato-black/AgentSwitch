@@ -8,7 +8,7 @@ Agent 指向 `127.0.0.1:17890`，供应商/账号/模型切换在网关层完成
 
 ## 开发
 
-- 依赖：Go 1.27+（`GOTOOLCHAIN=auto` 会自动拉取）、Linux 需 WebKitGTK 不需要（原生 UI 只需 GTK3）
+- 依赖：Go 1.27+（`GOTOOLCHAIN=auto` 会自动拉取）、原生 UI 在 Linux 仅需 GTK3，不需要 WebKitGTK
 - 运行（开发模式，热重载）：`go tool mygo dev`
 - 打包：`go tool mygo build`（产物在 `build/`，含 .deb 与 install.sh）
 - 测试：`go test ./...`（全部离线，Fake Provider）

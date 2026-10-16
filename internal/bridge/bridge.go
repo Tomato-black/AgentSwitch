@@ -89,6 +89,15 @@ type Providers struct {
 	Creds credential.Store
 }
 
+// creds 返回注入的密钥 store；未注入（测试助手/早期装配）时回退 a.Creds()，
+// 避免 nil 接口方法调用 panic——生产两侧注入的正是 a.Creds()，语义等价。
+func (p Providers) creds() credential.Store {
+	if p.Creds != nil {
+		return p.Creds
+	}
+	return p.A.Creds()
+}
+
 func providerView(p storage.Provider) ProviderView {
 	return ProviderView{p.ID, p.Name, p.Protocol, p.BaseURL, p.Enabled, p.AllowPrivateUpstream}
 }
@@ -139,7 +148,7 @@ func (s Providers) Update(id, name, baseURL string, enabled, allowPrivate bool) 
 func (s Providers) Remove(id string) error {
 	accounts, _ := s.A.Store().Accounts().ListByProvider(id)
 	for _, a := range accounts {
-		s.Creds.Delete(a.SecretKey)
+		s.creds().Delete(a.SecretKey)
 	}
 	if err := s.A.Store().Providers().Delete(id); err != nil {
 		return err
@@ -157,7 +166,7 @@ func (s Providers) Test(id string) provider.ProbeResult {
 	apiKey := ""
 	for _, a := range accounts {
 		if a.Enabled {
-			if v, err := s.A.Creds().Get(a.SecretKey); err == nil {
+			if v, err := s.creds().Get(a.SecretKey); err == nil {
 				apiKey = string(v)
 			}
 			break

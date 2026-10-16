@@ -52,6 +52,7 @@ type Server struct {
 func New(d Deps) *Server {
 	s := &Server{deps: d, mux: http.NewServeMux()}
 	// 并发上限信号量在构造时初始化：测试路径（Handler() 直用、不经 Start）也要有限额。
+	// ① 此处（New）是第一次初始化，读方 handleMessages 经 s.sem 只在 ServeHTTP 后可达。
 	if lim := d.Limits(); lim.MaxConcurrent > 0 {
 		s.sem = make(chan struct{}, lim.MaxConcurrent)
 	}
@@ -81,6 +82,9 @@ func (s *Server) Start(host string, port int) (string, error) {
 	s.addr = ln.Addr().String()
 	s.srv = &http.Server{Handler: s.mux}
 	lim := s.deps.Limits()
+	// ② 此处（Start）是第二次初始化（重设）：发生在下一行 go s.Serve(ln) 之前，
+	// 对随后到达的请求构成 happens-before——读者不会见到初始化中的半成品 sem。
+	// 新建/重设只在 New 与 Start（持 s.mu）里，handleMessages 对 sem 是只读复用。
 	if lim.MaxConcurrent > 0 {
 		s.sem = make(chan struct{}, lim.MaxConcurrent)
 	}
