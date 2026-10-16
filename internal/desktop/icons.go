@@ -1,6 +1,6 @@
 // icons.go 是边栏导航的四枚 16px 内联线性图标（概览=面板格、供应商=插头、
 // 账号=钥匙、模型=分支路由），ui.ParseSVG 内联定义，色随主题文字
-//（spec §4；§8.1 待验证：currentColor 若不着色，退化为固定中性色）。
+// （spec §4；§8.1 待验证：currentColor 若不着色，退化为固定中性色）。
 package desktop
 
 import "github.com/egoist/mygo/ui"

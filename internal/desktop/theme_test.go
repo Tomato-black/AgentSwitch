@@ -7,7 +7,7 @@ import (
 )
 
 // TestBuildThemeTokens 覆盖 spec §3.2：双外观主色锚点、Success==Accent
-//（一个颜色想法）、语义色互异、度量常量。
+// （一个颜色想法）、语义色互异、度量常量。
 func TestBuildThemeTokens(t *testing.T) {
 	light, dark := buildTheme(false, 1), buildTheme(true, 1)
 	if light.Accent != ui.Hex("#0E7A5F") {

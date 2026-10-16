@@ -61,6 +61,8 @@ func (u *uiState) accountsView(c *ui.Context) {
 				} else {
 					ui.Text(c, "停用").TextColor(t.TextMuted)
 				}
+			// 密钥尾4 列取自 List 的持久化 key_tail（spec §12.4，Create/轮换时写入）；
+			// migration 002 之前建的历史行留空直到下次轮换。
 			case 4:
 				ui.Text(c, a.KeyTail).SingleLine().Font(monoFont)
 			case 5:

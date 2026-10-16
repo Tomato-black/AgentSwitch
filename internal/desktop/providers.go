@@ -105,6 +105,7 @@ func (u *uiState) providersView(c *ui.Context) {
 					u.provConfirmDelete = false
 				}
 			}
+			// 测试连通：同步调用——Probe 最多 15s 阻塞 UI 线程，对 P0-A 可接受（简报修正条款 1）。
 			if ui.Button(c, "测试连通").Clicked() && u.provForm.editID != "" {
 				res := u.svc.Providers.Test(u.provForm.editID)
 				if res.OK {
