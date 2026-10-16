@@ -32,41 +32,31 @@ type uiState struct {
 	status         app.StateInfo
 	recent         []telemetry.RequestRecord
 	token          string
-	closeNotice    bool // 首关教育提示
-	closeConfirmed bool // 用户已知晓，允许关闭
+	page           string       // 当前页；"overview" 默认（导航由 Task 14 接）
+	showToken      bool         // 令牌明文显示开关
+	portInput      string       // 设置面板端口输入（打开时回显 Status.Port）
+	timeoutInput   string       // 设置面板超时输入（打开时回显 Status.TimeoutSeconds）
+	settingsMsg    string       // 设置保存结果提示
+	settingsOpen   bool         // 设置面板展开
+	confirmRegen   bool         // 重新生成令牌的二次确认
+	table          ui.ListState // 最近请求表状态
+	closeNotice    bool         // 首关教育提示
+	closeConfirmed bool         // 用户已知晓，允许关闭
 }
 
 func newUIState(svc Services, a *app.App) *uiState {
 	si := a.State()
 	st, _ := a.CurrentSettings()
-	return &uiState{svc: svc, status: si, recent: a.Recent(), token: st.GatewayToken}
+	return &uiState{svc: svc, status: si, recent: a.Recent(), token: st.GatewayToken,
+		page: "overview"}
 }
 
+// view 按 u.page 分发页面；未识别的 page 落到概览（当前唯一页面）。
 func (u *uiState) view(c *ui.Context) {
-	ui.Column(c).Gap(8).Children(func() {
-		ui.Textf(c, "网关状态: %s", u.status.State)
-		if u.status.Addr != "" {
-			ui.Textf(c, "监听: %s", u.status.Addr)
-		}
-		if u.closeNotice && !u.closeConfirmed {
-			ui.Text(c, "窗口关闭后应用将驻留托盘，网关继续运行。")
-			if ui.PrimaryButton(c, "继续关闭窗口").Clicked() {
-				u.closeConfirmed = true
-				if w := mygo.FocusedWindow(); w != nil {
-					w.Close()
-				}
-			}
-			if ui.Button(c, "取消").Clicked() {
-				u.closeNotice = false
-			}
-		}
-		if ui.PrimaryButton(c, "启动网关").Clicked() && u.status.State == "stopped" {
-			go func() { _ = u.svc.Gateway.Start() }()
-		}
-		if ui.Button(c, "停止网关").Clicked() && (u.status.State == "running" || u.status.State == "degraded") {
-			go func() { _ = u.svc.Gateway.Stop() }()
-		}
-	})
+	switch u.page {
+	default:
+		u.overviewView(c)
+	}
 }
 
 func Run(a *app.App) error {

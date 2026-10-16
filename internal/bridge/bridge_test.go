@@ -161,6 +161,10 @@ func TestGatewayStatusShape(t *testing.T) {
 	if st.State != "stopped" || st.Token == "" {
 		t.Fatalf("%+v", st)
 	}
+	// Task 13：Status 回显当前配置（供 UI 设置面板与概览片段）
+	if st.Port != 17890 || st.TimeoutSeconds != 120 {
+		t.Fatalf("settings echo: port=%d timeout=%d", st.Port, st.TimeoutSeconds)
+	}
 	tok, err := g.RegenerateToken()
 	if err != nil || tok == st.Token {
 		t.Fatalf("%q %v", tok, err)

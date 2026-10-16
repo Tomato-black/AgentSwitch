@@ -31,12 +31,16 @@ func context15() context.Context {
 type Gateway struct{ A *app.App }
 
 type Status struct {
-	State          string                    `json:"state"`
-	Addr           string                    `json:"addr"`
-	DegradedReason string                    `json:"degradedReason,omitempty"`
-	Since          int64                     `json:"sinceMs"`
-	Token          string                    `json:"token"`
-	Version        string                    `json:"version"`
+	State          string `json:"state"`
+	Addr           string `json:"addr"`
+	DegradedReason string `json:"degradedReason,omitempty"`
+	Since          int64  `json:"sinceMs"`
+	Token          string `json:"token"`
+	Version        string `json:"version"`
+	// Port 与 TimeoutSeconds 是当前生效配置（config.Load 填充），供 UI 设置
+	// 面板回显与概览配置片段拼实际端口（Task 13 实现时修正条款 1）。
+	Port           int                       `json:"port"`
+	TimeoutSeconds int                       `json:"timeoutSeconds"`
 	Recent         []telemetry.RequestRecord `json:"recent"`
 }
 
@@ -46,6 +50,7 @@ func (g Gateway) Status() Status {
 	return Status{
 		State: string(si.State), Addr: si.Addr, DegradedReason: si.DegradedReason,
 		Since: si.Since.UnixMilli(), Token: s.GatewayToken, Version: si.Version,
+		Port: s.Port, TimeoutSeconds: s.RequestTimeoutSeconds,
 		Recent: g.A.Recent(),
 	}
 }
