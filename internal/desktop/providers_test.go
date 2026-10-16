@@ -45,8 +45,8 @@ func TestProvidersRejectBadProtocol(t *testing.T) {
 	}
 }
 
-// TestNavigationSwitchesPage 覆盖 view 顶部导航行：概览/供应商两按钮
-// 切换 u.page 并分发到对应页面（账号/模型 case 属 Task 15）。
+// TestNavigationSwitchesPage 覆盖 view 顶部导航行：概览/供应商按钮切换
+// u.page 并分发到对应页面（四按钮全量覆盖见 TestNavigationCoversAllPages）。
 func TestNavigationSwitchesPage(t *testing.T) {
 	u, _ := testUI(t)
 	tt := ui.NewTester(u.view, 900, 600)

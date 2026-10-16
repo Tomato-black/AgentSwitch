@@ -1,5 +1,5 @@
 // Package desktop 是 MyGo 桌面壳：窗口、托盘、关窗拦截、退出钩子与状态桥接。
-// UI 页面（概览/供应商已就位；账号/模型由 Task 15 扩展）挂在本包视图上。
+// UI 页面（概览/供应商/账号/模型）挂在本包视图上。
 package desktop
 
 import (
@@ -47,6 +47,17 @@ type uiState struct {
 	provForm          provFormData // 新建/编辑表单；editID 非空 = 编辑该 id
 	provConfirmDelete bool         // 删除二次确认
 	provTestMsg       string       // 连通测试结果展示
+	// 账号页（Task 15）：
+	accList          ui.ListState // 账号表状态；Selected 经 accSel 指向当前行
+	accSel           int          // 账号表当前行（-1=无）；accList.Selected 指向它
+	accForm          accFormData  // 新建/编辑表单；editID 非空 = 编辑该 id
+	accConfirmDelete bool         // 删除二次确认（两段式）
+	accTestMsg       string       // 账号连通测试结果展示（裁定 1，独立于表单 msg）
+	// 模型页（Task 15）：
+	modelList          ui.ListState // 模型表状态；Selected 经 modelSel 指向当前行
+	modelSel           int          // 模型表当前行（-1=无）
+	modelForm          modelFormData
+	modelConfirmDelete bool // 删除二次确认（裁定 3，两段式）
 }
 
 // provFormData 是供应商页的新建/编辑表单。
@@ -60,13 +71,20 @@ type provFormData struct {
 func newUIState(svc Services, a *app.App) *uiState {
 	si := a.State()
 	st, _ := a.CurrentSettings()
-	return &uiState{svc: svc, status: si, recent: a.Recent(), token: st.GatewayToken,
+	u := &uiState{svc: svc, status: si, recent: a.Recent(), token: st.GatewayToken,
 		page:     "overview",
-		provForm: provFormData{protocol: "anthropic", enabled: true}}
+		provForm: provFormData{protocol: "anthropic", enabled: true},
+		accForm:  accFormData{enabled: true},
+		accSel:   -1, modelSel: -1}
+	// 表格行选择：Selected 必须非 nil 点击才选行（table.md/outline 约定），
+	// 这里指向状态字段（-1=无），"载入所选/停用·启用/测试"才落得到所选行。
+	u.accList.Selected = &u.accSel
+	u.modelList.Selected = &u.modelSel
+	return u
 }
 
-// view 顶部渲染导航行（概览/供应商），再按 u.page 分发页面；未识别的
-// page 落到概览。账号/模型页的 case 属 Task 15。
+// view 顶部渲染导航行（概览/供应商/账号/模型），再按 u.page 分发页面；
+// 未识别的 page 落到概览。
 func (u *uiState) view(c *ui.Context) {
 	ui.Row(c).Gap(8).Children(func() {
 		if ui.Button(c, "概览").Clicked() {
@@ -75,10 +93,20 @@ func (u *uiState) view(c *ui.Context) {
 		if ui.Button(c, "供应商").Clicked() {
 			u.page = "providers"
 		}
+		if ui.Button(c, "账号").Clicked() {
+			u.page = "accounts"
+		}
+		if ui.Button(c, "模型").Clicked() {
+			u.page = "models"
+		}
 	})
 	switch u.page {
 	case "providers":
 		u.providersView(c)
+	case "accounts":
+		u.accountsView(c)
+	case "models":
+		u.modelsView(c)
 	default:
 		u.overviewView(c)
 	}
