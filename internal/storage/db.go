@@ -32,6 +32,20 @@ CREATE TABLE models (
 CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 `
 
+// migration002 追加 spec §12.4 的"密钥尾4"列（列默认空串：历史行留空）直到
+// 下次轮换——迁移绝不回读钥匙环（迁移不得触发凭据访问）。
+const migration002 = `ALTER TABLE accounts ADD COLUMN key_tail TEXT NOT NULL DEFAULT ''`
+
+// migrations 是按版本序执行的迁移表；migrate 只跑 schema_migrations 里
+// 未记录的版本（幂等）。追加新版本 = 追加一行，勿改已发布语句。
+var migrations = []struct {
+	version int64
+	sql     string
+}{
+	{1, migration001},
+	{2, migration002},
+}
+
 type dbStore struct{ db *sql.DB }
 
 func Open(path string) (Store, error) {
@@ -58,30 +72,37 @@ func Open(path string) (Store, error) {
 	return &dbStore{db: db}, nil
 }
 
+// migrate 按 migrations 版本序补齐未执行的版本：每版本独立事务（DDL 与版本
+// 记录同成同败），已记录的版本跳过——重开与并发进程重放都幂等。
 func migrate(db *sql.DB) error {
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)`); err != nil {
 		return err
 	}
-	var n int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version=1`).Scan(&n); err != nil {
-		return err
+	for _, m := range migrations {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version=?`, m.version).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			continue
+		}
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(m.sql); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO schema_migrations(version) VALUES (?)`, m.version); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
 	}
-	if n > 0 {
-		return nil
-	}
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	if _, err := tx.Exec(migration001); err != nil {
-		tx.Rollback()
-		return err
-	}
-	if _, err := tx.Exec(`INSERT INTO schema_migrations(version) VALUES (1)`); err != nil {
-		tx.Rollback()
-		return err
-	}
-	return tx.Commit()
+	return nil
 }
 
 // NewID 返回 crypto/rand 16 字节的 hex 串。

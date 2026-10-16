@@ -32,6 +32,114 @@ func TestMigrationIdempotent(t *testing.T) {
 	s2.Close()
 }
 
+// TestAccountKeyTailPersistsAcrossReopen 覆盖 spec §12.4 的 key_tail 列
+// （migration 002）：Save 落列、Get/List/ListByProvider 回读、轮换（改写 Save）
+// 更新尾 4；重开（migrate 幂等重放 v1+v2 不得报错）后仍可读；schema_migrations
+// 记录 v1、v2 各一次。
+func TestAccountKeyTailPersistsAcrossReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "kt.db")
+	s1, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := Provider{ID: NewID(), Name: "p", Protocol: "anthropic", BaseURL: "https://x.example.com", Enabled: true}
+	if err := s1.Providers().Save(p); err != nil {
+		t.Fatal(err)
+	}
+	a := Account{ID: NewID(), ProviderID: p.ID, Name: "a1", SecretKey: "account:k1",
+		SecretBackend: "fallback-file", KeyTail: "1234", Priority: 10, Enabled: true}
+	if err := s1.Accounts().Save(a); err != nil {
+		t.Fatal(err)
+	}
+	assertKeyTail := func(s Store, want string, when string) {
+		t.Helper()
+		if g, err := s.Accounts().Get(a.ID); err != nil || g.KeyTail != want {
+			t.Fatalf("%s Get: key_tail=%q err=%v", when, g.KeyTail, err)
+		}
+		if l, err := s.Accounts().List(); err != nil || len(l) != 1 || l[0].KeyTail != want {
+			t.Fatalf("%s List: %+v err=%v", when, l, err)
+		}
+		if l, err := s.Accounts().ListByProvider(p.ID); err != nil || len(l) != 1 || l[0].KeyTail != want {
+			t.Fatalf("%s ListByProvider: %+v err=%v", when, l, err)
+		}
+	}
+	assertKeyTail(s1, "1234", "after save")
+	// 轮换语义（bridge RotateSecret 的存储侧）：改写 KeyTail 再 Save → 回读更新。
+	a.KeyTail = "5678"
+	if err := s1.Accounts().Save(a); err != nil {
+		t.Fatal(err)
+	}
+	assertKeyTail(s1, "5678", "after rotate")
+	// 幂等重开：v1+v2 已记录时按版本跳过，数据不丢。
+	if err := s1.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	t.Cleanup(func() { s2.Close() })
+	assertKeyTail(s2, "5678", "after reopen")
+	ds, ok := s2.(*dbStore)
+	if !ok {
+		t.Fatalf("Store = %T", s2)
+	}
+	rows, err := ds.db.Query(`SELECT version FROM schema_migrations ORDER BY version`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var got []int64
+	for rows.Next() {
+		var v int64
+		if err := rows.Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, v)
+	}
+	if rows.Err() != nil || len(got) != 2 || got[0] != 1 || got[1] != 2 {
+		t.Fatalf("schema_migrations = %v, want [1 2]", got)
+	}
+}
+
+// TestMigration002UpgradesLegacyV1Database 覆盖升级路径：只有 v1 记录的库
+// （migration 001 建的 accounts 无 key_tail 列）再次 Open 必须按版本序补跑
+// 002（ALTER TABLE ADD COLUMN），随后 key_tail 可读写。
+func TestMigration002UpgradesLegacyV1Database(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(migration001); err != nil {
+		t.Fatalf("seed v1 schema: %v", err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`INSERT INTO schema_migrations(version) VALUES (1)`); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("upgrade open: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	p := Provider{ID: NewID(), Name: "p", Protocol: "anthropic", BaseURL: "https://x.example.com", Enabled: true}
+	if err := s.Providers().Save(p); err != nil {
+		t.Fatal(err)
+	}
+	a := Account{ID: NewID(), ProviderID: p.ID, Name: "a1", SecretKey: "account:k1",
+		SecretBackend: "fallback-file", KeyTail: "9999", Priority: 10, Enabled: true}
+	if err := s.Accounts().Save(a); err != nil {
+		t.Fatalf("save after upgrade: %v", err)
+	}
+	if g, err := s.Accounts().Get(a.ID); err != nil || g.KeyTail != "9999" {
+		t.Fatalf("get after upgrade: key_tail=%q err=%v", g.KeyTail, err)
+	}
+}
+
 func TestProviderCRUD(t *testing.T) {
 	s := tempStore(t)
 	p := Provider{ID: NewID(), Name: "p1", Protocol: "anthropic", BaseURL: "https://api.example.com", Enabled: true}

@@ -43,7 +43,7 @@ func testUIWithCreds(t *testing.T) (*uiState, *app.App, credential.Store) {
 // TestAccountsCreateFlow 覆盖账号页主路径：Atoi 报错入 msg（不落库、密钥保留
 // 供重试）→ 修复后保存落库一行（优先级/启用/降级后端）、密钥输入清空、页顶
 // 降级警示出现 → 载入所选回填且不带回密钥 → 更新携带新密钥走轮换（成功后密钥
-// 同样清空、密钥本体已轮换）。KeyTail 尾 4 位按 Task 11 桥接契约断言（见注释）。
+// 同样清空、密钥本体已轮换）。KeyTail 尾 4 位按 spec §12.4 持久化契约断言。
 func TestAccountsCreateFlow(t *testing.T) {
 	u, a, creds := testUIWithCreds(t)
 	if err := a.Store().Providers().Save(storage.Provider{
@@ -184,9 +184,10 @@ func TestAccountsCreateFlow(t *testing.T) {
 	if u.accForm.editID != "" {
 		t.Fatalf("form must reset after delete: %+v", u.accForm)
 	}
-	// KeyTail 尾 4 位（桥接契约，Task 11 计划明示约定）：List 恒返回 ""——
-	// secret_key 只存键名，尾 4 无法从键名恢复；真实尾 4 由 Create 返回的视图
-	// 即时给出，而 UI 保存路径调的正是同一 Create，故在此直调断言其尾 4。
+	// KeyTail 尾 4 位（spec §12.4 持久化契约）：Create 返回的视图与后续 List
+	// 回读同源（accounts.key_tail 列，Create/轮换时写入）——此处直调 Create
+	// 断言返回视图的尾 4，List 回读由 bridge 的 TestAccountKeyTailVisibleInList
+	// 覆盖。
 	av, err := u.svc.Accounts.Create("acc-tail", "p1", "sk-ant-tail-5678", 2, true, true)
 	if err != nil || av.KeyTail != "5678" {
 		t.Fatalf("KeyTail %+v %v", av, err)

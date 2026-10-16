@@ -75,7 +75,7 @@ func TestAccountSecretLifecycle(t *testing.T) {
 	if err := as.SetEnabled(av.ID, false); err != nil {
 		t.Fatal(err)
 	}
-	if l := as.List(); len(l) != 1 || l[0].Enabled {
+	if l := as.List(); len(l) != 1 || l[0].Enabled || l[0].KeyTail != "7890" {
 		t.Fatalf("setEnabled %+v", l)
 	}
 	if err := as.RotateSecret(av.ID, "sk-ant-newkey99", true); err != nil {
@@ -83,6 +83,10 @@ func TestAccountSecretLifecycle(t *testing.T) {
 	}
 	if v, _ := creds.Get(credential.AccountKey(av.ID)); string(v) != "sk-ant-newkey99" {
 		t.Fatal("rotate failed")
+	}
+	// 轮换后 List 回读的尾 4 同步刷新（持久化 key_tail）。
+	if l := as.List(); len(l) != 1 || l[0].KeyTail != "ey99" {
+		t.Fatalf("list tail after rotate: %+v", l)
 	}
 	// 删除 provider 级联删除账号与密钥
 	if err := ps.Remove(p.ID); err != nil {
@@ -151,6 +155,42 @@ func TestAccountProbeStages(t *testing.T) {
 	}
 	if r := as.Test(av.ID); r.Stage != "credential" || r.OK {
 		t.Fatalf("credential miss %+v", r)
+	}
+}
+
+// TestAccountKeyTailVisibleInList 覆盖 spec §12.4 KeyTail 持久化后的 List 回读
+// （原恒 "" 契约已废止）：Create 落行即回读 "1234"，RotateSecret 换密钥后回读
+// 新尾 4——UI"密钥尾4"列取自 List，必须是真值。
+func TestAccountKeyTailVisibleInList(t *testing.T) {
+	a := tempApp(t)
+	creds := credential.Manager{
+		Primary:       credential.NewFallbackFile(filepath.Join(t.TempDir(), "s.json")),
+		AllowFallback: true,
+	}
+	ps := Providers{A: a, Creds: &creds}
+	p, err := ps.Create("main", "anthropic", "https://api.example.com", true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	as := Accounts{A: a, Creds: &creds, KeychainAvailable: func() bool { return false }}
+	av, err := as.Create("acc1", p.ID, "sk-ant-1234", 10, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if av.KeyTail != "1234" {
+		t.Fatalf("create view tail: %+v", av)
+	}
+	if l := as.List(); len(l) != 1 || l[0].KeyTail != "1234" {
+		t.Fatalf("list after create: %+v", l)
+	}
+	if err := as.RotateSecret(av.ID, "sk-ant-5678", true); err != nil {
+		t.Fatal(err)
+	}
+	if l := as.List(); len(l) != 1 || l[0].KeyTail != "5678" {
+		t.Fatalf("list after rotate: %+v", l)
+	}
+	if g, err := a.Store().Accounts().Get(av.ID); err != nil || g.KeyTail != "5678" {
+		t.Fatalf("row after rotate: key_tail=%q err=%v", g.KeyTail, err)
 	}
 }
 

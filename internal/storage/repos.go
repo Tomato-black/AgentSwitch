@@ -90,7 +90,7 @@ func (r *providerRepo) Delete(id string) error {
 type accountRepo struct{ db *sql.DB }
 
 func (r *accountRepo) List() ([]Account, error) {
-	rows, err := r.db.Query(`SELECT id,provider_id,name,secret_key,secret_backend,priority,enabled,created_at,updated_at FROM accounts ORDER BY name`)
+	rows, err := r.db.Query(`SELECT id,provider_id,name,secret_key,secret_backend,key_tail,priority,enabled,created_at,updated_at FROM accounts ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +99,7 @@ func (r *accountRepo) List() ([]Account, error) {
 }
 
 func (r *accountRepo) ListByProvider(pid string) ([]Account, error) {
-	rows, err := r.db.Query(`SELECT id,provider_id,name,secret_key,secret_backend,priority,enabled,created_at,updated_at FROM accounts WHERE provider_id=? ORDER BY name`, pid)
+	rows, err := r.db.Query(`SELECT id,provider_id,name,secret_key,secret_backend,key_tail,priority,enabled,created_at,updated_at FROM accounts WHERE provider_id=? ORDER BY name`, pid)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +113,7 @@ func scanAccounts(rows *sql.Rows) ([]Account, error) {
 		var a Account
 		var en int
 		var ca, ua string
-		if err := rows.Scan(&a.ID, &a.ProviderID, &a.Name, &a.SecretKey, &a.SecretBackend, &a.Priority, &en, &ca, &ua); err != nil {
+		if err := rows.Scan(&a.ID, &a.ProviderID, &a.Name, &a.SecretKey, &a.SecretBackend, &a.KeyTail, &a.Priority, &en, &ca, &ua); err != nil {
 			return nil, err
 		}
 		a.Enabled = en == 1
@@ -128,8 +128,8 @@ func (r *accountRepo) Get(id string) (Account, error) {
 	var a Account
 	var en int
 	var ca, ua string
-	err := r.db.QueryRow(`SELECT id,provider_id,name,secret_key,secret_backend,priority,enabled,created_at,updated_at FROM accounts WHERE id=?`, id).
-		Scan(&a.ID, &a.ProviderID, &a.Name, &a.SecretKey, &a.SecretBackend, &a.Priority, &en, &ca, &ua)
+	err := r.db.QueryRow(`SELECT id,provider_id,name,secret_key,secret_backend,key_tail,priority,enabled,created_at,updated_at FROM accounts WHERE id=?`, id).
+		Scan(&a.ID, &a.ProviderID, &a.Name, &a.SecretKey, &a.SecretBackend, &a.KeyTail, &a.Priority, &en, &ca, &ua)
 	if err != nil {
 		return Account{}, mapNotFound(err)
 	}
@@ -153,12 +153,12 @@ func (r *accountRepo) Save(a Account) error {
 		a.CreatedAt = time.Now()
 	}
 	a.UpdatedAt = time.Now()
-	_, err = r.db.Exec(`INSERT INTO accounts(id,provider_id,name,secret_key,secret_backend,priority,enabled,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?)
+	_, err = r.db.Exec(`INSERT INTO accounts(id,provider_id,name,secret_key,secret_backend,key_tail,priority,enabled,created_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET provider_id=excluded.provider_id, name=excluded.name,
-			secret_key=excluded.secret_key, secret_backend=excluded.secret_backend,
+			secret_key=excluded.secret_key, secret_backend=excluded.secret_backend, key_tail=excluded.key_tail,
 			priority=excluded.priority, enabled=excluded.enabled, updated_at=excluded.updated_at`,
-		a.ID, a.ProviderID, a.Name, a.SecretKey, a.SecretBackend, a.Priority, boolInt(a.Enabled),
+		a.ID, a.ProviderID, a.Name, a.SecretKey, a.SecretBackend, a.KeyTail, a.Priority, boolInt(a.Enabled),
 		a.CreatedAt.Format(time.RFC3339), a.UpdatedAt.Format(time.RFC3339))
 	return err
 }

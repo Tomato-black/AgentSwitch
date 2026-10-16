@@ -27,10 +27,13 @@ type Account struct {
 	Name          string
 	SecretKey     string
 	SecretBackend string
-	Priority      int
-	Enabled       bool
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	// KeyTail 是密钥本体尾 4 位（spec §12.4 列"密钥尾4"）：Create/Rotate 时由
+	// bridge 写入，非秘密（只存尾 4）。迁移前建的历史行留空直到下次轮换。
+	KeyTail   string
+	Priority  int
+	Enabled   bool
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // ModelMapping 是 public model → upstream model 的映射。

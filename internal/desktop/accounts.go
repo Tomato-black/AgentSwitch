@@ -21,8 +21,8 @@ type accFormData struct {
 // accountsView 是账号页：页顶降级警示条、六列表格（名称/供应商/优先级/启用/
 // 密钥尾4/存储）、表单（名称/供应商下拉/密钥/优先级/启用/允许降级）与操作行
 // （保存·更新、载入所选、停用/启用、轮换密钥、测试、删除两段式确认）。
-// 注：密钥尾4 列取自 List，而 Task 11 桥接约定 List 的 KeyTail 恒为 ""（只存
-// 键名无法恢复尾 4）；真实尾 4 由 Create 返回的视图即时给出。
+// 注：密钥尾4 列取自 List 的持久化 key_tail（spec §12.4，Create/轮换时写入）；
+// migration 002 之前建的历史行留空直到下次轮换。
 func (u *uiState) accountsView(c *ui.Context) {
 	accounts := u.svc.Accounts.List()
 	provs := u.svc.Providers.List()

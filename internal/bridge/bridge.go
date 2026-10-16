@@ -181,12 +181,8 @@ type Accounts struct {
 }
 
 func accountView(a storage.Account) AccountView {
-	return AccountView{a.ID, a.ProviderID, a.Name, keyTailOf(a), a.SecretBackend, a.Priority, a.Enabled}
+	return AccountView{a.ID, a.ProviderID, a.Name, a.KeyTail, a.SecretBackend, a.Priority, a.Enabled}
 }
-
-// keyTailOf：List 返回 ""——storage.Account.SecretKey 只存键名，尾 4 位无法
-// 从键名恢复。真实尾 4 位由 Create 返回的视图用 tail4(apiKey) 即时给出。
-func keyTailOf(a storage.Account) string { return "" }
 
 func (s Accounts) List() []AccountView {
 	as, _ := s.A.Store().Accounts().List()
@@ -213,16 +209,15 @@ func (s Accounts) Create(name, providerID, apiKey string, priority int, enabled,
 	if err := s.Creds.Set(key, []byte(apiKey)); err != nil {
 		return AccountView{}, err
 	}
+	// KeyTail（spec §12.4）：建号时随行写入尾 4——非秘密、供 List/Get 回读。
 	row := storage.Account{ID: id, ProviderID: providerID, Name: name, SecretKey: key,
-		SecretBackend: backend, Priority: priority, Enabled: enabled}
+		SecretBackend: backend, KeyTail: tail4(apiKey), Priority: priority, Enabled: enabled}
 	if err := s.A.Store().Accounts().Save(row); err != nil {
 		s.Creds.Delete(key)
 		return AccountView{}, err
 	}
 	s.A.Log().Info("account created", "id", id, "provider", providerID, "backend", backend)
-	view := accountView(row)
-	view.KeyTail = tail4(apiKey)
-	return view, nil
+	return accountView(row), nil
 }
 
 // pickBackend 选密钥后端：系统密钥环可用则用之；否则仅在显式允许时降级
@@ -282,6 +277,9 @@ func (s Accounts) RotateSecret(id, apiKey string, allowFallback bool) error {
 		return err
 	}
 	a.SecretBackend = backend
+	// 轮换同时刷新持久化的尾 4（List/Get 即刻回读新值）。历史行（migration 002
+	// 之前建的）key_tail 留空直到这里——迁移不读钥匙环，绝不在升级时回填。
+	a.KeyTail = tail4(apiKey)
 	s.A.Log().Info("account secret rotated", "id", id)
 	return s.A.Store().Accounts().Save(a)
 }
