@@ -33,7 +33,7 @@ type uiState struct {
 	recent         []telemetry.RequestRecord
 	token          string
 	logPath        string       // 日志文件路径（a.LogPath()；概览恒显的"日志:"提示）
-	page           string       // 当前页；"overview" 默认（view 顶部导航行切换）
+	page           string       // 当前页；"overview" 默认（边栏 Sidebar 选中 id）
 	showToken      bool         // 令牌明文显示开关
 	portInput      string       // 设置面板端口输入（打开时回显 Status.Port）
 	timeoutInput   string       // 设置面板超时输入（打开时回显 Status.TimeoutSeconds）
@@ -88,37 +88,48 @@ func newUIState(svc Services, a *app.App) *uiState {
 	return u
 }
 
-// view 顶部渲染导航行（概览/供应商/账号/模型），随后渲染首关教育提示块
-// （I4：任何页都要可见——停在非概览页点 X 时提示不能缺席），再按 u.page
-// 分发页面；未识别的 page 落到概览。
+// view 是窗口根：按系统外观选品牌主题，左边栏（导航 + 页脚全局状态位）、
+// 右内容列（首关横条 + 当前页）。SetTheme 必须在任何子件构建前调用
+//（api_gen.go：SetTheme makes the frame use t）。u.page 直接充当 Sidebar
+// 的选中 id（四个 id 与导航项一致），点选即切页，无需 Changed 处理。
 func (u *uiState) view(c *ui.Context) {
-	ui.Row(c).Gap(8).Children(func() {
-		if ui.Button(c, "概览").Clicked() {
-			u.page = "overview"
-		}
-		if ui.Button(c, "供应商").Clicked() {
-			u.page = "providers"
-		}
-		if ui.Button(c, "账号").Clicked() {
-			u.page = "accounts"
-		}
-		if ui.Button(c, "模型").Clicked() {
-			u.page = "models"
-		}
-	})
-	// 首关教育（拦截由 openWindow 的 OnClose 置 closeNotice）：全页可见。
-	if u.closeNotice && !u.closeConfirmed {
-		ui.Text(c, "窗口关闭后应用将驻留托盘，网关继续运行。")
-		if ui.PrimaryButton(c, "继续关闭窗口").Clicked() {
-			u.closeConfirmed = true
-			if w := mygo.FocusedWindow(); w != nil {
-				w.Close()
+	c.SetTheme(buildTheme(c.Theme().Dark, c.Preferences().TextScale))
+	t := c.Theme()
+	ui.Row(c).Gap(0).Grow(1).Children(func() {
+		// 左列：边栏 + 分隔线 + 页脚状态位（状态是主角：任何页可见）
+		ui.Column(c).Gap(0).Children(func() {
+			ui.Sidebar(c, &u.page, func() {
+				ui.SidebarItem(c, "overview", iconOverview, "概览")
+				ui.SidebarItem(c, "providers", iconProviders, "供应商")
+				ui.SidebarItem(c, "accounts", iconAccounts, "账号")
+				ui.SidebarItem(c, "models", iconModels, "模型")
+			}).Width(200).Grow(1)
+			ui.Divider(c)
+			u.sidebarFooter(c, t)
+		})
+		// 右列：首关横条（全页可见，I4）+ 当前页
+		ui.Column(c).Gap(12).Padding(16).Grow(1).Children(func() {
+			if u.closeNotice && !u.closeConfirmed {
+				ui.Row(c).Gap(8).Padding(8).Border(1, t.Border).Children(func() {
+					ui.Text(c, "窗口关闭后应用将驻留托盘，网关继续运行。").Grow(1)
+					if ui.PrimaryButton(c, "继续关闭窗口").Clicked() {
+						u.closeConfirmed = true
+						if w := mygo.FocusedWindow(); w != nil {
+							w.Close()
+						}
+					}
+					if ui.Button(c, "取消").Clicked() {
+						u.closeNotice = false
+					}
+				})
 			}
-		}
-		if ui.Button(c, "取消").Clicked() {
-			u.closeNotice = false
-		}
-	}
+			u.pageView(c)
+		})
+	})
+}
+
+// pageView 按 u.page 分发页面；未识别的 page 落到概览。
+func (u *uiState) pageView(c *ui.Context) {
 	switch u.page {
 	case "providers":
 		u.providersView(c)
@@ -129,6 +140,23 @@ func (u *uiState) view(c *ui.Context) {
 	default:
 		u.overviewView(c)
 	}
+}
+
+// sidebarFooter 是边栏页脚的全局状态位：LED + 状态词 + 等宽地址。
+// 地址空（未启动过）显示「未监听」。
+func (u *uiState) sidebarFooter(c *ui.Context, t *ui.Theme) {
+	state := string(u.status.State)
+	ui.Row(c).Gap(8).Padding(12).Children(func() {
+		ledDot(c, t, state)
+		ui.Column(c).Gap(2).Children(func() {
+			ui.Text(c, stateWord(state))
+			addr := u.status.Addr
+			if addr == "" {
+				addr = "未监听"
+			}
+			ui.Text(c, addr).Font(monoFont).TextColor(t.TextMuted)
+		})
+	})
 }
 
 func Run(a *app.App) error {

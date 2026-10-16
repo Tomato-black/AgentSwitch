@@ -109,7 +109,7 @@ func TestNavigationSwitchesPage(t *testing.T) {
 	if u.page != "providers" {
 		t.Fatalf("page = %q, want providers", u.page)
 	}
-	if tt.HasText("网关状态") {
+	if tt.HasText("访问令牌") {
 		t.Fatalf("overview leaked into providers page: %v", tt.Texts())
 	}
 	if err := tt.Click("概览"); err != nil {
@@ -118,7 +118,7 @@ func TestNavigationSwitchesPage(t *testing.T) {
 	if u.page != "overview" {
 		t.Fatalf("page = %q, want overview", u.page)
 	}
-	if !tt.HasText("网关状态") {
+	if !tt.HasText("访问令牌") {
 		t.Fatalf("overview view missing: %v", tt.Texts())
 	}
 }

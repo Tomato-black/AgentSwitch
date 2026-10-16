@@ -29,8 +29,19 @@ func testUI(t *testing.T) (*uiState, *app.App) {
 func TestOverviewShowsState(t *testing.T) {
 	u, _ := testUI(t)
 	tt := ui.NewTester(u.view, 800, 600)
-	if !tt.HasText("stopped") {
+	if !tt.HasText("已停止") {
 		t.Fatalf("texts %v", tt.Texts())
+	}
+}
+
+// TestUnknownPageFallsBackToOverview 覆盖分发默认分支：未识别的 u.page
+// 落回概览（边栏 id 与 u.page 集合一致性的兜底）。
+func TestUnknownPageFallsBackToOverview(t *testing.T) {
+	u, _ := testUI(t)
+	u.page = "bogus"
+	tt := ui.NewTester(u.view, 800, 600)
+	if !tt.HasText("访问令牌") {
+		t.Fatalf("unknown page must fall back to overview: %v", tt.Texts())
 	}
 }
 
