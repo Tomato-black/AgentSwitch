@@ -36,7 +36,7 @@ func newTestApp(t *testing.T, upstreamURL string, withAccount bool) *App {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		if err := a.creds.Set("account:a1", []byte("sk-test")); err != nil {
+		if err := a.Creds().Set("account:a1", []byte("sk-test")); err != nil {
 			t.Fatal(err)
 		}
 	}
