@@ -10,7 +10,7 @@ import (
 // 到这里即四枚图标解析成功；再显式断言非 nil 防将来改为惰性构造时漏检。
 func TestIconsParsed(t *testing.T) {
 	for name, ic := range map[string]*ui.SVG{
-		"overview": iconOverview, "providers": iconProviders,
+		"overview": iconOverview, "channels": iconChannels,
 		"accounts": iconAccounts, "models": iconModels,
 	} {
 		if ic == nil {

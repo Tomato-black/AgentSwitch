@@ -1,5 +1,5 @@
 // Package desktop 是 MyGo 桌面壳：窗口、托盘、关窗拦截、退出钩子与状态桥接。
-// UI 页面（概览/供应商/账号/模型）挂在本包视图上。
+// UI 页面（概览/渠道/供应商/账号/模型）挂在本包视图上。
 package desktop
 
 import (
@@ -25,6 +25,7 @@ type Services struct {
 	Providers bridge.Providers
 	Accounts  bridge.Accounts
 	Models    bridge.Models
+	Channels  bridge.Channels
 }
 
 type uiState struct {
@@ -61,6 +62,20 @@ type uiState struct {
 	modelSel           int          // 模型表当前行（-1=无）
 	modelForm          modelFormData
 	modelConfirmDelete bool // 删除二次确认（裁定 3，两段式）
+	// 渠道页（Task 8）：
+	chList           ui.ListState // 渠道表状态；Selected 经 chSel 指向当前行
+	chSel            int          // 渠道表当前行（-1=无）；详情三段面板锚定行选中
+	chForm           chFormData   // 连接配置表单；editID 非空 = 编辑该渠道
+	chConfirmDelete  bool         // 渠道删除二次确认（两段式）
+	chTestMsg        string       // 渠道/密钥连通测试结果展示
+	keyForm          keyFormData  // 密钥批量导入表单
+	keyConfirmDelete bool         // 密钥删除二次确认（两段式）
+	chModelForm      channelModelFormData
+	prevType         string // 类型 Select 变更检测（预填 BaseURL）
+	chKeyList        ui.ListState
+	chModelList      ui.ListState
+	chKeySel         int
+	chModelSel       int
 }
 
 // provFormData 是供应商页的新建/编辑表单。
@@ -71,6 +86,27 @@ type provFormData struct {
 	editID                  string // 非空 = 编辑该 id
 }
 
+// chFormData 是渠道页连接配置表单；editID 非空 = 编辑该渠道。
+// typeID 存预设 id（初始化/载入/测试直赋），Select 交互后短暂持有 label
+// ——提交/预填/描述统一经 resolveTypeID 解析回 id。
+type chFormData struct {
+	typeID, name, baseURL, priorityInput string
+	enabled, allowPrivate                bool
+	msg, editID                          string
+}
+
+// keyFormData 是密钥批量导入表单；keysText 每行一枚（单行输入亦容忍逗号分隔）。
+type keyFormData struct {
+	name, keysText string
+	allowFallback  bool
+	msg            string
+}
+
+// channelModelFormData 是渠道模型添加表单。
+type channelModelFormData struct {
+	public, upstream, msg string
+}
+
 func newUIState(svc Services, a *app.App) *uiState {
 	si := a.State()
 	st, _ := a.CurrentSettings()
@@ -79,20 +115,26 @@ func newUIState(svc Services, a *app.App) *uiState {
 		page:     "overview",
 		provForm: provFormData{protocol: "anthropic", enabled: true},
 		accForm:  accFormData{enabled: true},
-		provSel:  -1, accSel: -1, modelSel: -1}
+		chForm:   chFormData{typeID: "anthropic-official", baseURL: "https://api.anthropic.com", enabled: true, priorityInput: "10"},
+		keyForm:  keyFormData{},
+		provSel:  -1, accSel: -1, modelSel: -1,
+		chSel: -1, chKeySel: -1, chModelSel: -1}
 	// 表格行选择：Selected 必须非 nil 点击才选行（mygo ui.ListState.Selected
 	// 注释：*Selected 是所选行，-1 为无），这里指向状态字段（-1=无），
 	// "载入所选/停用·启用/测试"才落得到所选行。
 	u.provList.Selected = &u.provSel
 	u.accList.Selected = &u.accSel
 	u.modelList.Selected = &u.modelSel
+	u.chList.Selected = &u.chSel
+	u.chKeyList.Selected = &u.chKeySel
+	u.chModelList.Selected = &u.chModelSel
 	return u
 }
 
 // view 是窗口根：按系统外观选品牌主题，左边栏（导航 + 页脚全局状态位）、
 // 右内容列（首关横条 + 当前页）。SetTheme 必须在任何子件构建前调用
 // （api_gen.go：SetTheme makes the frame use t）。u.page 直接充当 Sidebar
-// 的选中 id（四个 id 与导航项一致），点选即切页，无需 Changed 处理。
+// 的选中 id（五个 id 与导航项一致），点选即切页，无需 Changed 处理。
 func (u *uiState) view(c *ui.Context) {
 	c.SetTheme(buildTheme(c.Theme().Dark, c.Preferences().TextScale))
 	t := c.Theme()
@@ -101,7 +143,9 @@ func (u *uiState) view(c *ui.Context) {
 		ui.Column(c).Gap(0).Children(func() {
 			ui.Sidebar(c, &u.page, func() {
 				ui.SidebarItem(c, "overview", iconOverview, "概览")
-				ui.SidebarItem(c, "providers", iconProviders, "供应商")
+				ui.SidebarItem(c, "channels", iconChannels, "渠道")
+				// 供应商页与渠道并存至 Task 10 收尾删除；图标同插头（iconProviders 已更名）。
+				ui.SidebarItem(c, "providers", iconChannels, "供应商")
 				ui.SidebarItem(c, "accounts", iconAccounts, "账号")
 				ui.SidebarItem(c, "models", iconModels, "模型")
 			}).Width(200).Grow(1)
@@ -132,6 +176,8 @@ func (u *uiState) view(c *ui.Context) {
 // pageView 按 u.page 分发页面；未识别的 page 落到概览。
 func (u *uiState) pageView(c *ui.Context) {
 	switch u.page {
+	case "channels":
+		u.channelsView(c)
 	case "providers":
 		u.providersView(c)
 	case "accounts":
@@ -166,11 +212,13 @@ func Run(a *app.App) error {
 		Providers: bridge.Providers{A: a, Creds: a.Creds()},
 		Accounts:  bridge.Accounts{A: a, Creds: a.Creds()},
 		Models:    bridge.Models{A: a},
+		Channels:  bridge.Channels{A: a, Creds: a.Creds()},
 	}
 	mygo.Bind(svc.Gateway)
 	mygo.Bind(svc.Providers)
 	mygo.Bind(svc.Accounts)
 	mygo.Bind(svc.Models)
+	mygo.Bind(svc.Channels)
 
 	// 单实例锁已在入口（cmd/agentswitch/main.go）取——那里的抢锁失败在
 	// app.Open 之前返回，不泄漏库句柄、不留并发迁移窗口；此处不得再取锁。

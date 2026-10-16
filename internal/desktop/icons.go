@@ -1,6 +1,8 @@
-// icons.go 是边栏导航的四枚 16px 内联线性图标（概览=面板格、供应商=插头、
+// icons.go 是边栏导航的四枚 16px 内联线性图标（概览=面板格、渠道=插头、
 // 账号=钥匙、模型=分支路由），ui.ParseSVG 内联定义，色随主题文字
 // （spec §4；§8.1 待验证：currentColor 若不着色，退化为固定中性色）。
+// 渠道图标沿用原供应商插头（Task 8 更名 iconProviders→iconChannels；
+// 过渡期供应商边栏项同用此图标，Task 10 删旧页后仍归渠道页）。
 package desktop
 
 import "github.com/egoist/mygo/ui"
@@ -19,7 +21,7 @@ var (
 	iconOverview = mustSVG(svgHead +
 		`<rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1"/><rect x="9" y="1.5" width="5.5" height="5.5" rx="1"/>` +
 		`<rect x="1.5" y="9" width="5.5" height="5.5" rx="1"/><rect x="9" y="9" width="5.5" height="5.5" rx="1"/></svg>`)
-	iconProviders = mustSVG(svgHead +
+	iconChannels = mustSVG(svgHead +
 		`<path d="M5.5 1.5v4M10.5 1.5v4M4 5.5h8v2.5a4 4 0 0 1-8 0V5.5zM8 12v2.5"/></svg>`)
 	iconAccounts = mustSVG(svgHead +
 		`<circle cx="5" cy="11" r="3"/><path d="M7.3 8.7L14 2M10.5 5.5l2.2 2.2"/></svg>`)
