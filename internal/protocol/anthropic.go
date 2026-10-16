@@ -8,6 +8,7 @@ import (
 
 const (
 	ErrTypeInvalidRequest = "invalid_request_error"
+	ErrTypeAuth           = "authentication_error"
 	ErrTypeNotFound       = "not_found_error"
 	ErrTypeAPI            = "api_error"
 )
