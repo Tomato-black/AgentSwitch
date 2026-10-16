@@ -62,6 +62,20 @@ func TestModelsCreateFlow(t *testing.T) {
 	if len(u.svc.Models.List()) != 1 {
 		t.Fatal("armed confirmation must not delete yet")
 	}
+	// 载入所选清位（三页 confirm 清位）：武装后再载入，确认位必须落空。
+	if err := tt.Click("载入所选"); err != nil {
+		t.Fatal(err)
+	}
+	if u.modelConfirmDelete {
+		t.Fatal("loading another row must disarm the delete confirmation")
+	}
+	// 重新武装后走原两段式第二段。
+	if err := tt.Click("删除"); err != nil {
+		t.Fatal(err)
+	}
+	if !u.modelConfirmDelete {
+		t.Fatal("re-arm after disarm must succeed")
+	}
 	// 第二段："确认删除"真正执行。
 	if err := tt.Click("确认删除"); err != nil {
 		t.Fatal(err)

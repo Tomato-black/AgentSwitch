@@ -160,6 +160,21 @@ func TestAccountsCreateFlow(t *testing.T) {
 	if !u.accConfirmDelete || len(u.svc.Accounts.List()) != 1 {
 		t.Fatalf("first delete click must only arm: armed=%v", u.accConfirmDelete)
 	}
+	// 载入所选必须清位（三页 confirm 清位）：武装后再载入，确认位落空，
+	// 否则表单已是 B 行数据而"确认删除"仍会落刀。
+	if err := tt.Click("载入所选"); err != nil {
+		t.Fatal(err)
+	}
+	if u.accConfirmDelete {
+		t.Fatal("loading another row must disarm the delete confirmation")
+	}
+	// 重新武装后确认删除才走原路径。
+	if err := tt.Click("删除"); err != nil {
+		t.Fatal(err)
+	}
+	if !u.accConfirmDelete {
+		t.Fatal("re-arm after disarm must succeed")
+	}
 	if err := tt.Click("确认删除"); err != nil {
 		t.Fatal(err)
 	}

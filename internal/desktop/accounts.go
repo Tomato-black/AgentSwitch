@@ -90,7 +90,8 @@ func (u *uiState) accountsView(c *ui.Context) {
 				u.submitAccount(provByID)
 			}
 			// 载入所选：accList.Selected 是 *int（nil=未选，-1=无），判空并夹
-			// 紧界后按 *sel 索引（与供应商页同模式）；整表回填，密钥不回显。
+			// 紧界后按 *sel 索引（与供应商页同模式）；整表回填，密钥不回显；
+			// 顺带清删除确认位（防 A 行武装、载入 B 行后"确认删除"落刀 B）。
 			if ui.Button(c, "载入所选").Clicked() {
 				if sel := u.accList.Selected; sel != nil && *sel >= 0 && *sel < len(accounts) {
 					a := accounts[*sel]
@@ -99,6 +100,7 @@ func (u *uiState) accountsView(c *ui.Context) {
 						priorityInput: strconv.Itoa(a.Priority),
 						enabled:       a.Enabled, editID: a.ID}
 					u.accTestMsg = ""
+					u.accConfirmDelete = false
 				}
 			}
 			if ui.Button(c, "停用/启用").Clicked() {

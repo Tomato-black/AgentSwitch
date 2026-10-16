@@ -45,6 +45,56 @@ func TestProvidersRejectBadProtocol(t *testing.T) {
 	}
 }
 
+// TestProvidersLoadSelectedWiresRowAndClearsConfirm 覆盖分支门①：provList 必须
+// 预挂 Selected 指针（mygo ui.ListState.Selected 为 nil 时行点击不可选，"载入
+// 所选/测试/删除/更新"全成死按钮）——手动置 provSel 后"载入所选"须回填表单；
+// 以及三页 confirm 清位：A 行武装删除确认、载入 B 行后确认位必须落空，防
+// "确认删除"落刀到 B。
+func TestProvidersLoadSelectedWiresRowAndClearsConfirm(t *testing.T) {
+	u, _ := testUI(t)
+	u.page = "providers"
+	tt := ui.NewTester(u.providersView, 1000, 700)
+	if !tt.HasText("供应商") {
+		t.Fatalf("texts %v", tt.Texts())
+	}
+	for _, name := range []string{"main", "second"} {
+		u.provForm = provFormData{name: name, protocol: "anthropic",
+			baseURL: "https://api.example.com", enabled: true}
+		if err := tt.Click("保存"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := u.svc.Providers.List(); len(got) != 2 {
+		t.Fatalf("providers %+v", got)
+	}
+	// 行选中接线：provSel 指向第 0 行 → 载入所选回填 editID 与 name。
+	u.provSel = 0
+	if err := tt.Click("载入所选"); err != nil {
+		t.Fatal(err)
+	}
+	if u.provForm.editID == "" || u.provForm.name != "main" {
+		t.Fatalf("load selected (row wiring): %+v", u.provForm)
+	}
+	// A 行武装删除确认。
+	if err := tt.Click("删除"); err != nil {
+		t.Fatal(err)
+	}
+	if !u.provConfirmDelete {
+		t.Fatal("first delete click must only arm the confirmation")
+	}
+	// 载入 B 行 → 表单换 B 且确认位清空（否则"确认删除"落刀 B）。
+	u.provSel = 1
+	if err := tt.Click("载入所选"); err != nil {
+		t.Fatal(err)
+	}
+	if u.provForm.name != "second" || u.provForm.editID == "" {
+		t.Fatalf("load row B: %+v", u.provForm)
+	}
+	if u.provConfirmDelete {
+		t.Fatal("loading another row must disarm the delete confirmation")
+	}
+}
+
 // TestNavigationSwitchesPage 覆盖 view 顶部导航行：概览/供应商按钮切换
 // u.page 并分发到对应页面（四按钮全量覆盖见 TestNavigationCoversAllPages）。
 func TestNavigationSwitchesPage(t *testing.T) {

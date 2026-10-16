@@ -50,11 +50,13 @@ func (u *uiState) modelsView(c *ui.Context) {
 				}
 			}
 			// 载入所选：modelList.Selected 是 *int（nil=未选，-1=无），判空并
-			// 夹紧界后索引（与供应商/账号页同模式）；整表回填顺带清掉过期 msg。
+			// 夹紧界后索引（与供应商/账号页同模式）；整表回填顺带清掉过期 msg，
+			// 并清删除确认位（防 A 行武装、载入 B 行后"确认删除"落刀 B）。
 			if ui.Button(c, "载入所选").Clicked() {
 				if sel := u.modelList.Selected; sel != nil && *sel >= 0 && *sel < len(models) {
 					m := models[*sel]
 					u.modelForm = modelFormData{public: m.PublicModel, upstream: m.UpstreamModel, editID: m.ID}
+					u.modelConfirmDelete = false
 				}
 			}
 			// 删除两段式（裁定 3，spec 要求）：首击只置确认位，须已载入 editID。

@@ -43,7 +43,8 @@ type uiState struct {
 	closeNotice    bool         // 首关教育提示
 	closeConfirmed bool         // 用户已知晓，允许关闭
 	// 供应商页（Task 14）：
-	provList          ui.ListState // 供应商表状态；Selected 是当前行（*int，nil=未选）
+	provList          ui.ListState // 供应商表状态；Selected 经 provSel 指向当前行
+	provSel           int          // 供应商表当前行（-1=无）；provList.Selected 指向它
 	provForm          provFormData // 新建/编辑表单；editID 非空 = 编辑该 id
 	provConfirmDelete bool         // 删除二次确认
 	provTestMsg       string       // 连通测试结果展示
@@ -75,9 +76,11 @@ func newUIState(svc Services, a *app.App) *uiState {
 		page:     "overview",
 		provForm: provFormData{protocol: "anthropic", enabled: true},
 		accForm:  accFormData{enabled: true},
-		accSel:   -1, modelSel: -1}
-	// 表格行选择：Selected 必须非 nil 点击才选行（table.md/outline 约定），
-	// 这里指向状态字段（-1=无），"载入所选/停用·启用/测试"才落得到所选行。
+		provSel:  -1, accSel: -1, modelSel: -1}
+	// 表格行选择：Selected 必须非 nil 点击才选行（mygo ui.ListState.Selected
+	// 注释：*Selected 是所选行，-1 为无），这里指向状态字段（-1=无），
+	// "载入所选/停用·启用/测试"才落得到所选行。
+	u.provList.Selected = &u.provSel
 	u.accList.Selected = &u.accSel
 	u.modelList.Selected = &u.modelSel
 	return u

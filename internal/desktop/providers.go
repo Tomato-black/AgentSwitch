@@ -69,13 +69,15 @@ func (u *uiState) providersView(c *ui.Context) {
 				}
 			}
 			// 载入所选：provList.Selected 是 *int（nil=未选，-1=无），
-			// 判空后按 *sel 索引（简报修正条款 2）。
+			// 判空后按 *sel 索引（简报修正条款 2）。成功即清删除确认位：
+			// 防 A 行武装、载入 B 行后"确认删除"落刀 B。
 			if ui.Button(c, "载入所选").Clicked() {
 				if sel := u.provList.Selected; sel != nil && *sel >= 0 && *sel < len(provs) {
 					p := provs[*sel]
 					u.provForm = provFormData{name: p.Name, protocol: p.Protocol, baseURL: p.BaseURL,
 						enabled: p.Enabled, allowPrivate: p.AllowPrivateUpstream, editID: p.ID}
 					u.provTestMsg = ""
+					u.provConfirmDelete = false
 				}
 			}
 			// 删除：editID 非空才进入二次确认（与测试连通同门槛）
