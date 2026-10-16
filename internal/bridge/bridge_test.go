@@ -1,6 +1,8 @@
 package bridge
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 
@@ -112,6 +114,43 @@ func TestModelsCRUDAndUnique(t *testing.T) {
 	}
 	if err := ms.Remove(m.ID); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAccountProbeStages(t *testing.T) {
+	a := tempApp(t)
+	// 本地 401 上游：httptest 走 127.0.0.1 回环，Probe dns 阶段对回环免解析，
+	// 全离线（不解析/不访问任何真实主机）。
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(up.Close)
+	creds := credential.Manager{
+		Primary:       credential.NewFallbackFile(filepath.Join(t.TempDir(), "s.json")),
+		AllowFallback: true,
+	}
+	ps := Providers{A: a, Creds: &creds}
+	p, err := ps.Create("main", "anthropic", up.URL, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	as := Accounts{A: a, Creds: &creds, KeychainAvailable: func() bool { return false }}
+	av, err := as.Create("acc1", p.ID, "sk-ant-xyz7890", 10, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := as.Test("missing"); r.Stage != "lookup" || r.OK {
+		t.Fatalf("lookup miss %+v", r)
+	}
+	r := as.Test(av.ID)
+	if r.Stage != "auth" || r.OK {
+		t.Fatalf("want auth-stage 401 from local upstream, got %+v", r)
+	}
+	if err := creds.Delete(credential.AccountKey(av.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if r := as.Test(av.ID); r.Stage != "credential" || r.OK {
+		t.Fatalf("credential miss %+v", r)
 	}
 }
 

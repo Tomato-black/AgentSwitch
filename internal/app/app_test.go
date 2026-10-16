@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"AgentSwitch/internal/credential"
 	"AgentSwitch/internal/storage"
 )
 
@@ -23,6 +24,11 @@ func newTestApp(t *testing.T, upstreamURL string, withAccount bool) *App {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { a.Close() })
+	// 测试不得写真实 OS 钥匙环：包内把 Manager.Primary 换成本地 0600 文件
+	// （Open 的生产装配不动；AllowFallback 本已为 true）。
+	a.creds.Primary = credential.NewFallbackFile(filepath.Join(t.TempDir(), "secrets.json"))
+	// best-effort 清理历史测试可能已写入真实钥匙环的同名条目（无钥匙环时忽略错误）。
+	t.Cleanup(func() { _ = credential.OSKeychain{}.Delete("account:a1") })
 	if err := a.Store().Providers().Save(storage.Provider{
 		ID: "p1", Name: "up", Protocol: "anthropic", BaseURL: upstreamURL,
 		Enabled: true, AllowPrivateUpstream: true,

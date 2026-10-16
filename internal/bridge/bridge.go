@@ -50,11 +50,24 @@ func (g Gateway) Status() Status {
 	}
 }
 
-func (g Gateway) Start() error                     { return g.A.StartGateway() }
-func (g Gateway) Stop() error                      { return g.A.StopGateway(context15()) }
-func (g Gateway) RegenerateToken() (string, error) { return g.A.RegenerateToken() }
+func (g Gateway) Start() error { return g.A.StartGateway() }
+func (g Gateway) Stop() error  { return g.A.StopGateway(context15()) }
+func (g Gateway) RegenerateToken() (string, error) {
+	tok, err := g.A.RegenerateToken()
+	if err != nil {
+		return "", err
+	}
+	g.A.Log().Info("token regenerated") // 审计只记事件，绝不记令牌值
+	return tok, nil
+}
+
 func (g Gateway) SaveSettings(port, timeoutSeconds int) (bool, error) {
-	return g.A.SaveSettings(port, timeoutSeconds)
+	restart, err := g.A.SaveSettings(port, timeoutSeconds)
+	if err != nil {
+		return false, err
+	}
+	g.A.Log().Info("settings saved", "port", port, "timeoutSeconds", timeoutSeconds, "restartRequired", restart)
+	return restart, nil
 }
 func (g Gateway) Recent() []telemetry.RequestRecord { return g.A.Recent() }
 
@@ -233,11 +246,19 @@ func (s Accounts) Update(id, name string, priority int) error {
 		return err
 	}
 	a.Name, a.Priority = name, priority
-	return s.A.Store().Accounts().Save(a)
+	if err := s.A.Store().Accounts().Save(a); err != nil {
+		return err
+	}
+	s.A.Log().Info("account updated", "id", id, "name", name, "priority", priority)
+	return nil
 }
 
 func (s Accounts) SetEnabled(id string, on bool) error {
-	return s.A.Store().Accounts().SetEnabled(id, on)
+	if err := s.A.Store().Accounts().SetEnabled(id, on); err != nil {
+		return err
+	}
+	s.A.Log().Info("account enabled", "id", id, "on", on)
+	return nil
 }
 
 func (s Accounts) RotateSecret(id, apiKey string, allowFallback bool) error {
@@ -268,6 +289,25 @@ func (s Accounts) Remove(id string) error {
 	s.Creds.Delete(a.SecretKey)
 	s.A.Log().Info("account removed", "id", id)
 	return s.A.Store().Accounts().Delete(id)
+}
+
+// Test 分级探测单账号：lookup（账号/供应商定位）→ credential（密钥读取）→
+// provider.Probe（15s 上下文，与 Providers.Test 同形态）。密钥经注入的
+// s.Creds 读取（与 Create/Rotate 同一 store；Task 12 生产两侧同为 a.Creds()）。
+func (s Accounts) Test(id string) provider.ProbeResult {
+	a, err := s.A.Store().Accounts().Get(id)
+	if err != nil {
+		return provider.ProbeResult{Stage: "lookup", Error: err.Error()}
+	}
+	p, err := s.A.Store().Providers().Get(a.ProviderID)
+	if err != nil {
+		return provider.ProbeResult{Stage: "lookup", Error: err.Error()}
+	}
+	key, err := s.Creds.Get(a.SecretKey)
+	if err != nil {
+		return provider.ProbeResult{Stage: "credential", Error: err.Error()}
+	}
+	return provider.Probe(context15(), p.BaseURL, string(key), p.AllowPrivateUpstream)
 }
 
 // tail4 取密钥本体尾 4 位（不足 4 位时掩码为 "****"）。
@@ -326,7 +366,17 @@ func (s Models) Update(id, public, upstream string) error {
 		return storage.ErrNotFound
 	}
 	m.PublicModel, m.UpstreamModel = public, upstream
-	return s.A.Store().Models().Save(m)
+	if err := s.A.Store().Models().Save(m); err != nil {
+		return err
+	}
+	s.A.Log().Info("model updated", "id", id, "public", public, "upstream", upstream)
+	return nil
 }
 
-func (s Models) Remove(id string) error { return s.A.Store().Models().Delete(id) }
+func (s Models) Remove(id string) error {
+	if err := s.A.Store().Models().Delete(id); err != nil {
+		return err
+	}
+	s.A.Log().Info("model removed", "id", id)
+	return nil
+}
