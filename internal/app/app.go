@@ -51,17 +51,24 @@ type Options struct {
 
 // App 是单实例应用核心：库、日志、环形缓冲、凭据管理器与网关句柄。
 type App struct {
-	mu       sync.Mutex
-	opts     Options
-	store    storage.Store
-	logClose io.Closer
-	log      *slog.Logger
-	ring     *telemetry.Ring
-	creds    credential.Manager
-	gw       *gateway.Server
-	state    StateInfo
-	onState  []func(StateInfo)
-	onRecord []func(telemetry.RequestRecord)
+	mu sync.Mutex
+	// settingsMu 串行化 settings 的 load→mutate→save 临界区（config.Save 写全部键，
+	// 交错会把旧令牌重新持久化）。锁序：settingsMu 可嵌套取 a.mu（SaveSettings→State），
+	// 绝不在持 a.mu 时取 settingsMu。纯读路径（currentToken/Limits）不加此锁。
+	settingsMu sync.Mutex
+	// lifecycleMu 串行化 StartGateway/StopGateway 全函数，关闭双启动与 Stop 竞态窗口。
+	// 锁序最外层：可取 a.mu / settingsMu，反向禁止。
+	lifecycleMu sync.Mutex
+	opts        Options
+	store       storage.Store
+	logClose    io.Closer
+	log         *slog.Logger
+	ring        *telemetry.Ring
+	creds       credential.Manager
+	gw          *gateway.Server
+	state       StateInfo
+	onState     []func(StateInfo)
+	onRecord    []func(telemetry.RequestRecord)
 }
 
 // Open 开库、迁移、建日志与凭据管理器，确保网关令牌存在（空则生成并持久化）。
@@ -93,17 +100,22 @@ func Open(opts Options) (*App, error) {
 		// settings 的 credential.fallback_enabled 留作后续 UI 记忆偏好（P0-A 不接）。
 		creds: credential.Manager{Primary: credential.OSKeychain{}, Fallback: fb, AllowFallback: true},
 	}
-	// 确保令牌存在
-	s, err := a.settings()
-	if err != nil {
+	// 确保令牌存在（settingsMu 临界区，与 RegenerateToken/SaveSettings 同口径）
+	if err := func() error {
+		a.settingsMu.Lock()
+		defer a.settingsMu.Unlock()
+		s, err := a.settings()
+		if err != nil {
+			return err
+		}
+		if s.GatewayToken == "" {
+			_, err = a.regenerateToken()
+			return err
+		}
+		return nil
+	}(); err != nil {
 		a.Close()
 		return nil, err
-	}
-	if s.GatewayToken == "" {
-		if _, err := a.RegenerateToken(); err != nil {
-			a.Close()
-			return nil, err
-		}
 	}
 	a.setState(StateInfo{State: StateStopped, Since: time.Now(), Version: opts.Version})
 	return a, nil
@@ -185,7 +197,16 @@ func (a *App) usableAccounts() []account.Account {
 
 // StartGateway 组装 gateway.Deps 并启动：Starting → Running/Degraded
 // （零启用账号 → Degraded 带 reason）；任一步失败 → Failed（reason=err）。
+// lifecycleMu 串行化全函数；已在运行时拒绝且不改变状态（状态必须来自实际服务状态）。
 func (a *App) StartGateway() error {
+	a.lifecycleMu.Lock()
+	defer a.lifecycleMu.Unlock()
+	a.mu.Lock()
+	running := a.gw != nil
+	a.mu.Unlock()
+	if running {
+		return fmt.Errorf("gateway already running")
+	}
 	a.setState(StateInfo{State: StateStarting, Since: time.Now(), Version: a.State().Version})
 	s, err := a.settings()
 	if err != nil {
@@ -269,7 +290,10 @@ func (a *App) StartGateway() error {
 }
 
 // StopGateway 停网关：Stopping → Stopped；无网关时幂等直接返回。
+// lifecycleMu 与 StartGateway 串行，关闭「刚停又被并发启动」的竞态窗口。
 func (a *App) StopGateway(ctx context.Context) error {
+	a.lifecycleMu.Lock()
+	defer a.lifecycleMu.Unlock()
 	a.mu.Lock()
 	gw := a.gw
 	a.mu.Unlock()
@@ -287,7 +311,15 @@ func (a *App) StopGateway(ctx context.Context) error {
 }
 
 // RegenerateToken 生成 32 字节 crypto/rand 令牌（hex）并持久化到 settings。
+// settingsMu 包住完整 load→mutate→save，避免与 SaveSettings 交错把旧令牌重新写回。
 func (a *App) RegenerateToken() (string, error) {
+	a.settingsMu.Lock()
+	defer a.settingsMu.Unlock()
+	return a.regenerateToken()
+}
+
+// regenerateToken 是无锁实现，调用方必须已持 settingsMu。
+func (a *App) regenerateToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
@@ -305,7 +337,10 @@ func (a *App) RegenerateToken() (string, error) {
 }
 
 // SaveSettings 保存端口与请求超时；网关运行中且端口变化时要求重启。
+// load→mutate→save 整段持 settingsMu（config.Save 写全部 7 键，交错会覆盖他人写入）。
 func (a *App) SaveSettings(port, timeoutSeconds int) (bool, error) {
+	a.settingsMu.Lock()
+	defer a.settingsMu.Unlock()
 	s, err := a.settings()
 	if err != nil {
 		return false, err

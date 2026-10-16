@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"AgentSwitch/internal/storage"
@@ -123,5 +124,67 @@ func TestStateCallbacksFire(t *testing.T) {
 	}
 	if len(got) < 2 || got[0] != StateStarting || got[len(got)-1] != StateRunning {
 		t.Fatalf("states %v", got)
+	}
+}
+
+// TestDoubleStartRejected：运行中再 Start 必须拒绝且不改变状态（状态必须来自实际服务状态，spec §5）。
+func TestDoubleStartRejected(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer up.Close()
+	a := newTestApp(t, up.URL, true)
+	if err := a.StartGateway(); err != nil {
+		t.Fatal(err)
+	}
+	if a.State().State != StateRunning {
+		t.Fatalf("first start: %s", a.State().State)
+	}
+	if err := a.StartGateway(); err == nil {
+		t.Fatal("second start must be rejected")
+	}
+	if a.State().State != StateRunning {
+		t.Fatalf("rejected start must not change state, got %s", a.State().State)
+	}
+	if err := a.StopGateway(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if a.State().State != StateStopped {
+		t.Fatalf("after stop %s", a.State().State)
+	}
+}
+
+// TestSettingsConcurrencyConsistency：RegenerateToken 与 SaveSettings 并发交错下
+// load→mutate→save 临界区不得互相覆盖（config.Save 写全部 7 键含 GatewayToken）。
+// 断言强度说明：令牌回滚窗口由 settingsMu 临界区构造闭合，无法在单测里直接观测中间态；
+// 本测试是行为烟测——无 panic、最终 token 非空、端口值已持久化，纳入 -race 运行。
+func TestSettingsConcurrencyConsistency(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer up.Close()
+	a := newTestApp(t, up.URL, false)
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			if _, err := a.SaveSettings(17890, 120); err != nil {
+				t.Errorf("save settings: %v", err)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			if _, err := a.RegenerateToken(); err != nil {
+				t.Errorf("regenerate: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	s, err := a.settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.GatewayToken == "" {
+		t.Fatal("token must stay non-empty under concurrent saves")
+	}
+	if s.Port != 17890 || s.RequestTimeoutSeconds != 120 {
+		t.Fatalf("settings not persisted: port=%d timeout=%d", s.Port, s.RequestTimeoutSeconds)
 	}
 }
