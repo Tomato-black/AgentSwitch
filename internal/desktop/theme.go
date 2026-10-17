@@ -87,12 +87,15 @@ func stateWord(state string) string {
 }
 
 // stateColor 给状态配 LED 色：running=健康青（=Accent），degraded=琥珀，
-// failed=红，stopped/未知=弱灰。
+// failed=红，cooling=琥珀（密钥冷却，概览池状态条；常亮不呼吸），
+// stopped/未知=弱灰。
 func stateColor(t *ui.Theme, state string) ui.Color {
 	switch state {
 	case "running":
 		return t.Accent
 	case "degraded":
+		return t.Warning
+	case "cooling":
 		return t.Warning
 	case "failed":
 		return t.Danger

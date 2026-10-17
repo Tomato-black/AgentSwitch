@@ -36,6 +36,9 @@ func testUIWithCreds(t *testing.T) (*uiState, *app.App, credential.Store) {
 		Gateway: bridge.Gateway{A: a}, Providers: bridge.Providers{A: a},
 		Accounts: bridge.Accounts{A: a, Creds: creds, KeychainAvailable: func() bool { return false }},
 		Models:   bridge.Models{A: a},
+		// 导航测试会点到模型聚合页（Task 9）：该页直读 Channels.A——与服务
+		// 同源注入，密钥环探测同样钉死为 false 保持离线确定性。
+		Channels: bridge.Channels{A: a, Creds: creds, KeychainAvailable: func() bool { return false }},
 	}
 	return newUIState(svc, a), a, creds
 }

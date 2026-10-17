@@ -146,3 +146,23 @@ func TestOverviewEmptyRequestsHint(t *testing.T) {
 		t.Fatalf("empty hint missing: %v", tt.Texts())
 	}
 }
+
+// TestOverviewPoolStatusShowsCooling 覆盖池状态条（spec §8）：冷却密钥以
+// 「渠道/密钥 冷却 Ns」出现（Warning 文案）；PoolStatus 只回冷却中的密钥，
+// 正常密钥不渲染成条目。
+func TestOverviewPoolStatusShowsCooling(t *testing.T) {
+	u, _ := testUI(t)
+	if _, err := u.svc.Channels.Create("anthropic-compatible", "m", "https://m.example.com", 10, true, false); err != nil {
+		t.Fatal(err)
+	}
+	cid := u.svc.Channels.List()[0].ID
+	if _, err := u.svc.Channels.AddKeys(cid, "k1", "sk-abc12345", true); err != nil {
+		t.Fatal(err)
+	}
+	d, _ := u.svc.Channels.Get(cid)
+	u.svc.Gateway.A.Cooldowns().MarkClassified(d.Keys[0].ID, "rate_limited", 30, time.Now())
+	tt := ui.NewTester(u.overviewView, 900, 600)
+	if !tt.HasText("冷却") || !tt.HasText("m/k1") {
+		t.Fatalf("pool strip missing: %v", tt.Texts())
+	}
+}

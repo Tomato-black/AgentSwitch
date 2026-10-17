@@ -15,7 +15,7 @@ import (
 const defaultSnippetPort = 17890
 
 // overviewView 是概览页（面板头形态，spec §5.1）：LED+状态词+等宽地址的
-// 面板头、操作行、设置折叠面板、令牌行、配置片段、P0-B 槽位注释与最近
+// 面板头、操作行、设置折叠面板、令牌行、配置片段、密钥池状态条与最近
 // 请求表。首关横条在 view 层（desktop.go），不在本页。
 func (u *uiState) overviewView(c *ui.Context) {
 	t := c.Theme()
@@ -147,9 +147,22 @@ func (u *uiState) overviewView(c *ui.Context) {
 			mygo.Clipboard.Write(transfer.TextData(snippet))
 		}
 
-		// P0-B 槽位（spec §9）：账号池状态条预留位——每账号一枚迷你状态点
-		// +名称。本期只留位不实现，接入点在此 Divider 之后。
+		// 池状态条（spec §8）：每枚密钥一枚状态点 + 渠道名/密钥名；
+		// 冷却中 = Warning 常亮 + 剩余秒。正常密钥不出现（PoolStatus 只回冷却）。
 		ui.Divider(c)
+		if pool := u.svc.Gateway.PoolStatus(); len(pool) > 0 {
+			ui.Row(c).Gap(12).Children(func() {
+				for _, e := range pool {
+					p := e
+					ui.Row(c).Gap(6).Children(func() {
+						ledDot(c, t, "cooling")
+						ui.Textf(c, "%s/%s 冷却 %ds", p.ChannelName, p.KeyName, p.RemainingSec).TextColor(t.Warning)
+					})
+				}
+			})
+		} else {
+			ui.Text(c, "密钥池: 全部就绪").TextColor(t.TextMuted)
+		}
 
 		// 最近请求：六列不变；时间/状态/耗时等宽化，非 2xx 状态染语义色
 		if len(u.recent) == 0 {

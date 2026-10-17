@@ -57,11 +57,9 @@ type uiState struct {
 	accForm          accFormData  // 新建/编辑表单；editID 非空 = 编辑该 id
 	accConfirmDelete bool         // 删除二次确认（两段式）
 	accTestMsg       string       // 账号连通测试结果展示（裁定 1，独立于表单 msg）
-	// 模型页（Task 15）：
-	modelList          ui.ListState // 模型表状态；Selected 经 modelSel 指向当前行
-	modelSel           int          // 模型表当前行（-1=无）
-	modelForm          modelFormData
-	modelConfirmDelete bool // 删除二次确认（裁定 3，两段式）
+	// 模型聚合页（Task 9 重写：跨渠道只读 + 行内启停）：
+	modelList ui.ListState // 聚合表状态；Selected 经 modelSel 指向当前行
+	modelSel  int          // 聚合表当前行（-1=无）
 	// 渠道页（Task 8）：
 	chList            ui.ListState // 渠道表状态；Selected 经 chSel 指向当前行
 	chSel             int          // 渠道表当前行（-1=无）；详情三段面板锚定行选中
@@ -71,7 +69,7 @@ type uiState struct {
 	keyForm           keyFormData  // 密钥批量导入表单
 	keyConfirmDelete  bool         // 密钥删除二次确认（两段式）
 	chModelForm       channelModelFormData
-	chModelConfirmDel bool   // 模型删除二次确认（两段式，审查 Finding 1；名字避开模型页 modelConfirmDelete）
+	chModelConfirmDel bool   // 渠道模型删除二次确认（两段式，审查 Finding 1）
 	prevType          string // 类型 Select 变更检测（预填 BaseURL）
 	confirmOwnerID    string // 确认位武装时的渠道 id——确认钮仅对本渠道详情渲染（审查 Finding 2）
 	prevChannelID     string // 详情渠道变更检测：变更即清子选中与确认位（审查 Finding 2）
