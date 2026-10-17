@@ -127,3 +127,37 @@ func TestModelsSearchFilter(t *testing.T) {
 		t.Fatalf("过滤失效: %v", tt.Texts())
 	}
 }
+
+// TestModelsChipOpensRowOwnChannel 覆盖来源渠道 chip 跳转目标 = 本行
+// ChannelID（review fix）：渠道名可重复（Create/Update 不查重），按名取
+// 首个会开错渠道。同名两渠道「dup」——B 优先级低（10）故在 List() 序
+// （priority ASC）里靠前；alpha 行属 A。点排序后首行（alpha）的 chip
+// 必须开 A 的详情，若按名首命中会错开 B。
+func TestModelsChipOpensRowOwnChannel(t *testing.T) {
+	u, _ := testUI(t)
+	a, _ := u.svc.Channels.Create("anthropic-official", "dup", "https://a.example.com", 20, true, false)
+	b, _ := u.svc.Channels.Create("anthropic-official", "dup", "https://b.example.com", 10, true, false)
+	u.svc.Channels.AddModel(a.ID, "alpha", "up-a")
+	u.svc.Channels.AddModel(b.ID, "beta", "up-b")
+	u.page = "models"
+	tt := ui.NewTester(u.modelsView, 1080, 720)
+	// 首个「dup」label = 排序后首行（alpha，属 A）的来源渠道 chip。
+	if err := tt.Click("dup"); err != nil {
+		t.Fatal(err)
+	}
+	if u.chDetailID != a.ID {
+		t.Fatalf("chip must open row's own channel: chDetailID=%q want a=%q (name-first-hit would be b=%q)",
+			u.chDetailID, a.ID, b.ID)
+	}
+}
+
+// TestModelsChipNoJumpOnMissingChannel 覆盖「查不到不跳」：行指向的渠道已
+// 不存在（孤儿行）时保持原页，不得落进空详情。
+func TestModelsChipNoJumpOnMissingChannel(t *testing.T) {
+	u, _ := testUI(t)
+	u.page = "models"
+	u.openModelChannel("no-such-channel")
+	if u.page != "models" {
+		t.Fatalf("missing channel must not navigate, page=%q", u.page)
+	}
+}

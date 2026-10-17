@@ -103,12 +103,12 @@ func (u *uiState) modelsView(c *ui.Context) {
 			case 1:
 				ui.Text(c, m.PublicModel).Bold().SingleLine()
 			case 2:
-				// 来源渠道 chip = 增删改入口（决策 7）：点进该渠道详情。
+				// 来源渠道 chip = 增删改入口（决策 7）：点进本行渠道的详情。
 				b := ui.ButtonBase(c).Children(func() {
 					softBadge(c, t, s, "gray", m.ChannelName)
 				})
 				if b.Clicked() {
-					u.openChannelByName(m.ChannelName)
+					u.openModelChannel(m.ChannelID)
 				}
 			case 3:
 				ui.Text(c, m.UpstreamModel).SingleLine().Font(monoFont).TextColor(t.TextMuted)
@@ -117,13 +117,12 @@ func (u *uiState) modelsView(c *ui.Context) {
 	})
 }
 
-// openChannelByName 按渠道名跳详情：聚合行只带 ChannelName，回查列表得 id；
-// 查不到（行是孤儿或重名取首个）不跳。
-func (u *uiState) openChannelByName(name string) {
-	for _, ch := range u.svc.Channels.List() {
-		if ch.Name == name {
-			u.openChannelDetail(ch.ID)
-			return
-		}
+// openModelChannel 按行自带 ChannelID 跳渠道详情：行的身份是渠道 id，不按
+// 名字回查——渠道名可重复（Create/Update 不查重），按名取首个会开错渠道。
+// 渠道已不存在（Get 失败，孤儿行）则不跳（brief「查不到不跳」）。
+func (u *uiState) openModelChannel(channelID string) {
+	if _, err := u.svc.Channels.Get(channelID); err != nil {
+		return
 	}
+	u.openChannelDetail(channelID)
 }
