@@ -1,11 +1,13 @@
-// channels_test.go 占位：旧多密钥渠道页测试依赖的 AddKeys/Keys/PoolStatus 等
-// 已随渠道单 Key 重构退役。保留 channelStats 纯函数测试；页面测试由 Task 14
-// 大幅改写、死代码由 Task 16 清理。
+// channels_test.go 是渠道页纯函数测试（Task 14）：预设回填、表单校验、
+// 删除引用警告。渲染薄壳不测字符串细节（同 logicalmodels 的纯函数口径）。
 package desktop
 
 import (
+	"strings"
 	"testing"
 
+	"AgentSwitch/internal/bridge"
+	"AgentSwitch/internal/presets"
 	"AgentSwitch/internal/telemetry"
 )
 
@@ -14,5 +16,78 @@ func TestChannelStats(t *testing.T) {
 	ok, fail := channelStats(recs, "main")
 	if ok != 1 || fail != 1 {
 		t.Fatalf("%d %d", ok, fail)
+	}
+}
+
+// TestPresetPreselectFillsForm 覆盖预设网格点选回填：qwen 预设写入
+// presetID/protocol/base_url/建议模型，且不冲掉用户已填的名称。
+func TestPresetPreselectFillsForm(t *testing.T) {
+	var qwen presets.ChannelPreset
+	for _, p := range presets.All() {
+		if p.ID == "qwen" {
+			qwen = p
+			break
+		}
+	}
+	if qwen.ID == "" {
+		t.Fatal("qwen preset missing")
+	}
+	f := channelForm{name: "我的渠道"}
+	applyPreset(&f, qwen)
+	if f.presetID != "qwen" {
+		t.Fatalf("presetID = %q, want qwen", f.presetID)
+	}
+	if f.protocol != "openai" {
+		t.Fatalf("protocol = %q, want openai", f.protocol)
+	}
+	if f.baseURL != qwen.BaseURL {
+		t.Fatalf("baseURL = %q, want %q", f.baseURL, qwen.BaseURL)
+	}
+	if !strings.Contains(f.suggestions, "qwen-max") {
+		t.Fatalf("suggestions = %q, want qwen-max", f.suggestions)
+	}
+	if f.name != "我的渠道" {
+		t.Fatalf("applyPreset must not clobber name, got %q", f.name)
+	}
+}
+
+// TestChannelFormValidate 覆盖缺 name/key/base_url 的错误信息；详情态
+// （editID 非空）Key 留空=不改，不拦。
+func TestChannelFormValidate(t *testing.T) {
+	f := channelForm{}
+	if err := f.validate(); err == nil || !strings.Contains(err.Error(), "名称") {
+		t.Fatalf("missing name: %v", err)
+	}
+	f.name = "n"
+	if err := f.validate(); err == nil || !strings.Contains(err.Error(), "Key") {
+		t.Fatalf("missing key: %v", err)
+	}
+	f.apiKey = "sk-1"
+	if err := f.validate(); err == nil || !strings.Contains(err.Error(), "Base URL") {
+		t.Fatalf("missing base_url: %v", err)
+	}
+	f.baseURL = "https://api.example.com"
+	if err := f.validate(); err != nil {
+		t.Fatalf("complete form: %v", err)
+	}
+	f2 := channelForm{editID: "c1", name: "n", baseURL: "https://api.example.com"}
+	if err := f2.validate(); err != nil {
+		t.Fatalf("edit keep-key must pass: %v", err)
+	}
+}
+
+// TestDeleteWarnsWhenReferenced 覆盖删除引用警告：referencedBy 列出
+// 目标链引用该渠道的逻辑模型名，无引用返回空。
+func TestDeleteWarnsWhenReferenced(t *testing.T) {
+	models := []bridge.ModelView{
+		{Name: "my-code", Targets: []bridge.TargetView{{ChannelID: "c1"}, {ChannelID: "c2"}}},
+		{Name: "chat", Targets: []bridge.TargetView{{ChannelID: "c2"}}},
+	}
+	got := referencedBy(models, "c1")
+	if len(got) != 1 || got[0] != "my-code" {
+		t.Fatalf("referencedBy(c1) = %v, want [my-code]", got)
+	}
+	if got := referencedBy(models, "nope"); len(got) != 0 {
+		t.Fatalf("referencedBy(nope) = %v, want empty", got)
 	}
 }

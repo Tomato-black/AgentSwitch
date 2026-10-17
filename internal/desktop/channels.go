@@ -1,44 +1,110 @@
-// channels.go 占位：旧多密钥渠道页依赖的 AddKeys/KeyCount/PoolStatus 等已随
-// 渠道单 Key 重构退役。本 Task 只保留仍被消费的纯助手（预设解析、遥测统计、
-// 分段控件），页面本体由 Task 14 重写、死代码由 Task 16 清理。
+// channels.go 是渠道页（logical-models spec §6.3 / Task 14）：卡片列表（单
+// Key 语义）+ 预设网格新建页 + 详情页（Key 更新留空不改、建议模型编辑、连通
+// 测试、删除引用警告）。纯助手 applyPreset / channelForm.validate /
+// referencedBy 供测试直断言；渲染薄壳不测字符串细节。密钥池与 public/
+// upstream 模型映射 UI 已随渠道单 Key 重构退役。
 package desktop
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/egoist/mygo/ui"
 
-	"AgentSwitch/internal/provider"
+	"AgentSwitch/internal/bridge"
+	"AgentSwitch/internal/presets"
 	"AgentSwitch/internal/telemetry"
 )
 
-// presetLabels 供 Select 展示；返回 labels 与 label→id 映射。
-func presetLabels() ([]string, map[string]string) {
-	ps := provider.Presets()
-	labels := make([]string, 0, len(ps))
-	byLabel := map[string]string{}
-	for _, p := range ps {
-		labels = append(labels, p.Label)
-		byLabel[p.Label] = p.ID
-	}
-	return labels, byLabel
+// channelForm 是渠道新建/详情编辑的表单状态：editID 非空 = 编辑该渠道
+// （apiKey 留空 = 不改密钥）；presetID 由预设网格点选写入（自定义为空）。
+type channelForm struct {
+	presetID     string
+	protocol     string
+	name         string
+	baseURL      string
+	apiKey       string // 新建必填；详情留空=保持原 Key
+	suggestions  string // 逗号/换行分隔；预设回填默认模型
+	enabled      bool
+	allowPrivate bool
+	msg          string
+	editID       string
 }
 
-func presetOf(typeID string) provider.Preset {
-	p, _ := provider.LookupPreset(typeID)
-	return p
+// applyPreset 把预设回填进表单：protocol / base_url / 建议模型与 presetID；
+// name、apiKey 等用户已填字段不动（预设只带连接默认值）。
+func applyPreset(form *channelForm, p presets.ChannelPreset) {
+	form.presetID = p.ID
+	form.protocol = p.Protocol
+	form.baseURL = p.BaseURL
+	form.suggestions = strings.Join(p.DefaultModels, "\n")
 }
 
-// resolveTypeID 把表单里的类型值解析回预设 id：mygo Select 把选中的选项
-// 原文（label）写回 *selected，而初始化/载入所选/测试直赋的是 id——
-// label 经映射还原为 id，其余（含裸 id）原样返回。预填、描述与提交共用。
-func resolveTypeID(byLabel map[string]string, v string) string {
-	if id, ok := byLabel[v]; ok {
-		return id
+// validate 校验表单：缺 name/key/base_url 依次报中文错误；编辑态
+// （editID 非空）Key 留空 = 不改，不拦。
+func (f channelForm) validate() error {
+	if strings.TrimSpace(f.name) == "" {
+		return fmt.Errorf("需要填写渠道名称")
 	}
-	return v
+	if f.editID == "" && strings.TrimSpace(f.apiKey) == "" {
+		return fmt.Errorf("需要填写 API Key")
+	}
+	if strings.TrimSpace(f.baseURL) == "" {
+		return fmt.Errorf("需要填写 Base URL")
+	}
+	return nil
+}
+
+// parseSuggestions 把建议模型多行/逗号分隔文本拆成列表（去空白、空串与重复，
+// 保序）；SetSuggestions 侧亦有剔除，双保险。
+func parseSuggestions(text string) []string {
+	fields := strings.FieldsFunc(text, func(r rune) bool {
+		return r == ',' || r == '\n' || r == '\r'
+	})
+	out := make([]string, 0, len(fields))
+	seen := map[string]bool{}
+	for _, f := range fields {
+		f = strings.TrimSpace(f)
+		if f == "" || seen[f] {
+			continue
+		}
+		seen[f] = true
+		out = append(out, f)
+	}
+	return out
+}
+
+// referencedBy 列出目标链引用了该渠道的逻辑模型名（删除警告用）；同一模型
+// 多次引用只记一次，顺序即 List 顺序。
+func referencedBy(models []bridge.ModelView, channelID string) []string {
+	var names []string
+	seen := map[string]bool{}
+	for _, m := range models {
+		if seen[m.Name] {
+			continue
+		}
+		for _, t := range m.Targets {
+			if t.ChannelID == channelID {
+				names = append(names, m.Name)
+				seen[m.Name] = true
+				break
+			}
+		}
+	}
+	return names
+}
+
+// channelRefNames 是 referencedBy 的桌面侧取数（Services.Logical 接线，
+// 未挂时返回空）。
+func channelRefNames(u *uiState, channelID string) []string {
+	if u.svc.Logical == nil {
+		return nil
+	}
+	return referencedBy(u.svc.Logical.List(), channelID)
 }
 
 // channelStats 统计遥测环里该渠道名的近况：ok=2xx、fail=Status==0||>=400
-// （与概览 recentStats 的失败口径一致），按 rec.Channel（渠道名）过滤。
+// （与 recentStats 的失败口径一致），按 rec.Channel（渠道名）过滤。
 func channelStats(recs []telemetry.RequestRecord, channel string) (ok, fail int) {
 	for _, r := range recs {
 		if r.Channel != channel {
@@ -54,51 +120,365 @@ func channelStats(recs []telemetry.RequestRecord, channel string) (ok, fail int)
 	return ok, fail
 }
 
-// keyStats 统计遥测环里该渠道+密钥名的近况：口径同 channelStats。
-func keyStats(recs []telemetry.RequestRecord, channel, account string) (ok, fail int) {
-	for _, r := range recs {
-		if r.Channel != channel || r.Account != account {
-			continue
-		}
-		switch {
-		case r.Status == 0 || r.Status >= 400:
-			fail++
-		case r.Status >= 200 && r.Status < 300:
-			ok++
-		}
-	}
-	return ok, fail
+// openChannelNew 进新建页并复位表单（预设网格从头选）。
+func (u *uiState) openChannelNew() {
+	u.resetChannelForm()
+	u.chView = "new"
 }
 
-// segmented 是自组分段控件（spec §4）：SegmentedBase 的框架默认选中片取
-// pressedColor——浅色下是 Background 白片，白底隐身（toggle.go:45-54），
-// 故选中片显式上应用级选中灰 selectedColor，Track 上 SurfacePressed。
-func segmented(c *ui.Context, t *ui.Theme, selected *int, labels []string) {
-	parts := ui.SegmentedBase(c, selected, len(labels))
-	parts.Track.Background(t.SurfacePressed).Radius(8).Padding(3).Gap(3).Children(func() {
-		for i, label := range labels {
-			seg := parts.Segment(i)
-			if i == *selected {
-				seg.Background(selectedColor(t))
+// openChannelDetail 进详情页并回显表单：Key 框恒空（留空=不改），建议模型
+// 回显到多行文本。
+func (u *uiState) openChannelDetail(id string) {
+	u.chView = "detail"
+	u.chDetailID = id
+	u.chTestMsg = ""
+	u.chKeyInput = ""
+	u.chSuggText = ""
+	u.chForm = channelForm{editID: id}
+	d, err := u.svc.Channels.Get(id)
+	if err != nil {
+		u.chForm.msg = "渠道不存在或已删除"
+		return
+	}
+	u.chForm = channelForm{
+		editID: id, presetID: d.PresetID, protocol: d.Protocol,
+		name: d.Name, baseURL: d.BaseURL,
+		enabled: d.Enabled, allowPrivate: d.AllowPrivate,
+	}
+	u.chSuggText = strings.Join(d.Suggestions, "\n")
+}
+
+// resetChannelForm 复位新建表单：协议默认 openai、启用；预设字段清空待选。
+func (u *uiState) resetChannelForm() {
+	u.chForm = channelForm{protocol: "openai", enabled: true}
+	u.chTestMsg = ""
+	u.chKeyInput = ""
+	u.chSuggText = ""
+}
+
+// createChannel 落「创建渠道」：校验 → Create（单 Key）→ 建议模型随建随写
+// → 进详情（核对 Key 与建议）。
+func (u *uiState) createChannel() {
+	if err := u.chForm.validate(); err != nil {
+		u.chForm.msg = err.Error()
+		return
+	}
+	v, err := u.svc.Channels.Create(u.chForm.presetID, u.chForm.name, u.chForm.baseURL,
+		u.chForm.protocol, u.chForm.apiKey, true, u.chForm.allowPrivate)
+	if err != nil {
+		u.chForm.msg = err.Error()
+		return
+	}
+	if sugg := parseSuggestions(u.chForm.suggestions); len(sugg) > 0 {
+		_ = u.svc.Channels.SetSuggestions(v.ID, sugg)
+	}
+	u.openChannelDetail(v.ID)
+}
+
+// saveChannelDetail 落详情「保存」：校验 → Update（Key 框留空=不改）→
+// 建议模型全量替换。
+func (u *uiState) saveChannelDetail() {
+	if err := u.chForm.validate(); err != nil {
+		u.chTestMsg = err.Error()
+		return
+	}
+	if err := u.svc.Channels.Update(u.chForm.editID, u.chForm.name, u.chForm.baseURL,
+		u.chKeyInput, u.chForm.enabled, u.chForm.allowPrivate); err != nil {
+		u.chTestMsg = err.Error()
+		return
+	}
+	if err := u.svc.Channels.SetSuggestions(u.chForm.editID, parseSuggestions(u.chSuggText)); err != nil {
+		u.chTestMsg = err.Error()
+		return
+	}
+	u.chKeyInput = ""
+	u.chTestMsg = "已保存"
+}
+
+// testChannelDetail 落「测试连通」：结果进 chTestMsg 信息位。
+func (u *uiState) testChannelDetail() {
+	res := u.svc.Channels.Test(u.chDetailID)
+	if res.OK {
+		u.chTestMsg = "连通正常 (" + res.Stage + ")"
+		return
+	}
+	u.chTestMsg = res.Stage + " 失败: " + res.Error
+}
+
+// channelsView 是渠道页列表态：页头「＋ 添加渠道」+ 渠道卡流（名、协议、
+// base_url、HasKey、建议模型数）。卡体点击进详情；空态引导添加。
+func (u *uiState) channelsView(c *ui.Context) {
+	t := c.Theme()
+	s := softs(t)
+	chans := u.svc.Channels.List()
+	ui.Column(c).Gap(12).Children(func() {
+		ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "渠道").Bold().FontSize(t.FontSize + 2)
+			ui.Textf(c, "%d 个渠道", len(chans)).TextColor(t.TextMuted)
+			ui.Box(c).Grow(1)
+			if pillButton(c, t, "＋ 添加渠道").Clicked() {
+				u.openChannelNew()
 			}
-			seg.Radius(6).Padding(6, 12).Center().Children(func() {
-				ui.Text(c, label).SingleLine()
+		})
+		if u.chTestMsg != "" {
+			ui.Text(c, u.chTestMsg)
+		}
+		if len(chans) == 0 {
+			ui.Column(c).Gap(10).AlignItems(ui.Center).Padding(24).Children(func() {
+				ui.Text(c, "还没有渠道").Bold()
+				ui.Text(c, "添加渠道后，逻辑模型目标才能挂上").TextColor(t.TextMuted)
+				if pillButton(c, t, "＋ 添加渠道").Clicked() {
+					u.openChannelNew()
+				}
 			})
+			return
+		}
+		for _, ch := range chans {
+			u.channelCard(c, t, s, ch)
 		}
 	})
 }
 
-// labelsOf 保证当前值在 Select 选项内（mygo Select 对未知值的行为未验证，
-// 不假定——把当前 typeID 的 label 兜底拼接进选项）。
-func labelsOf(labels []string, byLabel map[string]string, typeID string) []string {
-	for _, l := range labels {
-		if byLabel[l] == typeID {
-			return labels
+// channelCard 是一枚渠道卡：tile + 名称/徽章行（启用、HasKey）+ 协议·
+// base_url + 建议模型数与近况 meta。卡体 ButtonBase 点击进详情。
+func (u *uiState) channelCard(c *ui.Context, t *ui.Theme, s softPalette, ch bridge.ChannelView) {
+	okN, failN := channelStats(u.recent, ch.Name)
+	card(c, t, func() {
+		b := ui.ButtonBase(c).Grow(1).Gap(12).Children(func() {
+			tile(c, t, s, ch.Name, 40)
+			ui.Column(c).Gap(4).Grow(1).Children(func() {
+				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, ch.Name).Bold().SingleLine()
+					if ch.Enabled {
+						softBadge(c, t, s, "ok", "启用")
+					} else {
+						softBadge(c, t, s, "gray", "已停用")
+					}
+					if ch.HasKey {
+						softBadge(c, t, s, "act", "有 Key")
+					} else {
+						softBadge(c, t, s, "warn", "无 Key")
+					}
+				})
+				ui.Text(c, ch.Protocol+" · "+ch.BaseURL).Font(monoFont).TextColor(t.TextMuted).SingleLine()
+				meta := fmt.Sprintf("建议模型 %d 个", ch.SuggestionCount)
+				if okN+failN > 0 {
+					meta += fmt.Sprintf(" · 近 %d 条 %d✓ %d✗", okN+failN, okN, failN)
+				}
+				ui.Text(c, meta).TextColor(t.TextMuted)
+			})
+		})
+		if b.Clicked() {
+			u.openChannelDetail(ch.ID)
 		}
+	})
+}
+
+// channelNewView 是新建页：预设网格（ID+DisplayName tile，点选 applyPreset
+// 回填 protocol/base_url/建议）或「自定义」，再填名称/base_url/单 Key/
+// allowPrivate 保存。内容列包 Scroll（小窗口可超视口）。
+func (u *uiState) channelNewView(c *ui.Context) {
+	t := c.Theme()
+	s := softs(t)
+	ui.Scroll(c).Grow(1).Children(func() {
+		ui.Column(c).Gap(12).Children(func() {
+			ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
+				if ui.Button(c, "返回列表").Clicked() {
+					u.chView = ""
+				}
+				ui.Text(c, "添加渠道").Bold().FontSize(t.FontSize + 2)
+			})
+			ui.Row(c).Gap(8).Wrap().Children(func() {
+				for _, p := range presets.All() {
+					u.presetTile(c, t, s, p)
+				}
+				u.customTile(c, t, s)
+			})
+			card(c, t, func() {
+				ui.Column(c).Gap(12).Children(func() {
+					ui.Text(c, "连接配置").Bold()
+					ui.Row(c).Gap(12).Children(func() {
+						ui.Text(c, "名称:").Width(96).TextColor(t.TextMuted)
+						ui.TextInput(c, &u.chForm.name).Grow(1)
+					})
+					ui.Row(c).Gap(12).Children(func() {
+						ui.Text(c, "Base URL:").Width(96).TextColor(t.TextMuted)
+						ui.TextInput(c, &u.chForm.baseURL).Grow(1)
+					})
+					ui.Row(c).Gap(12).Children(func() {
+						ui.Text(c, "协议:").Width(96).TextColor(t.TextMuted)
+						ui.Select(c, &u.chForm.protocol, []string{"openai", "anthropic"})
+					})
+					ui.Row(c).Gap(12).Children(func() {
+						ui.Text(c, "API Key:").Width(96).TextColor(t.TextMuted)
+						ui.TextInput(c, &u.chForm.apiKey).Grow(1).
+							Placeholder("单个密钥，存 OS 密钥存储")
+					})
+					ui.Row(c).Gap(16).Children(func() {
+						ui.Text(c, "允许私网上游").TextColor(t.TextMuted)
+						ui.Switch(c, &u.chForm.allowPrivate)
+					})
+					if u.chForm.msg != "" {
+						ui.Text(c, u.chForm.msg).TextColor(t.Danger)
+					}
+					ui.Row(c).Children(func() {
+						ui.Box(c).Grow(1)
+						if pillButton(c, t, "创建渠道").Clicked() {
+							u.createChannel()
+						}
+					})
+				})
+			})
+		})
+	})
+}
+
+// presetTile 是预设网格一格：类型 tile + DisplayName/ID 两行，点选
+// applyPreset 回填；选中底用应用级选中灰（不漂移）。
+func (u *uiState) presetTile(c *ui.Context, t *ui.Theme, s softPalette, p presets.ChannelPreset) {
+	b := ui.ButtonBase(c)
+	bg := s.Gray
+	if u.chForm.presetID == p.ID {
+		bg = selectedColor(t)
+	} else if b.Hovered() {
+		bg = t.SurfaceHover
 	}
-	p, _ := provider.LookupPreset(typeID)
-	if p.ID != "" {
-		return append([]string{p.Label}, labels...)
+	b.Radius(8).Background(bg).Padding(8).Gap(8).AlignItems(ui.Center).
+		Children(func() {
+			tile(c, t, s, p.DisplayName, 32)
+			ui.Column(c).Gap(2).Children(func() {
+				ui.Text(c, p.DisplayName).Bold().SingleLine()
+				ui.Text(c, p.ID).FontSize(t.FontSize - 2).TextColor(t.TextMuted).SingleLine()
+			})
+		})
+	if b.Clicked() {
+		applyPreset(&u.chForm, p)
 	}
-	return labels
+}
+
+// customTile 是预设网格的「自定义」格：点选清预设字段（protocol 落默认
+// openai），base_url/建议全手填；name/apiKey 保留用户已填内容。
+func (u *uiState) customTile(c *ui.Context, t *ui.Theme, s softPalette) {
+	b := ui.ButtonBase(c)
+	bg := s.Gray
+	if u.chForm.presetID == "" && u.chForm.baseURL == "" && u.chForm.suggestions == "" {
+		bg = selectedColor(t)
+	} else if b.Hovered() {
+		bg = t.SurfaceHover
+	}
+	b.Radius(8).Background(bg).Padding(8).Gap(8).AlignItems(ui.Center).
+		Children(func() {
+			tile(c, t, s, "自定义", 32)
+			ui.Column(c).Gap(2).Children(func() {
+				ui.Text(c, "自定义").Bold().SingleLine()
+				ui.Text(c, "custom").FontSize(t.FontSize - 2).TextColor(t.TextMuted).SingleLine()
+			})
+		})
+	if b.Clicked() {
+		u.chForm.presetID = ""
+		u.chForm.protocol = "openai"
+		u.chForm.baseURL = ""
+		u.chForm.suggestions = ""
+	}
+}
+
+// channelDetailView 是详情页：连接配置（Key 更新框留空=不改）+ 建议模型
+// 多行编辑 + 测试连通 + 删除（引用警告）。
+func (u *uiState) channelDetailView(c *ui.Context) {
+	t := c.Theme()
+	s := softs(t)
+	d, err := u.svc.Channels.Get(u.chDetailID)
+	if err != nil {
+		ui.Column(c).Gap(12).Children(func() {
+			ui.Text(c, "渠道不存在或已删除").TextColor(t.Danger)
+			if ui.Button(c, "返回列表").Clicked() {
+				u.chView = ""
+			}
+		})
+		return
+	}
+	ui.Scroll(c).Grow(1).Children(func() {
+		ui.Column(c).Gap(12).Children(func() {
+			ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
+				if ui.Button(c, "返回列表").Clicked() {
+					u.chView = ""
+				}
+				ui.Text(c, d.Name).Bold().FontSize(t.FontSize + 2)
+				if d.HasKey {
+					softBadge(c, t, s, "act", "有 Key")
+				} else {
+					softBadge(c, t, s, "warn", "无 Key")
+				}
+			})
+			card(c, t, func() {
+				ui.Column(c).Gap(12).Children(func() {
+					ui.Text(c, "连接配置").Bold()
+					ui.Row(c).Gap(12).Children(func() {
+						ui.Text(c, "名称:").Width(96).TextColor(t.TextMuted)
+						ui.TextInput(c, &u.chForm.name).Grow(1)
+					})
+					ui.Row(c).Gap(12).Children(func() {
+						ui.Text(c, "Base URL:").Width(96).TextColor(t.TextMuted)
+						ui.TextInput(c, &u.chForm.baseURL).Grow(1)
+					})
+					ui.Row(c).Gap(12).Children(func() {
+						ui.Text(c, "协议:").Width(96).TextColor(t.TextMuted)
+						ui.Text(c, d.Protocol).Font(monoFont).TextColor(t.TextMuted)
+					})
+					ui.Row(c).Gap(12).Children(func() {
+						ui.Text(c, "API Key:").Width(96).TextColor(t.TextMuted)
+						ui.TextInput(c, &u.chKeyInput).Grow(1).Placeholder("留空保持不变")
+					})
+					ui.Row(c).Gap(16).Children(func() {
+						ui.Text(c, "启用").TextColor(t.TextMuted)
+						ui.Switch(c, &u.chForm.enabled)
+						ui.Text(c, "允许私网上游").TextColor(t.TextMuted)
+						ui.Switch(c, &u.chForm.allowPrivate)
+					})
+				})
+			})
+			card(c, t, func() {
+				ui.Column(c).Gap(12).Children(func() {
+					ui.Text(c, "建议模型").Bold()
+					ui.Text(c, "逗号或换行分隔；逻辑模型目标编辑的下拉数据源").TextColor(t.TextMuted)
+					ui.TextArea(c, &u.chSuggText).Grow(1).MinHeight(0).Height(96)
+				})
+			})
+			ui.Row(c).Gap(8).Children(func() {
+				if pillButton(c, t, "保存").Clicked() {
+					u.saveChannelDetail()
+				}
+				if softButton(c, t, s, "act", "测试连通").Clicked() {
+					u.testChannelDetail()
+				}
+				ui.Box(c).Grow(1)
+				if softButton(c, t, s, "danger", "删除渠道").Clicked() {
+					u.chDeleteID, u.chDeleteArm = d.ID, true
+				}
+			})
+			if u.chTestMsg != "" {
+				ui.Text(c, u.chTestMsg)
+			}
+			u.channelDeleteConfirm(c, d)
+		})
+	})
+}
+
+// channelDeleteConfirm 是删除渠道的 AlertDialog：消息带引用警告（仍被
+// 逻辑模型引用则列出引用者）；按钮序「取消, 确认删除」——末位是主钮
+// （AlertDialog 约定），确认（下标 1）才 Remove 并回列表。
+func (u *uiState) channelDeleteConfirm(c *ui.Context, d bridge.ChannelDetail) {
+	if u.chDeleteID != d.ID {
+		return
+	}
+	msg := d.Name
+	if refs := channelRefNames(u, d.ID); len(refs) > 0 {
+		msg = fmt.Sprintf("%s\n仍被逻辑模型引用：%s。删除后这些目标将失效。", d.Name, strings.Join(refs, "、"))
+	}
+	if i := ui.AlertDialog(c, &u.chDeleteArm, "删除渠道", msg, "取消", "确认删除"); i == 1 {
+		u.svc.Channels.Remove(u.chDeleteID)
+		u.chDeleteID = ""
+		u.chView = ""
+		u.chTestMsg = "已删除 " + d.Name
+	}
 }

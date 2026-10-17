@@ -23,6 +23,7 @@ var trayIcon []byte
 type Services struct {
 	Gateway  bridge.Gateway
 	Channels bridge.Channels
+	Logical  *bridge.LogicalModels
 }
 
 type uiState struct {
@@ -44,50 +45,26 @@ type uiState struct {
 	modelList  ui.ListState // 聚合表状态；Selected 经 modelSel 指向当前行
 	modelSel   int          // 聚合表当前行（-1=无）
 	modelQuery string       // 页头搜索框查询（filterModelRows 消费）
-	// 渠道页（Task 5 卡片列表；Task 6/7 接详情/新建）：
-	chList             ui.ListState // 渠道表状态（旧表态；Task 6/7 迁移期保留）
-	chSel              int          // 渠道表当前行（-1=无）；详情三段面板锚定行选中
-	chDetailID         string       // 详情页锚定渠道 id（openChannelDetail 落值）
-	chDetailSeg        int          // 详情页分段选中（0=连接配置 1=密钥池 2=渠道模型）
-	chDeleteArm        bool         // 删除渠道 AlertDialog open 位
-	chDeleteID         string       // 删除武装对象——弹窗仅对匹配卡触发
-	chForm             chFormData   // 连接配置表单；editID 非空 = 编辑该渠道
-	chTestMsg          string       // 渠道/密钥连通测试结果展示
-	keyForm            keyFormData  // 密钥批量导入表单
-	keyFormOpen        bool         // 密钥池段「＋ 批量导入」表单展开位
-	keyConfirmDelete   bool         // 密钥删除二次确认（两段式）
-	chModelForm        channelModelFormData
-	chModelConfirmDel  bool   // 渠道模型删除二次确认（两段式，审查 Finding 1）
-	chTypeResetConfirm bool   // 详情态换类型确认（AlertDialog open 位：Base URL 将重置）
-	prevType           string // 类型 Select 变更检测（预填 BaseURL / 详情态换类型确认）
-	confirmOwnerID     string // 确认位武装时的渠道 id——确认钮仅对本渠道详情渲染（审查 Finding 2）
-	prevDetailID       string // 详情渠道变更检测：变更即回显表单并清子选中与确认位（审查 Finding 2）
-	chKeyList          ui.ListState
-	chModelList        ui.ListState
-	chKeySel           int
-	chModelSel         int
+	// 渠道页（Task 14：单 Key + 预设添加）：
+	chView      string      // 渠道子视图：""=列表 "new"=新建 "detail"=详情
+	chDetailID  string      // 详情页锚定渠道 id（openChannelDetail 落值）
+	chForm      channelForm // 新建/详情表单；editID 非空 = 编辑该渠道
+	chKeyInput  string      // 详情 Key 更新框（留空=不改）
+	chSuggText  string      // 详情建议模型多行文本（逗号/换行分隔）
+	chTestMsg   string      // 连通测试/操作结果信息位
+	chDeleteArm bool        // 删除渠道 AlertDialog open 位
+	chDeleteID  string      // 删除武装对象——弹窗仅对匹配 id 触发
+	// 逻辑模型页（Task 12 卡片列表；Task 13 接新建/编辑表单）：
+	editModelID string // 编辑页锚定逻辑模型 id（空=新建）
+	lmDeleteArm bool   // 删除逻辑模型 AlertDialog open 位
+	lmDeleteID  string // 删除武装对象——确认仅对匹配 id 生效
+	// 接入页（Task 15）：
+	accessModel string // 当前逻辑模型名（Select 绑定；pickAccessModel 解析）
+	// 设置页（Task 15）：
+	passthroughOn bool // 透传未登记模型开关（预留：SaveSettings 不消费）
 }
 
-// chFormData 是渠道页连接配置表单；editID 非空 = 编辑该渠道。
-// typeID 存预设 id（初始化/载入/测试直赋），Select 交互后短暂持有 label
-// ——提交/预填/描述统一经 resolveTypeID 解析回 id。
-type chFormData struct {
-	typeID, name, baseURL, priorityInput string
-	enabled, allowPrivate                bool
-	msg, editID                          string
-}
-
-// keyFormData 是密钥批量导入表单；keysText 每行一枚（TextArea 多行输入）。
-type keyFormData struct {
-	name, keysText string
-	allowFallback  bool
-	msg            string
-}
-
-// channelModelFormData 是渠道模型添加表单。
-type channelModelFormData struct {
-	public, upstream, msg string
-}
+// channelForm 是渠道页表单（新建/详情编辑），定义与纯助手在 channels.go。
 
 func newUIState(svc Services, a *app.App) *uiState {
 	si := a.State()
@@ -95,17 +72,12 @@ func newUIState(svc Services, a *app.App) *uiState {
 	u := &uiState{svc: svc, status: si, recent: a.Recent(), token: st.GatewayToken,
 		logPath:  a.LogPath(),
 		page:     "logical",
-		chForm:   chFormData{typeID: "anthropic-official", baseURL: "https://api.anthropic.com", enabled: true, priorityInput: "10"},
-		keyForm:  keyFormData{},
-		modelSel: -1,
-		chSel:    -1, chKeySel: -1, chModelSel: -1}
+		chForm:   channelForm{protocol: "openai", enabled: true},
+		modelSel: -1}
 	// 表格行选择：Selected 必须非 nil 点击才选行（mygo ui.ListState.Selected
 	// 注释：*Selected 是所选行，-1 为无），这里指向状态字段（-1=无），
 	// "载入所选/停用·启用/测试"才落得到所选行。
 	u.modelList.Selected = &u.modelSel
-	u.chList.Selected = &u.chSel
-	u.chKeyList.Selected = &u.chKeySel
-	u.chModelList.Selected = &u.chModelSel
 	return u
 }
 
@@ -163,9 +135,11 @@ func Run(a *app.App) error {
 	svc := Services{
 		Gateway:  bridge.Gateway{A: a},
 		Channels: bridge.Channels{A: a, Creds: a.Creds()},
+		Logical:  &bridge.LogicalModels{A: a},
 	}
 	mygo.Bind(svc.Gateway)
 	mygo.Bind(svc.Channels)
+	mygo.Bind(svc.Logical)
 
 	// 单实例锁已在入口（cmd/agentswitch/main.go）取——那里的抢锁失败在
 	// app.Open 之前返回，不泄漏库句柄、不留并发迁移窗口；此处不得再取锁。
