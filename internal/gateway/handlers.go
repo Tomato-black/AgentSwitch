@@ -13,6 +13,7 @@ import (
 
 	"AgentSwitch/internal/protocol"
 	"AgentSwitch/internal/provider"
+	"AgentSwitch/internal/router"
 	"AgentSwitch/internal/telemetry"
 )
 
@@ -121,21 +122,17 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(cands) == 0 {
+		// 未登记模型：passthrough 开亦 404——设置项仅预留（后续接单渠道直连），
+		// 避免半成品语义（简报 Task 6）。
+		if s.deps.Passthrough != nil && s.deps.Passthrough() && s.deps.Log != nil {
+			s.deps.Log.Debug("passthrough reserved: rejecting unregistered model", "model", cr.Model)
+		}
 		rec.Status, rec.ErrorClass = 404, protocol.ErrTypeNotFound
 		writeErr(w, 404, protocol.ErrTypeNotFound,
 			"unknown model "+cr.Model+"; models: "+strings.Join(s.deps.ListPublicModels(), ", "))
 		return
 	}
 	decision := s.deps.Router.Resolve(cr.Model, cands)
-	if len(decision.Ordered) == 0 {
-		rec.Status, rec.ErrorClass = 503, "no_candidate"
-		reasons := make([]string, 0, len(decision.Filtered))
-		for _, f := range decision.Filtered {
-			reasons = append(reasons, f.Candidate.ChannelName+":"+f.Reason)
-		}
-		writeErr(w, 503, protocol.ErrTypeAPI, "no usable candidate (filtered: "+strings.Join(reasons, "; ")+")")
-		return
-	}
 
 	ctx := r.Context()
 	if lim.RequestTimeout > 0 {
@@ -144,19 +141,8 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 	}
 
-	committed := false
 	lastClass := provider.ClassUnknown
-	for _, c := range decision.Ordered {
-		if ctx.Err() != nil { // 客户端已走：不再发任何上游请求（docx §6.3 取消不转移）
-			return
-		}
-		// 发送前二次校验（docx §7；TryAcquire 锁内原子，不写状态）
-		if s.deps.Cooldowns != nil {
-			if _, ok := s.deps.Cooldowns.TryAcquire(c.ChannelID, time.Now()); !ok {
-				switches++
-				continue
-			}
-		}
+	out, ferr := s.failover(ctx, decision, func(c router.Candidate) (bool, error) {
 		apiKey, err := s.deps.Cred.Get(c.SecretKey)
 		if err != nil {
 			// 凭据失效（被吊销/钥匙环删除）= 死密钥：按上游 401 同口径冷却
@@ -166,21 +152,19 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 				s.deps.Cooldowns.MarkClassified(c.ChannelID, provider.ClassAuth, 0, time.Now())
 			}
 			lastClass = "credential"
-			switches++
-			continue
+			return false, nil
 		}
 		adapter, err := s.deps.AdapterFor(c.Protocol)
 		if err != nil {
 			// 渠道协议配置错，密钥无辜：不冷却，换下一候选。
 			lastClass = provider.ClassUnknown
-			switches++
-			continue
+			return false, nil
 		}
 		rewritten, err := protocol.RewriteModel(body, c.UpstreamModel)
 		if err != nil {
 			rec.Status, rec.ErrorClass = 400, protocol.ErrTypeInvalidRequest
 			writeErr(w, 400, protocol.ErrTypeInvalidRequest, "invalid body")
-			return
+			return true, nil // 已写终态响应，不换候选
 		}
 		res, err := adapter.Do(ctx, provider.DoRequest{
 			BaseURL: c.BaseURL, AllowPrivate: c.AllowPrivate, APIKey: string(apiKey),
@@ -191,7 +175,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 			// 循环顶的守卫只挡「下一候选」，挡不住本分支的标记动作——取消引发的
 			// Do 错误是客户端断开而非上游故障，不得冷却、不得计 switches。
 			if ctx.Err() != nil {
-				return
+				return false, ctx.Err()
 			}
 			// Do 错误（连接层/3xx/请求转换失败）：冷却后换下一候选——此刻未向
 			// 客户端写过任何字节，属可转移窗口。
@@ -199,8 +183,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 			if s.deps.Cooldowns != nil {
 				s.deps.Cooldowns.MarkClassified(c.ChannelID, provider.ClassConnect, 0, time.Now())
 			}
-			switches++
-			continue
+			return false, nil
 		}
 		if res.StatusCode >= 400 {
 			snippet, _ := io.ReadAll(io.LimitReader(res.Body, 64<<10))
@@ -211,17 +194,15 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 				rec.Status, rec.ErrorClass = res.StatusCode, string(class)
 				rec.Account, rec.Channel = c.ChannelName, c.ChannelName
 				writeUpstreamError(w, res.StatusCode, snippet, res.Header)
-				return
+				return true, nil // 不可转移错误已写出，停止
 			}
 			lastClass = class
 			if s.deps.Cooldowns != nil {
 				s.deps.Cooldowns.MarkClassified(c.ChannelID, class, res.RetryAfterSec, time.Now())
 			}
-			switches++
-			continue
+			return false, nil
 		}
 		// 2xx：提交点——写响应头之后绝不转移（首字节后不重放，docx §6.3）
-		committed = true
 		rec.Status = res.StatusCode
 		rec.UpstreamModel, rec.Account, rec.Channel = c.UpstreamModel, c.ChannelName, c.ChannelName
 		for _, h := range responseHeaderWhitelist {
@@ -237,12 +218,90 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 			io.Copy(w, res.Body)
 		}
 		res.Body.Close()
-		break
+		return true, nil
+	})
+	switches = out.Switches
+	if ferr != nil || out.Committed {
+		return // 客户端已断 / 响应已写：不再写终局错误
 	}
-	if !committed {
-		rec.Status, rec.ErrorClass = 502, string(lastClass)
-		writeErr(w, 502, protocol.ErrTypeAPI, "all candidates failed")
+	// 耗尽且可区分（简报 Task 6）：全部仅因冷却不可用 → 503 all targets cooling；
+	// 至少一个目标实际失败过 → 502 all targets failed。
+	if !out.Attempted && (out.CoolSkips > 0 || len(decision.Filtered) > 0) && allCooling(decision.Filtered) {
+		rec.Status, rec.ErrorClass = 503, "no_candidate"
+		writeErr(w, 503, protocol.ErrTypeAPI, coolingExhaustedMsg(decision.Filtered))
+		return
 	}
+	rec.Status, rec.ErrorClass = 502, string(lastClass)
+	writeErr(w, 502, protocol.ErrTypeAPI, "all targets failed")
+}
+
+// failoverOutcome 报告目标链转移循环的结局（docx §6.3 可解释记录）。
+type failoverOutcome struct {
+	Committed bool // 已向客户端写出响应（2xx 或不可转移错误）
+	Attempted bool // 至少一个目标真正进入 run
+	Switches  int  // 切换/跳过次数（telemetry FailoverCount）
+	CoolSkips int  // 发送前二次校验被冷却跳过的次数
+}
+
+// failover 是 Anthropic/OpenAI 入站共用的目标链转移循环骨架（6B 复用）：
+// 发送前二次校验冷却；仅可转移失败才换下一目标；提交后绝不转移；客户端
+// 取消即停且零状态副作用。run 对单个目标出站并回报：
+//
+//	(true,  _)    committed——响应已写客户端，停止
+//	(false, nil)  可转移失败（run 内已分类/冷却），换下一目标
+//	(false, err)  中止——停止并上抛 err（如 context.Canceled），不写 502/503
+//
+// 终局 502/503 由调用方据 outcome 写出（错误 envelope 形状随入站协议而异）。
+func (s *Server) failover(ctx context.Context, decision router.Decision,
+	run func(c router.Candidate) (bool, error)) (failoverOutcome, error) {
+	var out failoverOutcome
+	for _, c := range decision.Ordered {
+		if ctx.Err() != nil { // 客户端已走：不再发任何上游请求（docx §6.3 取消不转移）
+			return out, ctx.Err()
+		}
+		// 发送前二次校验（docx §7；TryAcquire 锁内原子，不写状态）
+		if s.deps.Cooldowns != nil {
+			if _, ok := s.deps.Cooldowns.TryAcquire(c.ChannelID, time.Now()); !ok {
+				out.CoolSkips++
+				out.Switches++
+				continue
+			}
+		}
+		out.Attempted = true
+		committed, err := run(c)
+		if err != nil {
+			return out, err
+		}
+		if committed {
+			out.Committed = true
+			return out, nil
+		}
+		out.Switches++
+	}
+	return out, nil
+}
+
+// allCooling 报告 Resolve 滤掉的目标是否全部仅因冷却。
+func allCooling(filtered []router.FilteredCandidate) bool {
+	for _, f := range filtered {
+		if !strings.HasPrefix(f.Reason, "cooling:") {
+			return false
+		}
+	}
+	return true
+}
+
+// coolingExhaustedMsg 构造 503 终局正文：含 all targets cooling 与滤因清单
+// （docx §6.3 可解释记录）。
+func coolingExhaustedMsg(filtered []router.FilteredCandidate) string {
+	if len(filtered) == 0 {
+		return "all targets cooling"
+	}
+	reasons := make([]string, 0, len(filtered))
+	for _, f := range filtered {
+		reasons = append(reasons, f.Candidate.ChannelName+":"+f.Reason)
+	}
+	return "all targets cooling (filtered: " + strings.Join(reasons, "; ") + ")"
 }
 
 // writeUpstreamError 透传白名单头 + 原样/包装的错误体（原 handleMessages 内

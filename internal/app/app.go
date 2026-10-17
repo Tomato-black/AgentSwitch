@@ -317,7 +317,11 @@ func (a *App) StartGateway() error {
 			}
 		},
 		Candidates: a.candidates,
-		Cooldowns:  a.cooldowns,
+		Passthrough: func() bool {
+			s, err := a.settings()
+			return err == nil && s.PassthroughUnregistered
+		},
+		Cooldowns: a.cooldowns,
 		Cred:       &a.creds,
 		Router:     router.PriorityRouter{},
 		AdapterFor: func(protocol string) (provider.Adapter, error) {

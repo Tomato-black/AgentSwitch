@@ -39,9 +39,10 @@ func newGW(t *testing.T, baseURL string, tweak func(d *Deps)) *Server {
 	t.Helper()
 	creds := credential.NewFallbackFile(t.TempDir() + "/s.json")
 	_ = creds.Set("account:k1", []byte("sk-test"))
-	cand := router.Candidate{ChannelID: "c1", ChannelName: "main", KeyID: "k1", KeyName: "key1",
-		SecretKey: "account:k1", Protocol: "anthropic", BaseURL: baseURL,
-		AllowPrivate: true, UpstreamModel: "up-1", ChannelPriority: 10, KeyPriority: 10}
+	cand := router.Candidate{TargetID: "t1", LogicalModel: "pub-1",
+		ChannelID: "c1", ChannelName: "main", SecretKey: "account:k1",
+		Protocol: "anthropic", BaseURL: baseURL,
+		AllowPrivate: true, UpstreamModel: "up-1", Priority: 10}
 	d := Deps{
 		Token:  func() string { return "tok" },
 		Limits: func() Limits { return Limits{MaxBodyBytes: 1 << 20} },
@@ -194,8 +195,9 @@ func TestRequestLogLineCarriesMetadata(t *testing.T) {
 				t.Errorf("request line missing %q: %v", k, m)
 			}
 		}
+		// 单 Key 模型下无密钥名：Account 语义收敛为渠道名（Task 5 注记，此处 pin）。
 		if m["request_id"] == "" || m["model"] != "pub-1" || m["upstream_model"] != "up-1" ||
-			m["account"] != "key1" || m["channel"] != "main" {
+			m["account"] != "main" || m["channel"] != "main" {
 			t.Errorf("request line values: %v", m)
 		}
 		if st, ok := m["status"].(float64); !ok || int(st) != 200 {
@@ -418,7 +420,8 @@ func TestUpstreamErrorEnvelopePreserved(t *testing.T) {
 	}
 }
 
-// TestAllCandidatesExhaustedReturns502：唯一候选 429 → 冷却后耗尽 → 502 envelope。
+// TestAllCandidatesExhaustedReturns502：唯一候选 429 → 冷却后耗尽 → 502 envelope，
+// body 含 all targets failed（与全冷却 503 可区分）。
 func TestAllCandidatesExhaustedReturns502(t *testing.T) {
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Retry-After", "7")
@@ -432,6 +435,9 @@ func TestAllCandidatesExhaustedReturns502(t *testing.T) {
 	b, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 502 {
 		t.Fatalf("exhausted candidates must 502, got %d: %s", resp.StatusCode, b)
+	}
+	if !strings.Contains(string(b), "all targets failed") {
+		t.Fatalf("502 body must say all targets failed: %s", b)
 	}
 	var env struct {
 		Type string `json:"type"`
@@ -456,12 +462,15 @@ func TestCredentialFailureCoolsAndFailsOver(t *testing.T) {
 	s := newGW(t, up.URL, func(d *Deps) {
 		cd = router.NewCooldowns()
 		d.Cooldowns = cd
-		dead := router.Candidate{ChannelID: "c1", ChannelName: "main", KeyID: "kdead", KeyName: "dead",
-			SecretKey: "account:gone", Protocol: "anthropic", BaseURL: up.URL,
-			AllowPrivate: true, UpstreamModel: "up-1", ChannelPriority: 5, KeyPriority: 10}
-		live := router.Candidate{ChannelID: "c1", ChannelName: "main", KeyID: "klive", KeyName: "live",
-			SecretKey: "account:k1", Protocol: "anthropic", BaseURL: up.URL,
-			AllowPrivate: true, UpstreamModel: "up-1", ChannelPriority: 10, KeyPriority: 10}
+		// 冷却键=ChannelID（单 Key 模型）：死/活密钥必须分属不同渠道。
+		dead := router.Candidate{TargetID: "t-dead", LogicalModel: "pub-1",
+			ChannelID: "c-dead", ChannelName: "dead", SecretKey: "account:gone",
+			Protocol: "anthropic", BaseURL: up.URL,
+			AllowPrivate: true, UpstreamModel: "up-1", Priority: 5}
+		live := router.Candidate{TargetID: "t-live", LogicalModel: "pub-1",
+			ChannelID: "c-live", ChannelName: "live", SecretKey: "account:k1",
+			Protocol: "anthropic", BaseURL: up.URL,
+			AllowPrivate: true, UpstreamModel: "up-1", Priority: 10}
 		d.Candidates = func(publicModel string) ([]router.Candidate, error) {
 			if publicModel != "pub-1" {
 				return nil, nil
@@ -476,10 +485,10 @@ func TestCredentialFailureCoolsAndFailsOver(t *testing.T) {
 		t.Fatalf("must fail over to live key: code=%d calls=%d body=%s", resp.StatusCode, calls, b)
 	}
 	snap := cd.Snapshot(time.Now())
-	if len(snap) != 1 || snap[0].KeyID != "kdead" || snap[0].Reason != "auth" {
-		t.Fatalf("dead key must be cooled as auth: %+v", snap)
+	if len(snap) != 1 || snap[0].ChannelID != "c-dead" || snap[0].Reason != "auth" {
+		t.Fatalf("dead channel must be cooled as auth: %+v", snap)
 	}
-	// 第二请求：kdead 已冷却被过滤，仅 live 命中——死钥不每请求重试。
+	// 第二请求：c-dead 已冷却被过滤，仅 live 命中——死钥不每请求重试。
 	resp2 := post(t, s, `{"model":"pub-1","messages":[]}`, "tok")
 	defer resp2.Body.Close()
 	if resp2.StatusCode != 200 || calls != 2 {
@@ -500,12 +509,15 @@ func TestAdapterFailureFailsOverWithoutCooldown(t *testing.T) {
 	s := newGW(t, up.URL, func(d *Deps) {
 		cd = router.NewCooldowns()
 		d.Cooldowns = cd
-		badProto := router.Candidate{ChannelID: "c1", ChannelName: "main", KeyID: "kbad", KeyName: "bad",
-			SecretKey: "account:k1", Protocol: "grpc", BaseURL: up.URL,
-			AllowPrivate: true, UpstreamModel: "up-1", ChannelPriority: 5, KeyPriority: 10}
-		good := router.Candidate{ChannelID: "c1", ChannelName: "main", KeyID: "kgood", KeyName: "good",
-			SecretKey: "account:k1", Protocol: "anthropic", BaseURL: up.URL,
-			AllowPrivate: true, UpstreamModel: "up-1", ChannelPriority: 10, KeyPriority: 10}
+		// 协议=渠道属性：坏协议与好协议分属不同渠道。
+		badProto := router.Candidate{TargetID: "t-bad", LogicalModel: "pub-1",
+			ChannelID: "c-bad", ChannelName: "bad", SecretKey: "account:k1",
+			Protocol: "grpc", BaseURL: up.URL,
+			AllowPrivate: true, UpstreamModel: "up-1", Priority: 5}
+		good := router.Candidate{TargetID: "t-good", LogicalModel: "pub-1",
+			ChannelID: "c-good", ChannelName: "good", SecretKey: "account:k1",
+			Protocol: "anthropic", BaseURL: up.URL,
+			AllowPrivate: true, UpstreamModel: "up-1", Priority: 10}
 		d.Candidates = func(publicModel string) ([]router.Candidate, error) {
 			if publicModel != "pub-1" {
 				return nil, nil
@@ -524,9 +536,123 @@ func TestAdapterFailureFailsOverWithoutCooldown(t *testing.T) {
 	}
 }
 
+// --- Task 6：透传拒绝 + 耗尽错误可区分（2026-10-17-logical-models 简报）---
+
+// TestUnknownModelRejected：Candidates 空（未登记模型）→ 404 envelope，且不进
+// failover 循环——上游 0 调用。
+func TestUnknownModelRejected(t *testing.T) {
+	var calls int
+	up := fakeUpstream(t, 200, `{"id":"ok"}`, &calls)
+	defer up.Close()
+	s := newGW(t, up.URL, nil) // Candidates 对非 pub-1 返回空
+	resp := post(t, s, `{"model":"nope","max_tokens":8,"messages":[]}`, "tok")
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 404 {
+		t.Fatalf("unknown model must 404, got %d: %s", resp.StatusCode, b)
+	}
+	var env struct {
+		Type  string `json:"type"`
+		Error struct {
+			Type string `json:"type"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(b, &env); err != nil || env.Type != "error" ||
+		env.Error.Type != "not_found_error" {
+		t.Fatalf("404 must be not_found_error envelope: %s", b)
+	}
+	if calls != 0 {
+		t.Fatalf("unknown model must not enter failover, upstream calls=%d", calls)
+	}
+}
+
+// TestPassthroughReservedStill404：passthrough 开 + candidates 空 → 仍 404。
+// 设置项仅预留（后续接单渠道直连），避免半成品语义。
+func TestPassthroughReservedStill404(t *testing.T) {
+	var calls int
+	up := fakeUpstream(t, 200, `{"id":"ok"}`, &calls)
+	defer up.Close()
+	s := newGW(t, up.URL, func(d *Deps) {
+		d.Passthrough = func() bool { return true }
+	})
+	resp := post(t, s, `{"model":"nope","max_tokens":8,"messages":[]}`, "tok")
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 404 || calls != 0 {
+		t.Fatalf("passthrough reserved: must still 404 with 0 upstream calls, got %d calls=%d: %s",
+			resp.StatusCode, calls, b)
+	}
+}
+
+// TestAllCooling503：候选全 cooling（Resolve 滤光且 Filtered 非空）→ 503，
+// body 含 all targets cooling，上游 0 调用。
+func TestAllCooling503(t *testing.T) {
+	var calls int
+	up := fakeUpstream(t, 200, `{"id":"ok"}`, &calls)
+	defer up.Close()
+	s := newGW(t, up.URL, func(d *Deps) {
+		cool := router.Candidate{TargetID: "t1", LogicalModel: "pub-1",
+			ChannelID: "c1", ChannelName: "ch1", SecretKey: "account:k1",
+			Protocol: "anthropic", BaseURL: up.URL, AllowPrivate: true,
+			UpstreamModel: "u1", Priority: 10,
+			CoolingUntil: time.Now().Add(time.Minute), CoolingReason: "rate_limited"}
+		d.Candidates = func(string) ([]router.Candidate, error) {
+			return []router.Candidate{cool}, nil
+		}
+	})
+	resp := post(t, s, `{"model":"pub-1","max_tokens":8,"messages":[]}`, "tok")
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 503 {
+		t.Fatalf("all-cooling must 503, got %d: %s", resp.StatusCode, b)
+	}
+	if !strings.Contains(string(b), "all targets cooling") {
+		t.Fatalf("503 body must say all targets cooling: %s", b)
+	}
+	var env struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(b, &env); err != nil || env.Type != "error" {
+		t.Fatalf("503 must be envelope: %s", b)
+	}
+	if calls != 0 {
+		t.Fatalf("cooled targets must not be attempted, calls=%d", calls)
+	}
+}
+
+// TestSecondCheckAllCooling503：候选未带冷却快照但发送前二次校验全部命中冷却
+// （TryAcquire 失败）→ 亦503 all targets cooling（「全部仅因冷却」含此路径）。
+func TestSecondCheckAllCooling503(t *testing.T) {
+	var calls int
+	up := fakeUpstream(t, 200, `{"id":"ok"}`, &calls)
+	defer up.Close()
+	s := newGW(t, up.URL, func(d *Deps) {
+		cd := router.NewCooldowns()
+		d.Cooldowns = cd
+		cd.MarkClassified("c1", provider.ClassRateLimit, 30, time.Now())
+		cand := router.Candidate{TargetID: "t1", LogicalModel: "pub-1",
+			ChannelID: "c1", ChannelName: "ch1", SecretKey: "account:k1",
+			Protocol: "anthropic", BaseURL: up.URL, AllowPrivate: true,
+			UpstreamModel: "u1", Priority: 10}
+		d.Candidates = func(string) ([]router.Candidate, error) {
+			return []router.Candidate{cand}, nil
+		}
+	})
+	resp := post(t, s, `{"model":"pub-1","max_tokens":8,"messages":[]}`, "tok")
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 503 || !strings.Contains(string(b), "all targets cooling") {
+		t.Fatalf("second-check all-cooling must 503 all targets cooling, got %d: %s",
+			resp.StatusCode, b)
+	}
+	if calls != 0 {
+		t.Fatalf("must not attempt cooled channel, calls=%d", calls)
+	}
+}
+
 // --- Task 6：docx §13 转移边界落位（简报 Step 1/2 + OpenAI 端到端 + Task 5 pointer pin）---
 
-// twoCands 构造两个候选共享密钥 store：key1→upstream1、key2→upstream2。
+// twoCands 构造两个候选共享密钥 store：c1/account:k1→upstream1、c2/account:k2→upstream2。
 // 返回 (Deps tweak, 共享 Cooldowns)——冷却断言用同一实例。
 func twoCands(t *testing.T, up1, up2 string) (func(d *Deps), *router.Cooldowns) {
 	t.Helper()
@@ -536,12 +662,14 @@ func twoCands(t *testing.T, up1, up2 string) (func(d *Deps), *router.Cooldowns) 
 	cds := router.NewCooldowns()
 	return func(d *Deps) {
 		d.Cred = creds
-		c1 := router.Candidate{ChannelID: "c1", ChannelName: "ch1", KeyID: "k1", KeyName: "key1",
-			SecretKey: "account:k1", Protocol: "anthropic", BaseURL: up1, AllowPrivate: true,
-			UpstreamModel: "u1", ChannelPriority: 10, KeyPriority: 10}
-		c2 := router.Candidate{ChannelID: "c2", ChannelName: "ch2", KeyID: "k2", KeyName: "key2",
-			SecretKey: "account:k2", Protocol: "anthropic", BaseURL: up2, AllowPrivate: true,
-			UpstreamModel: "u2", ChannelPriority: 20, KeyPriority: 10}
+		c1 := router.Candidate{TargetID: "t1", LogicalModel: "pub-1",
+			ChannelID: "c1", ChannelName: "ch1", SecretKey: "account:k1",
+			Protocol: "anthropic", BaseURL: up1, AllowPrivate: true,
+			UpstreamModel: "u1", Priority: 10}
+		c2 := router.Candidate{TargetID: "t2", LogicalModel: "pub-1",
+			ChannelID: "c2", ChannelName: "ch2", SecretKey: "account:k2",
+			Protocol: "anthropic", BaseURL: up2, AllowPrivate: true,
+			UpstreamModel: "u2", Priority: 20}
 		d.Candidates = func(string) ([]router.Candidate, error) { return []router.Candidate{c1, c2}, nil }
 		d.Cooldowns = cds
 	}, cds
@@ -577,14 +705,14 @@ func Test429SwitchesAndMarksCooldown(t *testing.T) {
 		b, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status %d body %s", resp.StatusCode, b)
 	}
-	// key1 已被冷却（429 无 Retry-After → 默认 30s）；10s 后仍未解冻——
+	// c1 已被冷却（429 无 Retry-After → 默认 30s）；10s 后仍未解冻——
 	// TryAcquire 必须失败（ok=false = 冷却中）。
-	if _, ok := cds.TryAcquire("k1", time.Now().Add(10*time.Second)); ok {
-		t.Fatal("k1 must still be cooling 10s after 429 (default 30s)")
+	if _, ok := cds.TryAcquire("c1", time.Now().Add(10*time.Second)); ok {
+		t.Fatal("c1 must still be cooling 10s after 429 (default 30s)")
 	}
-	// 只有失败的那枚密钥冷却：接管的 k2 不得被连坐。
-	if _, ok := cds.TryAcquire("k2", time.Now()); !ok {
-		t.Fatal("k2 served fine and must not be cooled")
+	// 只有失败的那条渠道冷却：接管的 c2 不得被连坐。
+	if _, ok := cds.TryAcquire("c2", time.Now()); !ok {
+		t.Fatal("c2 served fine and must not be cooled")
 	}
 }
 
@@ -599,8 +727,8 @@ func Test400NoSwitchNoCooldown(t *testing.T) {
 	s := newGW(t, bad.URL, tw)
 	resp := post(t, s, `{"model":"pub-1","max_tokens":8,"messages":[]}`, "tok")
 	defer resp.Body.Close()
-	if _, ok := cds.TryAcquire("k1", time.Now()); !ok {
-		t.Fatal("400 must not cool the key")
+	if _, ok := cds.TryAcquire("c1", time.Now()); !ok {
+		t.Fatal("400 must not cool the channel")
 	}
 	if resp.StatusCode != 400 {
 		t.Fatalf("status %d", resp.StatusCode)
@@ -615,7 +743,8 @@ func Test400NoSwitchNoCooldown(t *testing.T) {
 }
 
 // docx §13：流式/非流首字节已写（提交点已过）→ 上游中断只断流，绝不换候选重放。
-func TestNoSwitchAfterFirstByte(t *testing.T) {
+// （计划名 TestFirstByteThenUpstreamErrorNoReplay，2026-10-17-logical-models）
+func TestFirstByteThenUpstreamErrorNoReplay(t *testing.T) {
 	var calls2 int
 	good := fakeUpstream(t, 200, `{"id":"ok"}`, &calls2)
 	defer good.Close()
@@ -715,8 +844,8 @@ func TestConcurrent429CooldownAtomic(t *testing.T) {
 	// Candidates 快照过滤保证——app 层职责，网关层断言冷却标记成立即可）。
 	// 断言点必须在冷却窗口内（429 默认冷却 30s——简报的 now+1h 观察点已过期），
 	// TryAcquire 必须失败（ok=false = 冷却中）。
-	if _, ok := cds.TryAcquire("k1", time.Now()); ok {
-		t.Fatal("k1 must be cooling after concurrent 429s")
+	if _, ok := cds.TryAcquire("c1", time.Now()); ok {
+		t.Fatal("c1 must be cooling after concurrent 429s")
 	}
 	if calls2 == 0 {
 		t.Fatal("good upstream must have served")
@@ -738,9 +867,10 @@ func TestOpenAIProtocolCandidateEndToEnd(t *testing.T) {
 	defer up.Close()
 	creds := credential.NewFallbackFile(t.TempDir() + "/s.json")
 	_ = creds.Set("account:ko", []byte("sk-oai"))
-	cand := router.Candidate{ChannelID: "co", ChannelName: "oai", KeyID: "ko", KeyName: "key-oai",
-		SecretKey: "account:ko", Protocol: "openai", BaseURL: up.URL, AllowPrivate: true,
-		UpstreamModel: "u-oai", ChannelPriority: 10, KeyPriority: 10}
+	cand := router.Candidate{TargetID: "to", LogicalModel: "pub-1",
+		ChannelID: "co", ChannelName: "oai", SecretKey: "account:ko",
+		Protocol: "openai", BaseURL: up.URL, AllowPrivate: true,
+		UpstreamModel: "u-oai", Priority: 10}
 	s := newGW(t, up.URL, func(d *Deps) {
 		d.Cred = creds
 		d.Candidates = func(string) ([]router.Candidate, error) { return []router.Candidate{cand}, nil }
@@ -774,12 +904,14 @@ func TestAllCredentialsDeadReturns502CredentialClass(t *testing.T) {
 	var ring *telemetry.Ring
 	s := newGW(t, up.URL, func(d *Deps) {
 		ring = d.Ring
-		dead1 := router.Candidate{ChannelID: "c1", ChannelName: "ch1", KeyID: "kd1", KeyName: "dead1",
-			SecretKey: "account:gone1", Protocol: "anthropic", BaseURL: up.URL,
-			AllowPrivate: true, UpstreamModel: "u1", ChannelPriority: 10, KeyPriority: 10}
-		dead2 := router.Candidate{ChannelID: "c2", ChannelName: "ch2", KeyID: "kd2", KeyName: "dead2",
-			SecretKey: "account:gone2", Protocol: "anthropic", BaseURL: up.URL,
-			AllowPrivate: true, UpstreamModel: "u2", ChannelPriority: 20, KeyPriority: 10}
+		dead1 := router.Candidate{TargetID: "td1", LogicalModel: "pub-1",
+			ChannelID: "c1", ChannelName: "ch1", SecretKey: "account:gone1",
+			Protocol: "anthropic", BaseURL: up.URL,
+			AllowPrivate: true, UpstreamModel: "u1", Priority: 10}
+		dead2 := router.Candidate{TargetID: "td2", LogicalModel: "pub-1",
+			ChannelID: "c2", ChannelName: "ch2", SecretKey: "account:gone2",
+			Protocol: "anthropic", BaseURL: up.URL,
+			AllowPrivate: true, UpstreamModel: "u2", Priority: 20}
 		d.Candidates = func(string) ([]router.Candidate, error) { return []router.Candidate{dead1, dead2}, nil }
 	})
 	resp := post(t, s, `{"model":"pub-1","messages":[]}`, "tok")

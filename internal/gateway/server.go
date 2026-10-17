@@ -29,6 +29,9 @@ type Deps struct {
 	Limits func() Limits
 	// Candidates 返回公开模型的候选集（enabled 渠道×密钥×模型，已含冷却快照）。
 	Candidates func(publicModel string) ([]router.Candidate, error)
+	// Passthrough 读 routing.passthrough_unregistered 设置。预留：未登记模型的
+	// 「单渠道直连」透传尚未实现——即便开启也仍 404（避免半成品语义，简报 Task 6）。
+	Passthrough func() bool
 	// Cooldowns 冷却存储；nil = 不接冷却（最小 fixture 的测试场景）。
 	Cooldowns *router.Cooldowns
 	Cred      credential.Store
