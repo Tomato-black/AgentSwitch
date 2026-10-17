@@ -72,11 +72,3 @@ func (g Gateway) SaveSettings(port, timeoutSeconds int) (bool, error) {
 	return restart, nil
 }
 func (g Gateway) Recent() []telemetry.RequestRecord { return g.A.Recent() }
-
-// tail4 取密钥本体尾 4 位（不足 4 位时掩码为 "****"）。
-func tail4(secret string) string {
-	if len(secret) <= 4 {
-		return "****"
-	}
-	return secret[len(secret)-4:]
-}

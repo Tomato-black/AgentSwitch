@@ -58,7 +58,10 @@ func (a *AnthropicAdapter) Do(ctx context.Context, r DoRequest) (ChatResult, err
 	if err := ValidateBaseURL(r.BaseURL, r.AllowPrivate); err != nil {
 		return ChatResult{}, err
 	}
-	endpoint := strings.TrimRight(r.BaseURL, "/") + "/v1/messages"
+	endpoint, err := JoinAPIPath(r.BaseURL, "/messages")
+	if err != nil {
+		return ChatResult{}, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(r.RawBody))
 	if err != nil {
 		return ChatResult{}, err

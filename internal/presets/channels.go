@@ -5,8 +5,10 @@
 package presets
 
 // ChannelPreset 是一条渠道预设（spec §7 字段：id、显示名、协议、base_url、
-// 默认模型建议列表、官网/文档链接）。BaseURL 是渠道 base_url 语义——适配器
-// 在其后拼 /v1/messages 或 /v1/chat/completions，故不含 /v1 后缀。
+// 默认模型建议列表、官网/文档链接）。BaseURL 是渠道 API 前缀：经
+// provider.JoinAPIPath 路径感知拼接——无路径时插入 /v1 再拼 /chat/completions
+// 或 /messages；已含完整前缀（…/v1、智谱 …/api/paas/v4、豆包 …/api/v3、
+// Google …/v1beta/openai）时只拼后缀。
 type ChannelPreset struct {
 	ID            string   `json:"id"`
 	DisplayName   string   `json:"displayName"`
@@ -25,7 +27,7 @@ func All() []ChannelPreset {
 			DefaultModels: []string{"mimo-7b-rl", "mimo-vl-7b"},
 			DocURL:        "https://dev.mi.com/"},
 		{ID: "qwen", DisplayName: "阿里千问", Protocol: "openai",
-			BaseURL:       "https://dashscope.aliyuncs.com/compatible-mode",
+			BaseURL:       "https://dashscope.aliyuncs.com/compatible-mode/v1",
 			DefaultModels: []string{"qwen-max", "qwen-plus", "qwen-turbo"},
 			DocURL:        "https://bailian.console.aliyun.com/"},
 		{ID: "deepseek", DisplayName: "DeepSeek", Protocol: "openai",
@@ -65,7 +67,7 @@ func All() []ChannelPreset {
 			DefaultModels: []string{"gemini-2.5-pro", "gemini-2.5-flash"},
 			DocURL:        "https://aistudio.google.com/"},
 		{ID: "groq", DisplayName: "Groq", Protocol: "openai",
-			BaseURL:       "https://api.groq.com/openai",
+			BaseURL:       "https://api.groq.com/openai/v1",
 			DefaultModels: []string{"llama-3.3-70b-versatile", "deepseek-r1-distill-llama-70b"},
 			DocURL:        "https://console.groq.com/"},
 		{ID: "together", DisplayName: "Together AI", Protocol: "openai",
@@ -73,7 +75,7 @@ func All() []ChannelPreset {
 			DefaultModels: []string{"meta-llama/Llama-3.3-70B-Instruct-Turbo", "deepseek-ai/DeepSeek-V3"},
 			DocURL:        "https://api.together.ai/"},
 		{ID: "openrouter", DisplayName: "OpenRouter", Protocol: "openai",
-			BaseURL:       "https://openrouter.ai/api",
+			BaseURL:       "https://openrouter.ai/api/v1",
 			DefaultModels: []string{"openai/gpt-4o", "anthropic/claude-sonnet-4.5", "meta-llama/llama-3.3-70b-instruct"},
 			DocURL:        "https://openrouter.ai/docs"},
 	}

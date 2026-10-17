@@ -42,7 +42,10 @@ func (a *OpenAIAdapter) Do(ctx context.Context, r DoRequest) (ChatResult, error)
 	if len(dropped) > 0 && a.Log != nil {
 		a.Log.Info("openai adapter dropped anthropic-only fields", "fields", strings.Join(dropped, ","))
 	}
-	endpoint := strings.TrimRight(r.BaseURL, "/") + "/v1/chat/completions"
+	endpoint, err := JoinAPIPath(r.BaseURL, "/chat/completions")
+	if err != nil {
+		return ChatResult{}, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(converted))
 	if err != nil {
 		return ChatResult{}, err

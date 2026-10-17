@@ -483,7 +483,10 @@ func (a *openaiPassthrough) Do(ctx context.Context, r provider.DoRequest) (provi
 	if err := provider.ValidateBaseURL(r.BaseURL, r.AllowPrivate); err != nil {
 		return provider.ChatResult{}, err
 	}
-	endpoint := strings.TrimRight(r.BaseURL, "/") + "/v1/chat/completions"
+	endpoint, err := provider.JoinAPIPath(r.BaseURL, "/chat/completions")
+	if err != nil {
+		return provider.ChatResult{}, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(r.RawBody))
 	if err != nil {
 		return provider.ChatResult{}, err

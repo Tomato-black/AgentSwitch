@@ -247,6 +247,86 @@ func TestOpenAIAdapter429Passthrough(t *testing.T) {
 	}
 }
 
+func TestJoinAPIPath(t *testing.T) {
+	cases := []struct {
+		base, suffix, want string
+	}{
+		// 无路径或仅 "/"：插入 /v1（OpenAI/Anthropic 官方形态）
+		{"https://api.openai.com", "/chat/completions", "https://api.openai.com/v1/chat/completions"},
+		{"https://api.openai.com/", "/chat/completions", "https://api.openai.com/v1/chat/completions"},
+		{"https://api.anthropic.com", "/messages", "https://api.anthropic.com/v1/messages"},
+		// 已以 /v1（或 /v1/）结尾：直接拼后缀，避免双 /v1
+		{"https://api.openai.com/v1", "/chat/completions", "https://api.openai.com/v1/chat/completions"},
+		{"https://api.openai.com/v1/", "/chat/completions", "https://api.openai.com/v1/chat/completions"},
+		{"https://api.anthropic.com/v1", "/messages", "https://api.anthropic.com/v1/messages"},
+		{"https://api.anthropic.com/v1/", "/messages", "https://api.anthropic.com/v1/messages"},
+		// 供应商完整 API 前缀（非平凡路径且不以 /v1 结尾）：只拼后缀，不插 /v1
+		{"https://open.bigmodel.cn/api/paas/v4", "/chat/completions", "https://open.bigmodel.cn/api/paas/v4/chat/completions"},
+		{"https://open.bigmodel.cn/api/paas/v4/", "/chat/completions", "https://open.bigmodel.cn/api/paas/v4/chat/completions"},
+		{"https://ark.cn-beijing.volces.com/api/v3", "/chat/completions", "https://ark.cn-beijing.volces.com/api/v3/chat/completions"},
+		{"https://generativelanguage.googleapis.com/v1beta/openai", "/chat/completions", "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"},
+	}
+	for _, c := range cases {
+		got, err := JoinAPIPath(c.base, c.suffix)
+		if err != nil {
+			t.Errorf("JoinAPIPath(%q,%q) err=%v", c.base, c.suffix, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("JoinAPIPath(%q,%q)=%q want %q", c.base, c.suffix, got, c.want)
+		}
+	}
+	if _, err := JoinAPIPath("not-a-url", "/messages"); err == nil {
+		t.Error("invalid base must error")
+	}
+	if _, err := JoinAPIPath("https://x.example.com", ""); err == nil {
+		t.Error("empty suffix must error")
+	}
+}
+
+// TestOpenAIAdapterVendorPrefixPath：base_url 自带供应商前缀（智谱形态）时
+// 适配器不得再插入 /v1（旧拼接得到 …/api/paas/v4/v1/chat/completions 必 404）。
+func TestOpenAIAdapterVendorPrefixPath(t *testing.T) {
+	var gotPath string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"id":"cmpl-1","model":"m","choices":[{"message":{"content":"hi"},"finish_reason":"stop"}]}`))
+	}))
+	defer up.Close()
+	res, err := NewOpenAIAdapter(nil).Do(context.Background(), DoRequest{
+		BaseURL: up.URL + "/api/paas/v4", AllowPrivate: true, APIKey: "sk-x",
+		RawBody: []byte(`{"model":"m","max_tokens":1,"messages":[]}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if gotPath != "/api/paas/v4/chat/completions" {
+		t.Fatalf("path=%q want /api/paas/v4/chat/completions", gotPath)
+	}
+}
+
+// TestAnthropicAdapterNoDoubleV1：base_url 已以 /v1 结尾时不再插 /v1。
+func TestAnthropicAdapterNoDoubleV1(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Write([]byte(`{"id":"msg_1"}`))
+	}))
+	defer srv.Close()
+	res, err := NewAnthropicAdapter().Do(context.Background(), DoRequest{
+		BaseURL: srv.URL + "/v1", AllowPrivate: true, APIKey: "k", RawBody: []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if gotPath != "/v1/messages" {
+		t.Fatalf("path=%q want /v1/messages", gotPath)
+	}
+}
+
 func TestProbeBothProtocols(t *testing.T) {
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" {
