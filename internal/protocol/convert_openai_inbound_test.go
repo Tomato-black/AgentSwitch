@@ -2,6 +2,8 @@ package protocol
 
 import (
 	"encoding/json"
+	"io"
+	"strings"
 	"testing"
 )
 
@@ -266,3 +268,131 @@ func TestAnthropicResponseToOpenAIMapsUsage(t *testing.T) {
 
 func ptrF(f float64) *float64 { return &f }
 func ptrI(i int) *int         { return &i }
+
+// TestAnthropicStreamToOpenAIStreamChunks：固定 Anthropic SSE → OpenAI
+// chat.completion.chunk 序列：每帧 `data: ` JSON（object/model 正确）、text 增量
+// 到达、末帧 finish_reason、收口 [DONE]。
+func TestAnthropicStreamToOpenAIStreamChunks(t *testing.T) {
+	src := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_9\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"up-1\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":5,\"output_tokens\":0}}}\n\n" +
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"he\"}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"llo\"}}\n\n" +
+		"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+		"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":2}}\n\n" +
+		"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+	out, err := io.ReadAll(AnthropicStreamToOpenAIStream(strings.NewReader(src), "logical-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "data: {") {
+		t.Fatalf("chunks must be SSE data JSON lines:\n%s", s)
+	}
+	var finish *string
+	sawContent := false
+	for _, line := range strings.Split(s, "\n") {
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		payload := strings.TrimSpace(line[len("data: "):])
+		if payload == "[DONE]" {
+			continue
+		}
+		var ch struct {
+			Object  string `json:"object"`
+			Model   string `json:"model"`
+			Choices []struct {
+				Delta struct {
+					Role    string `json:"role"`
+					Content string `json:"content"`
+				} `json:"delta"`
+				FinishReason *string `json:"finish_reason"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal([]byte(payload), &ch); err != nil {
+			t.Fatalf("chunk not JSON: %s", payload)
+		}
+		if ch.Object != "chat.completion.chunk" || ch.Model != "logical-1" {
+			t.Fatalf("chunk envelope: %s", payload)
+		}
+		if len(ch.Choices) != 1 {
+			t.Fatalf("chunk choices: %s", payload)
+		}
+		if ch.Choices[0].Delta.Content != "" {
+			sawContent = true
+		}
+		if ch.Choices[0].FinishReason != nil {
+			finish = ch.Choices[0].FinishReason
+		}
+	}
+	if !sawContent {
+		t.Fatalf("text deltas missing:\n%s", s)
+	}
+	if finish == nil || *finish != "stop" {
+		t.Fatalf("final frame must carry finish_reason stop: %v\n%s", finish, s)
+	}
+	if !strings.Contains(s, "data: [DONE]") {
+		t.Fatalf("stream must end with [DONE]:\n%s", s)
+	}
+}
+
+// TestAnthropicStreamToOpenAIStreamToolCall：tool_use 块 → tool_calls 增量
+// （id/name 首帧、arguments 分片），finish_reason=tool_calls。
+func TestAnthropicStreamToOpenAIStreamToolCall(t *testing.T) {
+	src := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_t\",\"role\":\"assistant\",\"model\":\"up-1\",\"content\":[]}}\n\n" +
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"tu1\",\"name\":\"search\",\"input\":{}}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"q\\\":\"}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\"g\\\"}\"}}\n\n" +
+		"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\n" +
+		"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":4}}\n\n" +
+		"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+	out, err := io.ReadAll(AnthropicStreamToOpenAIStream(strings.NewReader(src), "logical-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	if !strings.Contains(s, `"name":"search"`) || !strings.Contains(s, `"id":"tu1"`) ||
+		!strings.Contains(s, `"finish_reason":"tool_calls"`) {
+		t.Fatalf("tool identity/finish missing:\n%s", s)
+	}
+	// arguments 以 JSON 字符串分片下发——逐帧解码后累积，须还原完整参数对象。
+	var args strings.Builder
+	sawName := false
+	for _, line := range strings.Split(s, "\n") {
+		if !strings.HasPrefix(line, "data: ") || strings.TrimSpace(line[len("data: "):]) == "[DONE]" {
+			continue
+		}
+		var ch struct {
+			Choices []struct {
+				Delta struct {
+					ToolCalls []struct {
+						Index    int    `json:"index"`
+						ID       string `json:"id"`
+						Function struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						} `json:"function"`
+					} `json:"tool_calls"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+		payload := strings.TrimSpace(line[len("data: "):])
+		if err := json.Unmarshal([]byte(payload), &ch); err != nil {
+			t.Fatalf("chunk not JSON: %s", payload)
+		}
+		for _, c := range ch.Choices {
+			for _, tc := range c.Delta.ToolCalls {
+				if tc.Function.Name != "" {
+					sawName = true
+				}
+				args.WriteString(tc.Function.Arguments)
+			}
+		}
+	}
+	if !sawName {
+		t.Fatalf("tool name missing:\n%s", s)
+	}
+	if args.String() != `{"q":"g"}` {
+		t.Fatalf("arguments not accumulated: %q\n%s", args.String(), s)
+	}
+}

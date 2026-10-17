@@ -990,3 +990,176 @@ func TestRetryAfterPassthroughOnParamError(t *testing.T) {
 			resp.StatusCode, resp.Header.Get("Retry-After"))
 	}
 }
+
+// --- Task 6B：OpenAI 入站 /v1/chat/completions ---
+
+// postChat 向 OpenAI 入站端点发请求（与 post 同构，路径不同）。
+func postChat(t *testing.T, s *Server, body, token string) *http.Response {
+	t.Helper()
+	req, _ := http.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	return w.Result()
+}
+
+// TestOpenAIInboundFailoverAcrossChannels：twoCands——第一目标 429，第二目标 200；
+// 客户端收到 OpenAI 形状 200（chat.completion + 逻辑模型名），第一目标只调一次。
+func TestOpenAIInboundFailoverAcrossChannels(t *testing.T) {
+	var calls1, calls2 int
+	busy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls1++
+		w.WriteHeader(429)
+		w.Write([]byte(`{"type":"error"}`))
+	}))
+	defer busy.Close()
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls2++
+		w.Write([]byte(`{"id":"msg_1","type":"message","role":"assistant","model":"u2","content":[{"type":"text","text":"pong"}],"stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":2}}`))
+	}))
+	defer good.Close()
+	tw, _ := twoCands(t, busy.URL, good.URL)
+	s := newGW(t, busy.URL, tw)
+	resp := postChat(t, s, `{"model":"pub-1","messages":[{"role":"user","content":"hi"}]}`, "tok")
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		t.Fatalf("status %d body %s", resp.StatusCode, b)
+	}
+	if calls1 != 1 || calls2 != 1 {
+		t.Fatalf("first target once then second target: calls1=%d calls2=%d", calls1, calls2)
+	}
+	var out struct {
+		Object  string `json:"object"`
+		Model   string `json:"model"`
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatalf("client must get OpenAI shape: %s", b)
+	}
+	if out.Object != "chat.completion" || out.Model != "pub-1" {
+		t.Fatalf("envelope must echo logical model: %s", b)
+	}
+	if len(out.Choices) != 1 || out.Choices[0].Message.Content != "pong" || out.Choices[0].FinishReason != "stop" {
+		t.Fatalf("choices: %s", b)
+	}
+}
+
+// TestOpenAIInboundUnknownModel404：未登记模型 → 404（列出公开模型），上游 0 调用。
+func TestOpenAIInboundUnknownModel404(t *testing.T) {
+	var calls int
+	up := fakeUpstream(t, 200, `{"id":"ok"}`, &calls)
+	defer up.Close()
+	s := newGW(t, up.URL, nil)
+	resp := postChat(t, s, `{"model":"nope","messages":[{"role":"user","content":"hi"}]}`, "tok")
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 404 || calls != 0 {
+		t.Fatalf("unknown model must 404 with 0 upstream calls: %d calls=%d %s", resp.StatusCode, calls, b)
+	}
+	if !strings.Contains(string(b), "pub-1") {
+		t.Fatalf("404 must list models: %s", b)
+	}
+}
+
+// TestOpenAIInboundCommitNoReplay：首 chunk 写出后上游再错——提交点已过，绝不
+// 调第二目标（docx §6.3 首字节后不重放）。
+func TestOpenAIInboundCommitNoReplay(t *testing.T) {
+	var calls2 int
+	good := fakeUpstream(t, 200, `{"id":"ok"}`, &calls2)
+	defer good.Close()
+	flaky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		w.Write([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"role\":\"assistant\",\"model\":\"u1\",\"content\":[]}}\n\n" +
+			"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+			"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n"))
+		w.(http.Flusher).Flush()
+		panic(http.ErrAbortHandler) // 首 chunk 后断流
+	}))
+	defer flaky.Close()
+	tw, _ := twoCands(t, flaky.URL, good.URL)
+	s := newGW(t, flaky.URL, tw)
+	resp := postChat(t, s, `{"model":"pub-1","stream":true,"messages":[{"role":"user","content":"hi"}]}`, "tok")
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		t.Fatalf("status %d body %s", resp.StatusCode, b)
+	}
+	if !strings.Contains(string(b), `"content":"hi"`) {
+		t.Fatalf("first chunk must reach client before abort: %s", b)
+	}
+	if calls2 != 0 {
+		t.Fatalf("after first byte must not switch, calls2=%d", calls2)
+	}
+}
+
+// TestOpenAIInboundOpenAIProtocolPassthrough：上游 openai 协议——RewriteModel 后
+// 直通（无 Anthropic 互转），响应原样 OpenAI 形状回传。
+func TestOpenAIInboundOpenAIProtocolPassthrough(t *testing.T) {
+	var gotModel, gotAuth string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		b, _ := io.ReadAll(r.Body)
+		m := map[string]any{}
+		json.Unmarshal(b, &m)
+		gotModel, _ = m["model"].(string)
+		w.Write([]byte(`{"id":"cmpl-1","object":"chat.completion","model":"u-oai","choices":[{"message":{"role":"assistant","content":"raw"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`))
+	}))
+	defer up.Close()
+	creds := credential.NewFallbackFile(t.TempDir() + "/s.json")
+	_ = creds.Set("account:ko", []byte("sk-oai"))
+	cand := router.Candidate{TargetID: "to", LogicalModel: "pub-1",
+		ChannelID: "co", ChannelName: "oai", SecretKey: "account:ko",
+		Protocol: "openai", BaseURL: up.URL, AllowPrivate: true,
+		UpstreamModel: "u-oai", Priority: 10}
+	s := newGW(t, up.URL, func(d *Deps) {
+		d.Cred = creds
+		d.Candidates = func(string) ([]router.Candidate, error) { return []router.Candidate{cand}, nil }
+	})
+	resp := postChat(t, s, `{"model":"pub-1","messages":[{"role":"user","content":"hi"}]}`, "tok")
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		t.Fatalf("status %d body %s", resp.StatusCode, b)
+	}
+	if gotModel != "u-oai" || gotAuth != "Bearer sk-oai" {
+		t.Fatalf("passthrough must rewrite model and use channel key: model=%q auth=%q", gotModel, gotAuth)
+	}
+	if !strings.Contains(string(b), `"raw"`) {
+		t.Fatalf("response must pass through unconverted: %s", b)
+	}
+}
+
+// TestOpenAIInboundUpstreamErrorOpenAIShape：anthropic 上游 400 的 Anthropic
+// envelope 须转成 OpenAI error 形状回给 chat.completions 客户端（不原样透传）。
+func TestOpenAIInboundUpstreamErrorOpenAIShape(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(400)
+		w.Write([]byte(`{"type":"error","error":{"type":"invalid_request_error","message":"bad param"}}`))
+	}))
+	defer up.Close()
+	s := newGW(t, up.URL, nil)
+	resp := postChat(t, s, `{"model":"pub-1","messages":[{"role":"user","content":"hi"}]}`, "tok")
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 400 {
+		t.Fatalf("status %d body %s", resp.StatusCode, b)
+	}
+	var env struct {
+		Type  string `json:"type"` // Anthropic envelope 的顶层 type 不得出现在 OpenAI 形状
+		Error struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(b, &env); err != nil || env.Type != "" ||
+		env.Error.Message != "bad param" || env.Error.Type != "invalid_request_error" {
+		t.Fatalf("must be OpenAI error shape: %s", b)
+	}
+}

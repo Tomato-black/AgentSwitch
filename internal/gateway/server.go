@@ -62,6 +62,7 @@ func New(d Deps) *Server {
 		s.sem = make(chan struct{}, lim.MaxConcurrent)
 	}
 	s.mux.HandleFunc("POST /v1/messages", s.handleMessages)
+	s.mux.HandleFunc("POST /v1/chat/completions", s.handleChatCompletions)
 	// 简报内部不一致：Produces 路由表写 GET /v1/models、其测试却请求 GET /models——两者都注册。
 	s.mux.HandleFunc("GET /v1/models", s.handleModels)
 	s.mux.HandleFunc("GET /models", s.handleModels)
