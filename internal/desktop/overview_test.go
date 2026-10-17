@@ -23,12 +23,13 @@ func TestRecentStats(t *testing.T) {
 }
 
 // TestOverviewHeroAndCards 覆盖四卡骨架（spec §5.3）：hero 状态词、接入卡、
-// 密钥池/设置并排小卡、最近请求卡，以及 hero 卡内恒显的「日志:」行。
+// 密钥池/设置并排小卡、最近请求卡，以及 hero 卡内恒显的「日志:」行；fresh
+// app 无渠道即 ΣKeyCount==0，池卡须显 muted「密钥池空」而非就绪计数。
 func TestOverviewHeroAndCards(t *testing.T) {
 	u, _ := testUI(t)
 	u.status.State = "running"
 	tt := ui.NewTester(u.overviewView, 1080, 720)
-	for _, want := range []string{"运行中", "接入 Claude Code", "密钥池", "设置", "最近请求", "日志:"} {
+	for _, want := range []string{"运行中", "接入 Claude Code", "密钥池", "设置", "最近请求", "日志:", "密钥池空"} {
 		if !tt.HasText(want) {
 			t.Fatalf("missing %q: %v", want, tt.Texts())
 		}
@@ -253,6 +254,50 @@ func TestSettingsSaveResetsAndReechoes(t *testing.T) {
 	tt.Frame()
 	if u.portInput != "18000" || u.timeoutInput != "60" {
 		t.Fatalf("re-echo after save wrong: %q %q", u.portInput, u.timeoutInput)
+	}
+}
+
+// TestOverviewFailoverMarker 覆盖错误列迁移标记（spec §5.3「→ 已切换」类
+// 标记，数据已有则显）：FailoverCount=2 显「→ 已切换×2」、=1 显
+// 「→ 已切换」、=0 只显 ErrorClass 本身不带标记。
+func TestOverviewFailoverMarker(t *testing.T) {
+	u, _ := testUI(t)
+	u.recent = []telemetry.RequestRecord{
+		{Model: "claude-opus", Channel: "c1", Account: "a1", Status: 200, FailoverCount: 2},
+		{Model: "claude-sonnet", Channel: "c1", Account: "a1", Status: 200, ErrorClass: "timeout", FailoverCount: 1},
+		{Model: "claude-opus", Channel: "c1", Account: "a1", Status: 429, ErrorClass: "rate_limited", FailoverCount: 0},
+	}
+	tt := ui.NewTester(u.overviewView, 1080, 720)
+	if !tt.HasText("→ 已切换×2") {
+		t.Fatalf("×N marker missing: %v", tt.Texts())
+	}
+	if !tt.HasText("timeout → 已切换") {
+		t.Fatalf("single-switch marker missing: %v", tt.Texts())
+	}
+	if tt.HasText("rate_limited → 已切换") {
+		t.Fatalf("marker must not appear when FailoverCount==0: %v", tt.Texts())
+	}
+}
+
+// TestOverviewPoolReadyCount 覆盖池卡就绪计数（spec §5.3「全部就绪 · n 把
+// 可用」）：n = Σ渠道 KeyCount − 冷却数；有渠道有密钥且无冷却时按实际把数
+// 显示（对照 fresh app 的「密钥池空」在 TestOverviewHeroAndCards，冷却
+// chips 分支在 TestOverviewPoolStatusShowsCooling）。
+func TestOverviewPoolReadyCount(t *testing.T) {
+	u, _ := testUI(t)
+	if _, err := u.svc.Channels.Create("anthropic-compatible", "m", "https://m.example.com", 10, true, false); err != nil {
+		t.Fatal(err)
+	}
+	cid := u.svc.Channels.List()[0].ID
+	if _, err := u.svc.Channels.AddKeys(cid, "k", "sk-abc12345\nsk-def67890", true); err != nil {
+		t.Fatal(err)
+	}
+	tt := ui.NewTester(u.overviewView, 1080, 720)
+	if !tt.HasText("全部就绪 · 2 把可用") {
+		t.Fatalf("ready count missing: %v", tt.Texts())
+	}
+	if tt.HasText("密钥池空") {
+		t.Fatalf("empty text must yield to ready count: %v", tt.Texts())
 	}
 }
 

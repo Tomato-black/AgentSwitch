@@ -129,27 +129,39 @@ func (u *uiState) overviewView(c *ui.Context) {
 	}
 }
 
-// poolCard 是密钥池小卡（spec §5.3）：Success 静态点「全部就绪」，或每枚
-// 冷却密钥一枚琥珀 chips（渠道/密钥+剩余秒；PoolStatus 只回冷却中的密钥，
-// 正常密钥不出现）。
+// poolCard 是密钥池小卡（spec §5.3）：有冷却密钥时每枚一枚琥珀 chips
+// （渠道/密钥+剩余秒；PoolStatus 只回冷却中的密钥）；无冷却时 Success
+// 静态点「全部就绪 · n 把可用」（n = Σ渠道 KeyCount − 冷却数，钳 0 防
+// 密钥已删而冷却残留出负数），一把都没有则是 muted「密钥池空」。
 func (u *uiState) poolCard(c *ui.Context, t *ui.Theme, s softPalette) {
 	card(c, t, func() {
 		ui.Column(c).Gap(8).Children(func() {
 			ui.Text(c, "密钥池").Bold()
-			if pool := u.svc.Gateway.PoolStatus(); len(pool) > 0 {
+			pool := u.svc.Gateway.PoolStatus()
+			ready := 0
+			for _, ch := range u.svc.Channels.List() {
+				ready += ch.KeyCount
+			}
+			if ready -= len(pool); ready < 0 {
+				ready = 0
+			}
+			switch {
+			case len(pool) > 0:
 				ui.Row(c).Gap(6).Children(func() {
 					for _, p := range pool {
 						softBadge(c, t, s, "warn",
 							fmt.Sprintf("%s/%s 冷却 %ds", p.ChannelName, p.KeyName, p.RemainingSec))
 					}
 				})
-			} else {
+			case ready > 0:
 				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 					// 就绪点用静态 Success 绿，不走 ledDot("running")——那会
 					// 带上呼吸动画，就绪态不该动。
 					ui.Box(c).Width(8).Height(8).Radius(4).Background(t.Success)
-					ui.Text(c, "全部就绪").TextColor(t.TextMuted)
+					ui.Textf(c, "全部就绪 · %d 把可用", ready).TextColor(t.TextMuted)
 				})
+			default:
+				ui.Text(c, "密钥池空").TextColor(t.TextMuted)
 			}
 		})
 	})
@@ -251,7 +263,8 @@ func (u *uiState) accessCard(c *ui.Context, t *ui.Theme, s softPalette, port int
 
 // recentCard 是最近请求卡（spec §5.3）：七列 时间/模型/渠道/密钥/状态/耗时/
 // 错误；「渠道/密钥」列 = Channel/Account 等宽两段；状态码 2xx=Success、
-// 4xx=Warning、5xx/0=Danger 文本色；空态是邀请不是空白。
+// 4xx=Warning、5xx/0=Danger 文本色；错误列 FailoverCount>0 附「→ 已切换」
+// 迁移标记（>1 带 ×N）；空态是邀请不是空白。
 func (u *uiState) recentCard(c *ui.Context, t *ui.Theme) {
 	card(c, t, func() {
 		ui.Column(c).Gap(8).Grow(1).Children(func() {
@@ -285,7 +298,21 @@ func (u *uiState) recentCard(c *ui.Context, t *ui.Theme) {
 				case 4:
 					ui.Text(c, strconv.FormatInt(rec.DurationMs, 10)).SingleLine().Font(monoFont)
 				case 5:
-					ui.Text(c, rec.ErrorClass).SingleLine()
+					label := rec.ErrorClass
+					// 迁移标记（spec §5.3「→ 已切换」类标记，数据已有则显）：
+					// FailoverCount>0 才带；超过 1 次带 ×N。
+					if n := rec.FailoverCount; n > 0 {
+						m := "→ 已切换"
+						if n > 1 {
+							m = fmt.Sprintf("→ 已切换×%d", n)
+						}
+						if label == "" {
+							label = m
+						} else {
+							label += " " + m
+						}
+					}
+					ui.Text(c, label).SingleLine()
 				}
 			}).Grow(1)
 		})
