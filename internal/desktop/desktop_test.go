@@ -29,6 +29,7 @@ func testUI(t *testing.T) (*uiState, *app.App) {
 			Primary:       credential.NewFallbackFile(filepath.Join(t.TempDir(), "ch-keys.json")),
 			AllowFallback: true,
 		}},
+		Logical: &bridge.LogicalModels{A: a},
 	}
 	return newUIState(svc, a), a
 }
@@ -49,7 +50,7 @@ func TestUnknownPageFallsBackToLogical(t *testing.T) {
 	u, _ := testUI(t)
 	u.page = "bogus"
 	tt := ui.NewTester(u.view, 800, 600)
-	if !tt.HasText("TODO: 逻辑模型") {
+	if !tt.HasText("新建逻辑模型") {
 		t.Fatalf("unknown page must fall back to logical: %v", tt.Texts())
 	}
 }
@@ -97,7 +98,7 @@ func TestNavigationSwitchesPage(t *testing.T) {
 	if u.page != "channels" {
 		t.Fatalf("page = %q, want channels", u.page)
 	}
-	if tt.HasText("TODO: 逻辑模型") {
+	if tt.HasText("新建逻辑模型") {
 		t.Fatalf("logical leaked into channels page: %v", tt.Texts())
 	}
 	if err := tt.Click("逻辑模型"); err != nil {
@@ -106,7 +107,7 @@ func TestNavigationSwitchesPage(t *testing.T) {
 	if u.page != "logical" {
 		t.Fatalf("page = %q, want logical", u.page)
 	}
-	if !tt.HasText("TODO: 逻辑模型") {
+	if !tt.HasText("新建逻辑模型") {
 		t.Fatalf("logical view missing: %v", tt.Texts())
 	}
 }
