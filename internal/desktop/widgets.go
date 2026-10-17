@@ -130,6 +130,6 @@ func tile(c *ui.Context, t *ui.Theme, s softPalette, name string, size float32) 
 	if len(abbr) > 2 {
 		abbr = abbr[:2]
 	}
-	ui.Box(c).Size(size, size).Radius(size*0.25).Background(bg).Shrink(0).Center().
+	ui.Box(c).Size(size, size).Radius(size * 0.25).Background(bg).Shrink(0).Center().
 		Children(func() { ui.Text(c, string(abbr)).TextColor(fg).FontSize(size * 0.35).Bold() })
 }
