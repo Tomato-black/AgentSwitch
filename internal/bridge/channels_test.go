@@ -167,12 +167,16 @@ func TestChannelsTestAndTestKey(t *testing.T) {
 }
 
 func TestChannelsFetchModelsBothProtocols(t *testing.T) {
+	var gotOpenAIBearer bool
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/models" {
 			t.Errorf("path %q", r.URL.Path)
 		}
 		if r.Header.Get("Authorization") == "" && r.Header.Get("X-Api-Key") == "" {
 			t.Error("no auth header")
+		}
+		if strings.HasPrefix(r.Header.Get("Authorization"), "Bearer sk-") {
+			gotOpenAIBearer = true
 		}
 		w.Write([]byte(`{"data":[{"id":"m-a"},{"id":"m-b"}]}`))
 	}))
@@ -186,9 +190,21 @@ func TestChannelsFetchModelsBothProtocols(t *testing.T) {
 	if err != nil || len(ids) != 2 || ids[1] != "m-b" {
 		t.Fatalf("fetch: %v %v", ids, err)
 	}
-	// 无密钥渠道报错
+	// openai 渠道真实请求：断言上游收到 Authorization: Bearer
 	c2, _ := cs.Create("openai-compatible", "o", up.URL, 20, true, false)
-	if _, err := cs.FetchModels(c2.ID); err == nil {
+	if _, err := cs.AddKeys(c2.ID, "k2", "sk-openai6789", true); err != nil {
+		t.Fatal(err)
+	}
+	ids2, err := cs.FetchModels(c2.ID)
+	if err != nil || len(ids2) != 2 {
+		t.Fatalf("openai fetch: %v %v", ids2, err)
+	}
+	if !gotOpenAIBearer {
+		t.Fatal("openai fetch must send Authorization: Bearer")
+	}
+	// 无密钥渠道报错
+	c3, _ := cs.Create("openai-compatible", "o3", up.URL, 30, true, false)
+	if _, err := cs.FetchModels(c3.ID); err == nil {
 		t.Fatal("fetch without key must error")
 	}
 }

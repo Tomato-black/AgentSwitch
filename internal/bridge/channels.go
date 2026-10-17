@@ -3,6 +3,7 @@ package bridge
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -207,11 +208,22 @@ func (s Channels) Test(id string) provider.ProbeResult {
 	return provider.Probe(context15(), c.Protocol, c.BaseURL, apiKey, c.AllowPrivateUpstream)
 }
 
+// fetchModelsClient 是 FetchModels 专用的包级私有 client：不跟随重定向
+// （3xx 原样返回，交由状态检查报错），与数据面 adapter 的出站姿态一致。
+var fetchModelsClient = &http.Client{
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
+
 // FetchModels 拉上游 GET /v1/models（两种协议同形，鉴权头按协议区分）。
 func (s Channels) FetchModels(id string) ([]string, error) {
 	c, err := s.A.Store().Channels().Get(id)
 	if err != nil {
 		return nil, err
+	}
+	if err := provider.ValidateBaseURL(c.BaseURL, c.AllowPrivateUpstream); err != nil {
+		return nil, fmt.Errorf("Base URL 校验失败: %w", err)
 	}
 	key := ""
 	keys, _ := s.A.Store().ChannelKeys().ListByChannel(id)
@@ -237,11 +249,14 @@ func (s Channels) FetchModels(id string) ([]string, error) {
 		req.Header.Set("X-Api-Key", key)
 		req.Header.Set("Anthropic-Version", "2023-06-01")
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := fetchModelsClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("上游请求失败: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return nil, fmt.Errorf("上游重定向被拒绝: %d", resp.StatusCode)
+	}
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("上游状态 %d", resp.StatusCode)
 	}
@@ -250,7 +265,7 @@ func (s Channels) FetchModels(id string) ([]string, error) {
 			ID string `json:"id"`
 		} `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
 		return nil, fmt.Errorf("响应解析失败: %w", err)
 	}
 	ids := make([]string, 0, len(out.Data))
@@ -302,7 +317,7 @@ func (s Channels) AddKeys(channelID, name, keysText string, allowFallback bool) 
 	return stored, nil
 }
 
-// pickBackendFor 复用 bridge.go 里 Accounts 的确认闸逻辑（该服务退役前两者并存）。
+// pickBackendFor 是密钥后端确认闸：系统密钥环优先，降级文件需显式允许（原与 Accounts 服务同源，后者已随渠道化退役）。
 func pickBackendFor(s Channels, allowFallback bool) (string, error) {
 	if s.keychainAvailable() {
 		return "os-keychain", nil

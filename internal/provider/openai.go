@@ -74,10 +74,12 @@ func (a *OpenAIAdapter) Do(ctx context.Context, r DoRequest) (ChatResult, error)
 }
 
 // streamBody 把 OpenAI chunk 流泵过转换器变成 Anthropic SSE 流（逐事件 flush）。
-func (a *OpenAIAdapter) streamBody(src io.Reader) io.ReadCloser {
+// src 由泵 goroutine 关闭：EOF/写失败/读错所有路径都经 defer 收口。
+func (a *OpenAIAdapter) streamBody(src io.ReadCloser) io.ReadCloser {
 	pr, pw := io.Pipe()
 	t := protocol.NewOpenAIStreamTransformer()
 	go func() {
+		defer src.Close()
 		buf := make([]byte, 32<<10)
 		for {
 			n, rerr := src.Read(buf)

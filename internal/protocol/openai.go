@@ -443,15 +443,16 @@ func (t *OpenAIStreamTransformer) handleChunk(data []byte) {
 	if json.Unmarshal(data, &c) != nil {
 		return
 	}
+	// usage 先于 startMessage 落账：首 chunk 携带 usage 时 message_start 直接带真实 input_tokens
+	if c.Usage != nil {
+		t.inTok, t.outTok = c.Usage.PromptTokens, c.Usage.CompletionTokens
+	}
 	if !t.started {
 		t.msgID, t.model = c.ID, c.Model
 		if t.msgID != "" {
 			t.msgID = "msg_" + t.msgID
 		}
 		t.startMessage()
-	}
-	if c.Usage != nil {
-		t.inTok, t.outTok = c.Usage.PromptTokens, c.Usage.CompletionTokens
 	}
 	if len(c.Choices) == 0 { // usage-only 尾块或心跳
 		return
