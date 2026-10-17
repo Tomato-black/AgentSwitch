@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -53,9 +54,18 @@ func newGW(t *testing.T, baseURL string, tweak func(d *Deps)) *Server {
 			}
 			return []router.Candidate{cand}, nil
 		},
-		Cred:             creds,
-		Router:           router.PriorityRouter{},
-		AdapterFor:       func(p string) (provider.Adapter, error) { return provider.AdapterForProtocol(p, nil) },
+		Cred:   creds,
+		Router: router.PriorityRouter{},
+		AdapterFor: func(p string) (provider.Adapter, error) {
+			switch p {
+			case "anthropic":
+				return provider.NewAnthropicAdapter(), nil
+			case "openai":
+				return provider.NewOpenAIAdapter(nil), nil
+			default:
+				return nil, fmt.Errorf("unknown protocol %q", p)
+			}
+		},
 		ListPublicModels: func() []string { return []string{"pub-1"} },
 		HasUsableChannel: func() bool { return true },
 		Ring:             telemetry.NewRing(10),

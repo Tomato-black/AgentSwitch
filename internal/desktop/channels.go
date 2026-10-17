@@ -103,8 +103,8 @@ func channelRefNames(u *uiState, channelID string) []string {
 	return referencedBy(u.svc.Logical.List(), channelID)
 }
 
-// channelStats 统计遥测环里该渠道名的近况：ok=2xx、fail=Status==0||>=400
-// （与 recentStats 的失败口径一致），按 rec.Channel（渠道名）过滤。
+// channelStats 统计遥测环里该渠道名的近况：ok=2xx、fail=Status==0||>=400，
+// 按 rec.Channel（渠道名）过滤。
 func channelStats(recs []telemetry.RequestRecord, channel string) (ok, fail int) {
 	for _, r := range recs {
 		if r.Channel != channel {

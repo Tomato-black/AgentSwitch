@@ -2,8 +2,7 @@
 // （数据来自 Logical.List() 的 enabled 项，记忆 settings 键
 // access.last_logical_model）+ Claude Code / Codex 两卡（片段代码块 +
 // 复制按钮）。片段来自 bridge.Access；展示令牌掩码、复制写真实片段
-// （展示与复制分离，spec §6.4/§9）。片段样式 snippetBg 自 overview.go
-// 迁入（Task 16 删 overview 不再带走）。
+// （展示与复制分离，spec §6.4/§9）。片段样式 snippetBg 定义于本文件。
 package desktop
 
 import (

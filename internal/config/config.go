@@ -6,14 +6,13 @@ import (
 )
 
 const (
-	KeyPort         = "server.port"
-	KeyTimeout      = "server.request_timeout_seconds"
-	KeyGrace        = "server.shutdown_grace_seconds"
-	KeyMaxBody      = "server.max_body_bytes"
-	KeyMaxConc      = "server.max_concurrent"
-	KeyToken        = "auth.gateway_token"
-	KeyCredFallback = "credential.fallback_enabled"
-	KeyPassthrough  = "routing.passthrough_unregistered"
+	KeyPort        = "server.port"
+	KeyTimeout     = "server.request_timeout_seconds"
+	KeyGrace       = "server.shutdown_grace_seconds"
+	KeyMaxBody     = "server.max_body_bytes"
+	KeyMaxConc     = "server.max_concurrent"
+	KeyToken       = "auth.gateway_token"
+	KeyPassthrough = "routing.passthrough_unregistered"
 )
 
 type Settings struct {
@@ -23,7 +22,6 @@ type Settings struct {
 	MaxBodyBytes          int64
 	MaxConcurrent         int
 	GatewayToken          string
-	CredentialFallback    bool
 	// PassthroughUnregistered：未登记逻辑模型名是否放行（默认拒绝，docx §6.1）。
 	// 设置项仅预留——gateway 侧即便开启且 candidates 空仍 404（后续接单渠道直连）。
 	PassthroughUnregistered bool
@@ -93,11 +91,6 @@ func Load(get func(key string) (string, error)) (Settings, error) {
 	} else {
 		s.GatewayToken = v
 	}
-	if v, err := get(KeyCredFallback); err != nil {
-		return s, err
-	} else {
-		s.CredentialFallback = v == "true"
-	}
 	if v, err := get(KeyPassthrough); err != nil {
 		return s, err
 	} else {
@@ -119,7 +112,6 @@ func (s Settings) Save(set func(key, value string) error) error {
 		KeyPort: strconv.Itoa(s.Port), KeyTimeout: strconv.Itoa(s.RequestTimeoutSeconds),
 		KeyGrace: strconv.Itoa(s.ShutdownGraceSeconds), KeyMaxBody: strconv.FormatInt(s.MaxBodyBytes, 10),
 		KeyMaxConc: strconv.Itoa(s.MaxConcurrent), KeyToken: s.GatewayToken,
-		KeyCredFallback: strconv.FormatBool(s.CredentialFallback),
 		KeyPassthrough: pas,
 	}
 	for k, v := range pairs {

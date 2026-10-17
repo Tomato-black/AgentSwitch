@@ -27,13 +27,13 @@ func TestValidateRejectsBadPort(t *testing.T) {
 }
 
 func TestLoadUsesDefaultsAndOverrides(t *testing.T) {
-	vals := map[string]string{KeyPort: "18000", KeyCredFallback: "true"}
+	vals := map[string]string{KeyPort: "18000", KeyToken: "tok"}
 	get := func(k string) (string, error) { return vals[k], nil }
 	s, err := Load(get)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Port != 18000 || !s.CredentialFallback || s.RequestTimeoutSeconds != 120 {
+	if s.Port != 18000 || s.GatewayToken != "tok" || s.RequestTimeoutSeconds != 120 {
 		t.Fatalf("load wrong: %+v", s)
 	}
 }

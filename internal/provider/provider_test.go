@@ -151,17 +151,12 @@ func TestPresetsCatalogAndLookup(t *testing.T) {
 	}
 }
 
-func TestAdapterForProtocolDispatch(t *testing.T) {
-	a, err := AdapterForProtocol("anthropic", nil)
-	if err != nil || a == nil {
-		t.Fatalf("anthropic: %v %v", a, err)
+func TestAdapterConstructors(t *testing.T) {
+	if NewAnthropicAdapter() == nil {
+		t.Fatal("anthropic adapter nil")
 	}
-	o, err := AdapterForProtocol("openai", nil)
-	if err != nil || o == nil {
-		t.Fatalf("openai: %v %v", o, err)
-	}
-	if _, err := AdapterForProtocol("grpc", nil); err == nil {
-		t.Fatal("unknown protocol must error")
+	if NewOpenAIAdapter(nil) == nil {
+		t.Fatal("openai adapter nil")
 	}
 }
 

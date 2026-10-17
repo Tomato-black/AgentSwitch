@@ -1,8 +1,6 @@
 // icons.go 是边栏导航的 16px 内联线性图标（逻辑模型=分支链、渠道=插头、
 // 接入=钥匙、设置=齿轮），ui.ParseSVG 内联定义，色随主题文字
 // （spec §4/§6.1；§8.1 待验证：currentColor 若不着色，退化为固定中性色）。
-// iconOverview/iconModels 是旧导航残留（Task 16 随旧页一并删除），暂留防
-// 编译引用断裂。
 package desktop
 
 import "github.com/egoist/mygo/ui"
@@ -27,10 +25,4 @@ var (
 		`<circle cx="5.5" cy="8" r="3"/><path d="M8.5 8H15M12.5 8v2.5M14.5 8v2"/></svg>`)
 	iconSettings = mustSVG(svgHead +
 		`<circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2.2M8 12.3v2.2M1.5 8h2.2M12.3 8h2.2M3.4 3.4l1.6 1.6M11 11l1.6 1.6M12.6 3.4L11 5M5 11l-1.6 1.6"/></svg>`)
-	// 旧导航图标（Task 16 删除）：
-	iconOverview = mustSVG(svgHead +
-		`<rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1"/><rect x="9" y="1.5" width="5.5" height="5.5" rx="1"/>` +
-		`<rect x="1.5" y="9" width="5.5" height="5.5" rx="1"/><rect x="9" y="9" width="5.5" height="5.5" rx="1"/></svg>`)
-	iconModels = mustSVG(svgHead +
-		`<circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v4.3M8 10.2v4.3M1.5 8h4.3M10.2 8h4.3"/></svg>`)
 )
