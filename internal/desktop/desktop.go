@@ -26,22 +26,20 @@ type Services struct {
 }
 
 type uiState struct {
-	svc              Services
-	status           app.StateInfo
-	recent           []telemetry.RequestRecord
-	token            string
-	logPath          string       // 日志文件路径（a.LogPath()；概览恒显的"日志:"提示）
-	page             string       // 当前页；"overview" 默认（自绘侧栏选中 id，经 navSel 归一）
-	showToken        bool         // 令牌明文显示开关
-	portInput        string       // 设置面板端口输入（打开时回显 Status.Port）
-	timeoutInput     string       // 设置面板超时输入（打开时回显 Status.TimeoutSeconds）
-	settingsMsg      string       // 设置保存结果提示
-	settingsOpen     bool         // 设置面板展开
-	prevSettingsOpen bool         // 上一帧的 settingsOpen——折叠面板打开瞬间的回显检测
-	confirmRegen     bool         // 重新生成令牌的二次确认
-	table            ui.ListState // 最近请求表状态
-	closeNotice      bool         // 首关教育提示
-	closeConfirmed   bool         // 用户已知晓，允许关闭
+	svc            Services
+	status         app.StateInfo
+	recent         []telemetry.RequestRecord
+	token          string
+	logPath        string       // 日志文件路径（a.LogPath()；概览恒显的"日志:"提示）
+	page           string       // 当前页；"overview" 默认（自绘侧栏选中 id，经 navSel 归一）
+	showToken      bool         // 令牌明文显示开关
+	portInput      string       // 设置卡端口输入（为空时回显 Status.Port）
+	timeoutInput   string       // 设置卡超时输入（为空时回显 Status.TimeoutSeconds）
+	settingsMsg    string       // 设置保存结果提示
+	confirmRegen   bool         // 重新生成令牌的 AlertDialog open 位（选定后框架自关）
+	table          ui.ListState // 最近请求表状态
+	closeNotice    bool         // 首关教育提示
+	closeConfirmed bool         // 用户已知晓，允许关闭
 	// 模型聚合页（Task 9 重写：跨渠道只读 + 行内启停）：
 	modelList ui.ListState // 聚合表状态；Selected 经 modelSel 指向当前行
 	modelSel  int          // 聚合表当前行（-1=无）

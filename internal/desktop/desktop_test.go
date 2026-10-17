@@ -47,7 +47,7 @@ func TestUnknownPageFallsBackToOverview(t *testing.T) {
 	u, _ := testUI(t)
 	u.page = "bogus"
 	tt := ui.NewTester(u.view, 800, 600)
-	if !tt.HasText("访问令牌") {
+	if !tt.HasText("接入 Claude Code") {
 		t.Fatalf("unknown page must fall back to overview: %v", tt.Texts())
 	}
 }
@@ -93,7 +93,7 @@ func TestNavigationSwitchesPage(t *testing.T) {
 	if u.page != "channels" {
 		t.Fatalf("page = %q, want channels", u.page)
 	}
-	if tt.HasText("访问令牌") {
+	if tt.HasText("接入 Claude Code") {
 		t.Fatalf("overview leaked into channels page: %v", tt.Texts())
 	}
 	if err := tt.Click("概览"); err != nil {
@@ -102,7 +102,7 @@ func TestNavigationSwitchesPage(t *testing.T) {
 	if u.page != "overview" {
 		t.Fatalf("page = %q, want overview", u.page)
 	}
-	if !tt.HasText("访问令牌") {
+	if !tt.HasText("接入 Claude Code") {
 		t.Fatalf("overview view missing: %v", tt.Texts())
 	}
 }
