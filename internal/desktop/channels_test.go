@@ -437,6 +437,44 @@ func TestDetailConfirmDisarmOnChannelSwitch(t *testing.T) {
 		t.Fatal("未重新武装不得出现确认钮")
 	}
 }
+
+// TestDetailContextClearsImportFormsOnSwitch pin 终审 Important：切换渠道须
+// 清空密钥导入表单/渠道模型表单/展开位与类型更换确认位。A 的批量导入草稿
+// 残留可经「导入密钥」AddKeys(v.ID, keysText) 落进 B，也可作为新建页表单源
+// （channelNewView 复用 keyForm.keysText）残键随建随导；类型确认位武装后
+// 换渠道必须解除（spec「切换即解除」）。原 loadChannel 会随行清零两表单，
+// 改 clearDetailContext 后漏清——本测锁死回归。
+func TestDetailContextClearsImportFormsOnSwitch(t *testing.T) {
+	u, _ := testUI(t)
+	a, _ := u.svc.Channels.Create("anthropic-official", "a", "https://a.example.com", 10, true, false)
+	b, _ := u.svc.Channels.Create("anthropic-official", "b", "https://b.example.com", 20, true, false)
+	u.openChannelDetail(a.ID)
+	// 模拟 A 密钥池「＋ 批量导入」武装草稿 + 模型表单 + 类型更换确认位。
+	u.keyFormOpen = true
+	u.keyForm = keyFormData{name: "pool", keysText: "sk-leftover", allowFallback: true, msg: "stale"}
+	u.chModelForm = channelModelFormData{public: "pub", upstream: "up", msg: "stale"}
+	u.chTypeResetConfirm = true
+	u.openChannelDetail(b.ID) // 切渠道必须清位
+	if u.keyFormOpen || u.keyForm.keysText != "" || u.chTypeResetConfirm {
+		t.Fatalf("切换后导入表单/确认位必须清位（防 A 草稿落 B）: open=%v keys=%q typeReset=%v",
+			u.keyFormOpen, u.keyForm.keysText, u.chTypeResetConfirm)
+	}
+	if u.keyForm.name != "" || u.keyForm.allowFallback {
+		t.Fatalf("密钥导入表单须整表清零: %+v", u.keyForm)
+	}
+	if u.chModelForm != (channelModelFormData{}) {
+		t.Fatalf("渠道模型表单必须清零: %+v", u.chModelForm)
+	}
+	// 残键不得流入新建页表单源（channelNewView 的 TextArea 绑定 keyForm.keysText）。
+	if u.keyForm.keysText != "" {
+		t.Fatalf("新建页表单源须为空: %q", u.keyForm.keysText)
+	}
+	tt := ui.NewTester(u.channelNewView, 1080, 720)
+	if tt.HasText("sk-leftover") {
+		t.Fatalf("新建页不得残留上一渠道密钥草稿: %v", tt.Texts())
+	}
+}
+
 func TestDetailTypeChangeConfirm(t *testing.T) {
 	u, _ := testUI(t)
 	v, _ := u.svc.Channels.Create("anthropic-official", "c1", "https://api.anthropic.com", 10, true, false)

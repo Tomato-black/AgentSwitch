@@ -75,14 +75,18 @@ func keyStats(recs []telemetry.RequestRecord, channel, account string) (ok, fail
 }
 
 // clearDetailContext 渠道上下文切换清位（原 prevChannelID 块语义平移）：
-// 清子表选中、两个确认位、confirmOwnerID 与三处提示——确认位武装后换渠道
-// 必须解除（防落刀他渠道），提示属上一渠道操作语境、残留即误导（审查
-// Finding 2 / Task 8 复审 Finding）。
+// 清子表选中、三个确认位、confirmOwnerID、密钥导入/渠道模型草稿表单与
+// keyFormOpen 及三处提示——确认位/表单草稿武装后换渠道必须解除（防落刀
+// 他渠道、残键进新建页），提示属上一渠道操作语境、残留即误导（审查
+// Finding 2 / Task 8 复审 Finding / 终审 Important）。
 func (u *uiState) clearDetailContext() {
 	u.chKeySel, u.chModelSel = -1, -1
 	u.keyConfirmDelete, u.chModelConfirmDel = false, false
+	u.chTypeResetConfirm = false
 	u.confirmOwnerID = ""
-	u.keyForm.msg, u.chModelForm.msg, u.chTestMsg = "", "", ""
+	u.keyForm, u.keyFormOpen = keyFormData{}, false
+	u.chModelForm = channelModelFormData{}
+	u.chTestMsg = ""
 }
 
 // openChannelDetail 跳渠道详情页：锚定渠道 id、分段归零；目标渠道变化即
