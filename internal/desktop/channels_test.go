@@ -8,19 +8,81 @@ import (
 	"AgentSwitch/internal/telemetry"
 )
 
-// moved: Task 7（列表态移除内嵌创建表单，创建走整页新建；Task 7 落地后
-// 经新页面路径重接线，断言本体保留不删）
+// TestNewPageChipPrefillsBaseURL pin 新建页类型 chips（取代 Select）：
+// 点选 chip 即写 typeID 并预填该预设默认 BaseURL。label 取 provider.Presets()
+// 实际值（Anthropic 官方）。
+func TestNewPageChipPrefillsBaseURL(t *testing.T) {
+	u, _ := testUI(t)
+	tt := ui.NewTester(u.channelNewView, 1080, 720)
+	if err := tt.Click("Anthropic 官方"); err != nil {
+		t.Fatal(err)
+	}
+	if u.chForm.baseURL != "https://api.anthropic.com" {
+		t.Fatalf("chip 预填 %q", u.chForm.baseURL)
+	}
+}
+
+// TestNewPageCreateAndKeys pin 新建页创建+密钥随建随导：填表单与批量密钥，
+// 点「创建渠道」→ 落回列表，渠道带 2 枚密钥。
+func TestNewPageCreateAndKeys(t *testing.T) {
+	u, _ := testUI(t)
+	u.chForm.name, u.chForm.baseURL, u.chForm.priorityInput = "main", "https://a.example.com", "10"
+	u.keyForm.keysText = "sk-a\nsk-b"
+	tt := ui.NewTester(u.channelNewView, 1080, 720)
+	if err := tt.Click("创建渠道"); err != nil {
+		t.Fatal(err)
+	}
+	if u.page != "channels" {
+		t.Fatalf("page %q", u.page)
+	}
+	d, err := u.svc.Channels.Get(u.svc.Channels.List()[0].ID)
+	if err != nil || len(d.Keys) != 2 {
+		t.Fatalf("keys %v err %v", d.Keys, err)
+	}
+}
+
+// TestUpdateFromDetailKeepsFields pin 详情页「保存渠道」Update 全字段回写：
+// 打开详情即回显（字段须等于渠道现值），改名保存后其余字段不丢。
+func TestUpdateFromDetailKeepsFields(t *testing.T) {
+	u, _ := testUI(t)
+	v, _ := u.svc.Channels.Create("anthropic-official", "main", "https://a.example.com", 10, true, true)
+	u.openChannelDetail(v.ID)
+	ui.NewTester(u.channelDetailView, 1080, 720) // 打开详情即回显
+	if u.chForm.name != "main" || u.chForm.baseURL != "https://a.example.com" || !u.chForm.allowPrivate {
+		t.Fatalf("详情回显丢字段: %+v", u.chForm)
+	}
+	u.chForm.name = "renamed"
+	tt := ui.NewTester(u.channelDetailView, 1080, 720)
+	if err := tt.Click("保存渠道"); err != nil {
+		t.Fatal(err)
+	}
+	got := u.svc.Channels.List()[0]
+	if got.Name != "renamed" || got.BaseURL != "https://a.example.com" || got.Priority != 10 || !got.AllowPrivateUpstream {
+		t.Fatalf("update 丢字段: %+v", got)
+	}
+}
+
+// TestChannelsPageCreateAndList 原列表内嵌表单创建路径改写为整页新建
+// （Task 7）：空态引导 → 「＋ 添加渠道」进新建页 → 「创建渠道」落库并复位
+// 表单。空态文案随 Task 5 改为「还没有渠道」（TestChannelsNavSwitch 同款
+// 适配）；断言本体保留不删。
 func TestChannelsPageCreateAndList(t *testing.T) {
-	t.Skip("moved: Task 7")
 	u, _ := testUI(t)
 	u.page = "channels"
 	tt := ui.NewTester(u.channelsView, 1000, 700)
-	if !tt.HasText("渠道") || !tt.HasText("尚无渠道") {
+	if !tt.HasText("渠道") || !tt.HasText("还没有渠道") {
 		t.Fatalf("texts %v", tt.Texts())
+	}
+	if err := tt.Click("＋ 添加渠道"); err != nil {
+		t.Fatal(err)
+	}
+	if u.page != "channel-new" {
+		t.Fatalf("page %q", u.page)
 	}
 	u.chForm.name = "main"
 	u.chForm.baseURL = "https://api.example.com"
-	if err := tt.Click("保存渠道"); err != nil {
+	ttn := ui.NewTester(u.channelNewView, 1000, 700)
+	if err := ttn.Click("创建渠道"); err != nil {
 		t.Fatal(err)
 	}
 	if got := u.svc.Channels.List(); len(got) != 1 || got[0].Name != "main" || got[0].KeyCount != 0 {
@@ -31,15 +93,19 @@ func TestChannelsPageCreateAndList(t *testing.T) {
 	}
 }
 
-// moved: Task 7（类型预填逻辑随创建表单迁往整页新建页；断言本体保留不删）
+// TestChannelsTypePresetPrefillsBaseURL 原类型预填语义改写到新建页 chips：
+// 点「OpenAI 兼容」chip 预填空 BaseURL（兼容类无默认值）→ 空 URL 提交报错
+// 留表单 → 填 URL 后创建成功且 Protocol=openai。断言本体保留不删。
 func TestChannelsTypePresetPrefillsBaseURL(t *testing.T) {
-	t.Skip("moved: Task 7")
 	u, _ := testUI(t)
-	u.page = "channels"
-	tt := ui.NewTester(u.channelsView, 1000, 700)
-	// 模拟下拉切到 OpenAI 兼容（UI 内即 Select 值变更）
-	u.chForm.typeID = "openai-compatible"
-	if err := tt.Click("保存渠道"); err != nil {
+	tt := ui.NewTester(u.channelNewView, 1000, 700)
+	if err := tt.Click("OpenAI 兼容"); err != nil {
+		t.Fatal(err)
+	}
+	if u.chForm.baseURL != "" {
+		t.Fatalf("compatible preset must clear baseURL: %q", u.chForm.baseURL)
+	}
+	if err := tt.Click("创建渠道"); err != nil {
 		t.Fatal(err)
 	}
 	// 兼容类无默认 URL 且表单为空 → 报错留在表单
@@ -47,7 +113,7 @@ func TestChannelsTypePresetPrefillsBaseURL(t *testing.T) {
 		t.Fatalf("empty baseURL must surface: %v", u.chForm.msg)
 	}
 	u.chForm.baseURL = "https://o.example.com"
-	if err := tt.Click("保存渠道"); err != nil {
+	if err := tt.Click("创建渠道"); err != nil {
 		t.Fatal(err)
 	}
 	got := u.svc.Channels.List()
@@ -56,36 +122,50 @@ func TestChannelsTypePresetPrefillsBaseURL(t *testing.T) {
 	}
 }
 
-// moved: Task 7（「载入所选」与两段式按钮删除随表单迁走；列表删除改
-// AlertDialog——新覆盖见 TestChannelListCardsAndDelete。断言本体保留不删）
+// TestChannelsLoadSelectedAndDeleteConfirm 「载入所选」语义随旧表单退役改写
+// 为打开详情回显（原 loading other row = 切换渠道重载另一行现值；保存回写
+// 另由 TestUpdateFromDetailKeepsFields 钉住）；列表删除两段式平移到卡片
+// AlertDialog 路径：⋯菜单「删除」首击只武装不落刀，「取消」不删（确认落刀
+// 见 TestChannelListCardsAndDelete——断言本体保留不删，只平移）。
 func TestChannelsLoadSelectedAndDeleteConfirm(t *testing.T) {
-	t.Skip("moved: Task 7")
 	u, _ := testUI(t)
-	u.page = "channels"
-	tt := ui.NewTester(u.channelsView, 1000, 700)
 	// 渠道表按 (priority, id) 排序——同优先级时行序随随机 id 摆动，
 	// 故 a 用更低优先级钉死行序（行 0=a、行 1=b），断言才确定。
-	u.chForm.name, u.chForm.baseURL, u.chForm.priorityInput = "a", "https://a.example.com", "1"
-	_ = tt.Click("保存渠道")
-	u.chForm.name, u.chForm.baseURL = "b", "https://b.example.com"
-	_ = tt.Click("保存渠道")
-	u.chSel = 0
-	if err := tt.Click("载入所选"); err != nil {
+	a, _ := u.svc.Channels.Create("anthropic-official", "a", "https://a.example.com", 1, true, true)
+	b, _ := u.svc.Channels.Create("anthropic-official", "b", "https://b.example.com", 2, true, false)
+	// 载入所选 → 打开详情：表单字段须等于渠道现值
+	u.openChannelDetail(a.ID)
+	ui.NewTester(u.channelDetailView, 1080, 720)
+	if u.chForm.editID != a.ID || u.chForm.name != "a" || u.chForm.baseURL != "https://a.example.com" ||
+		u.chForm.priorityInput != "1" || !u.chForm.allowPrivate {
+		t.Fatalf("load detail a: %+v", u.chForm)
+	}
+	// 切到另一行（原「载入所选」另一行）：回显 b 现值
+	u.openChannelDetail(b.ID)
+	ui.NewTester(u.channelDetailView, 1080, 720)
+	if u.chForm.editID != b.ID || u.chForm.name != "b" || u.chForm.baseURL != "https://b.example.com" ||
+		u.chForm.priorityInput != "2" || u.chForm.allowPrivate {
+		t.Fatalf("load detail b: %+v", u.chForm)
+	}
+	// 列表删除两段式：首击武装不落刀，「取消」不删
+	tt := ui.NewTester(u.channelsView, 1080, 720)
+	if err := tt.Click("⋯"); err != nil {
 		t.Fatal(err)
 	}
-	if u.chForm.editID == "" || u.chForm.name != "a" {
-		t.Fatalf("load selected: %+v", u.chForm)
-	}
-	if err := tt.Click("删除"); err != nil {
+	if err := tt.ChooseMenuItem("删除"); err != nil {
 		t.Fatal(err)
 	}
-	if !u.chConfirmDelete {
+	if !u.chDeleteArm || u.chDeleteID == "" {
 		t.Fatal("first click arms confirm")
 	}
-	u.chSel = 1
-	_ = tt.Click("载入所选")
-	if u.chConfirmDelete {
-		t.Fatal("loading other row disarms confirm")
+	if len(u.svc.Channels.List()) != 2 {
+		t.Fatal("arm must not delete")
+	}
+	if err := tt.Click("取消"); err != nil {
+		t.Fatal(err)
+	}
+	if len(u.svc.Channels.List()) != 2 {
+		t.Fatal("cancel must not delete")
 	}
 }
 

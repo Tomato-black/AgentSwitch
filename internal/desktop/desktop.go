@@ -51,7 +51,6 @@ type uiState struct {
 	chDeleteArm        bool         // 删除渠道 AlertDialog open 位
 	chDeleteID         string       // 删除武装对象——弹窗仅对匹配卡触发
 	chForm             chFormData   // 连接配置表单；editID 非空 = 编辑该渠道
-	chConfirmDelete    bool         // 渠道删除二次确认（两段式，旧表单态）
 	chTestMsg          string       // 渠道/密钥连通测试结果展示
 	keyForm            keyFormData  // 密钥批量导入表单
 	keyFormOpen        bool         // 密钥池段「＋ 批量导入」表单展开位
@@ -212,6 +211,8 @@ func (u *uiState) pageView(c *ui.Context) {
 	switch u.page {
 	case "channels":
 		u.channelsView(c)
+	case "channel-new":
+		u.channelNewView(c)
 	case "channel-detail":
 		u.channelDetailView(c)
 	case "models":

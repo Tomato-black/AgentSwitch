@@ -230,10 +230,111 @@ func (u *uiState) channelCard(c *ui.Context, t *ui.Theme, s softPalette, ch brid
 	})
 }
 
-// submitChannel 分支：优先级必须整数；Create 走类型预设（Select 写回的
-// label 先解析回 id）；Update 改字段。Create 成功后选中新行（详情三段
-// 立即可用）并复位表单；Update 成功只复位表单。
-func (u *uiState) submitChannel() {
+// channelNewView 是新建渠道页（spec §5.2）：返回钮 + 「添加渠道」标题 +
+// 类型 chips 行（provider.Presets() 全量，取代类型 Select——本页无「更换
+// 类型确认」，prevType 检测仅服务详情态）+ 表单（名称/Base URL/优先级/
+// 启用/允许私网，控件与连接配置段同款）+ 密钥批量 TextArea（复用 keyForm，
+// 随建随导）+ 「创建渠道」主钮。内容列包 ui.Scroll（小窗口可超视口）。
+func (u *uiState) channelNewView(c *ui.Context) {
+	t := c.Theme()
+	s := softs(t)
+	ui.Scroll(c).Grow(1).Children(func() {
+		ui.Column(c).Gap(12).Children(func() {
+			ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
+				if ui.Button(c, "返回列表").Clicked() {
+					u.page = "channels"
+				}
+				ui.Text(c, "添加渠道").Bold().FontSize(t.FontSize + 2)
+			})
+			// 类型 chips：选中 Accent 实心白字，未选 soft gray；点选即写
+			// typeID 并预填该预设默认 BaseURL（chips 取代 Select，对未保存
+			// 渠道无「更换重置确认」）。
+			ui.Row(c).Gap(8).Children(func() {
+				for _, p := range provider.Presets() {
+					bg, fg := s.Gray, s.GrayText
+					hover, pressed := s.Gray.Mix(s.GrayText, 0.10), s.Gray.Mix(s.GrayText, 0.22)
+					if u.chForm.typeID == p.ID {
+						bg, fg = t.Accent, t.AccentText
+						hover, pressed = t.AccentHover, t.AccentPressed
+					}
+					b := ui.ButtonBase(c)
+					actual := bg
+					if b.Pressed() {
+						actual = pressed
+					} else if b.Hovered() {
+						actual = hover
+					}
+					b.Radius(8).Background(actual).TextColor(fg).Padding(6, 12).
+						Children(func() { ui.Text(c, p.Label).SingleLine() })
+					if b.Clicked() {
+						u.chForm.typeID = p.ID
+						u.chForm.baseURL = presetOf(p.ID).DefaultBaseURL
+					}
+				}
+			})
+			card(c, t, func() {
+				ui.Column(c).Gap(12).Children(func() {
+					ui.Text(c, "连接配置").Bold()
+					u.channelFormRows(c, t)
+					if u.chForm.msg != "" {
+						ui.Text(c, u.chForm.msg)
+					}
+				})
+			})
+			card(c, t, func() {
+				ui.Column(c).Gap(12).Children(func() {
+					ui.Text(c, "批量密钥（可选）").Bold()
+					ui.Text(c, "随渠道一并导入；也可建完后在详情「密钥池」里加").TextColor(t.TextMuted)
+					ui.Row(c).Gap(12).Children(func() {
+						ui.Text(c, "API Keys（每行一枚）:").Width(140).TextColor(t.TextMuted)
+						ui.TextArea(c, &u.keyForm.keysText).Grow(1).MinHeight(0).Height(64)
+					})
+					ui.Row(c).Gap(8).Children(func() {
+						ui.Text(c, "允许文件降级").TextColor(t.TextMuted)
+						ui.Switch(c, &u.keyForm.allowFallback)
+					})
+				})
+			})
+			ui.Row(c).Children(func() {
+				ui.Box(c).Grow(1)
+				if pillButton(c, t, "创建渠道").Clicked() {
+					u.createFromNewPage()
+				}
+			})
+		})
+	})
+}
+
+// channelFormRows 是连接配置共用字段行（名称/Base URL/优先级/启用/允许
+// 私网）：详情「连接配置」段与新建页共用（新建页另有类型 chips，详情另有
+// 类型 Select 与更换确认），控件与行式同款。
+func (u *uiState) channelFormRows(c *ui.Context, t *ui.Theme) {
+	ui.Row(c).Gap(12).Children(func() {
+		ui.Text(c, "名称:").Width(96).TextColor(t.TextMuted)
+		ui.TextInput(c, &u.chForm.name).Grow(1)
+	})
+	ui.Row(c).Gap(12).Children(func() {
+		ui.Text(c, "Base URL:").Width(96).TextColor(t.TextMuted)
+		ui.TextInput(c, &u.chForm.baseURL).Grow(1)
+	})
+	ui.Row(c).Gap(12).Children(func() {
+		ui.Text(c, "优先级:").Width(96).TextColor(t.TextMuted)
+		ui.TextInput(c, &u.chForm.priorityInput).Width(96)
+	})
+	ui.Row(c).Gap(16).Children(func() {
+		ui.Text(c, "启用").TextColor(t.TextMuted)
+		ui.Switch(c, &u.chForm.enabled)
+		ui.Text(c, "允许私网上游").TextColor(t.TextMuted)
+		ui.Switch(c, &u.chForm.allowPrivate)
+	})
+}
+
+// createFromNewPage 落新建页「创建渠道」（原 submitChannel Create 分支+
+// 密钥随建随导）：优先级必须整数；Create 走类型预设 id（chips 写的就是 id，
+// 仍经 resolveTypeID 兜底 label→id）；成功后 keysText 非空则 AddKeys 随建
+// 随导（密钥名取渠道名）——AddKeys 失败错误写 chForm.msg、渠道保留不回滚
+// （表单不复位，提示可见）；全成则复位表单、落回列表并选中新渠道。
+func (u *uiState) createFromNewPage() {
 	prio, err := strconv.Atoi(u.chForm.priorityInput)
 	if err != nil {
 		u.chForm.msg = "优先级必须是整数"
@@ -241,23 +342,40 @@ func (u *uiState) submitChannel() {
 	}
 	_, byLabel := presetLabels()
 	tid := resolveTypeID(byLabel, u.chForm.typeID)
-	if u.chForm.editID == "" {
-		v, err := u.svc.Channels.Create(tid, u.chForm.name, u.chForm.baseURL,
-			prio, u.chForm.enabled, u.chForm.allowPrivate)
-		if err != nil {
-			u.chForm.msg = err.Error()
-			return
-		}
-		u.resetChannelForm()
-		u.selectChannel(v.ID)
+	v, err := u.svc.Channels.Create(tid, u.chForm.name, u.chForm.baseURL,
+		prio, u.chForm.enabled, u.chForm.allowPrivate)
+	if err != nil {
+		u.chForm.msg = err.Error()
 		return
 	}
-	if err := u.svc.Channels.Update(u.chForm.editID, u.chForm.name, u.chForm.baseURL,
+	if u.keyForm.keysText != "" {
+		if _, err := u.svc.Channels.AddKeys(v.ID, u.chForm.name,
+			u.keyForm.keysText, u.keyForm.allowFallback); err != nil {
+			u.chForm.msg = err.Error() // 渠道已建不回滚；密钥错误留表单可见
+			return
+		}
+	}
+	u.resetChannelForm()
+	u.page = "channels"
+	u.selectChannel(v.ID)
+}
+
+// saveDetailChannel 落详情页「保存渠道」（原 submitChannel Update 分支语义
+// 平移）：优先级必须整数；Update 全字段回写（名称/BaseURL/优先级/启用/
+// 允许私网）。成功留「已保存」提示（表单保留——详情页继续编辑不复位），
+// 失败错误写 chForm.msg。
+func (u *uiState) saveDetailChannel() {
+	prio, err := strconv.Atoi(u.chForm.priorityInput)
+	if err != nil {
+		u.chForm.msg = "优先级必须是整数"
+		return
+	}
+	if err := u.svc.Channels.Update(u.chDetailID, u.chForm.name, u.chForm.baseURL,
 		prio, u.chForm.enabled, u.chForm.allowPrivate); err != nil {
 		u.chForm.msg = err.Error()
 		return
 	}
-	u.resetChannelForm()
+	u.chForm.msg = "已保存"
 }
 
 // selectChannel 把表格选中行指到 id 对应行（找不到则不动选中位）。
@@ -332,15 +450,13 @@ func (u *uiState) channelDetailView(c *ui.Context) {
 		})
 	})
 	// 类型变更检测放在段内容之后：同帧 Select 变更即时武装，不滞后一帧。
+	// prevType 检测仅服务详情态（新建页 chips 自管预填、无更换确认）——
+	// 已保存渠道换类型会重置 Base URL，须确认。
 	_, byLabel := presetLabels()
 	tid := resolveTypeID(byLabel, u.chForm.typeID)
 	if u.prevType != u.chForm.typeID {
 		u.prevType = u.chForm.typeID
-		if u.chForm.editID == "" {
-			u.chForm.baseURL = presetOf(tid).DefaultBaseURL // 新建态（Task 7）：预填不经确认
-		} else {
-			u.chTypeResetConfirm = true // 详情态：换类型会重置 Base URL，须确认
-		}
+		u.chTypeResetConfirm = true // 详情态：换类型会重置 Base URL，须确认
 	}
 	// 类型更换确认（取消居末位；==0 确认）：确认→预填新类型默认 URL，
 	// 取消/Escape→typeID 回退为渠道现类型。
@@ -418,14 +534,13 @@ func (u *uiState) channelDetailHeader(c *ui.Context, t *ui.Theme, s softPalette,
 			}
 		}
 		if pillButton(c, t, "保存渠道").Clicked() {
-			// Update 回写分支 Task 7 接线（submitChannel Update 语义平移）；
-			// 本任务占位保编译与文案位。
+			u.saveDetailChannel() // Update 全字段回写（原 submitChannel Update 分支）
 		}
 	})
 }
 
 // channelConnSection 是「连接配置」段：类型 Select（详情态换类型走确认）+
-// 名称/Base URL/优先级/启用/允许私网 + 提示位。
+// 共用字段行（channelFormRows）+ 提示位。
 func (u *uiState) channelConnSection(c *ui.Context, t *ui.Theme) {
 	card(c, t, func() {
 		ui.Column(c).Gap(12).Children(func() {
@@ -437,24 +552,7 @@ func (u *uiState) channelConnSection(c *ui.Context, t *ui.Theme) {
 				ui.Select(c, &u.chForm.typeID, labelsOf(labels, byLabel, u.chForm.typeID))
 				ui.Text(c, presetOf(tid).Description).TextColor(t.TextMuted)
 			})
-			ui.Row(c).Gap(12).Children(func() {
-				ui.Text(c, "名称:").Width(96).TextColor(t.TextMuted)
-				ui.TextInput(c, &u.chForm.name).Grow(1)
-			})
-			ui.Row(c).Gap(12).Children(func() {
-				ui.Text(c, "Base URL:").Width(96).TextColor(t.TextMuted)
-				ui.TextInput(c, &u.chForm.baseURL).Grow(1)
-			})
-			ui.Row(c).Gap(12).Children(func() {
-				ui.Text(c, "优先级:").Width(96).TextColor(t.TextMuted)
-				ui.TextInput(c, &u.chForm.priorityInput).Width(96)
-			})
-			ui.Row(c).Gap(16).Children(func() {
-				ui.Text(c, "启用").TextColor(t.TextMuted)
-				ui.Switch(c, &u.chForm.enabled)
-				ui.Text(c, "允许私网上游").TextColor(t.TextMuted)
-				ui.Switch(c, &u.chForm.allowPrivate)
-			})
+			u.channelFormRows(c, t)
 			if u.chForm.msg != "" {
 				ui.Text(c, u.chForm.msg)
 			}
