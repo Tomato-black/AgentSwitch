@@ -4,9 +4,14 @@ import (
 	"testing"
 
 	"github.com/egoist/mygo/ui"
+
+	"AgentSwitch/internal/telemetry"
 )
 
+// moved: Task 7（列表态移除内嵌创建表单，创建走整页新建；Task 7 落地后
+// 经新页面路径重接线，断言本体保留不删）
 func TestChannelsPageCreateAndList(t *testing.T) {
+	t.Skip("moved: Task 7")
 	u, _ := testUI(t)
 	u.page = "channels"
 	tt := ui.NewTester(u.channelsView, 1000, 700)
@@ -26,7 +31,9 @@ func TestChannelsPageCreateAndList(t *testing.T) {
 	}
 }
 
+// moved: Task 7（类型预填逻辑随创建表单迁往整页新建页；断言本体保留不删）
 func TestChannelsTypePresetPrefillsBaseURL(t *testing.T) {
+	t.Skip("moved: Task 7")
 	u, _ := testUI(t)
 	u.page = "channels"
 	tt := ui.NewTester(u.channelsView, 1000, 700)
@@ -49,7 +56,10 @@ func TestChannelsTypePresetPrefillsBaseURL(t *testing.T) {
 	}
 }
 
+// moved: Task 7（「载入所选」与两段式按钮删除随表单迁走；列表删除改
+// AlertDialog——新覆盖见 TestChannelListCardsAndDelete。断言本体保留不删）
 func TestChannelsLoadSelectedAndDeleteConfirm(t *testing.T) {
+	t.Skip("moved: Task 7")
 	u, _ := testUI(t)
 	u.page = "channels"
 	tt := ui.NewTester(u.channelsView, 1000, 700)
@@ -79,7 +89,10 @@ func TestChannelsLoadSelectedAndDeleteConfirm(t *testing.T) {
 	}
 }
 
+// moved: Task 7（密钥面板随详情迁出列表页；Task 6 改经详情页路径驱动，
+// Task 7 收口。断言本体保留不删）
 func TestChannelsKeysBatchAdd(t *testing.T) {
+	t.Skip("moved: Task 7")
 	u, _ := testUI(t)
 	u.page = "channels"
 	tt := ui.NewTester(u.channelsView, 1000, 700)
@@ -100,7 +113,9 @@ func TestChannelsKeysBatchAdd(t *testing.T) {
 	}
 }
 
+// moved: Task 7（模型面板随详情迁出列表页；断言本体保留不删）
 func TestChannelsModelAddAndDuplicate(t *testing.T) {
+	t.Skip("moved: Task 7")
 	u, _ := testUI(t)
 	u.page = "channels"
 	tt := ui.NewTester(u.channelsView, 1000, 700)
@@ -128,7 +143,9 @@ func TestChannelsNavSwitch(t *testing.T) {
 	if u.page != "channels" {
 		t.Fatalf("page %q", u.page)
 	}
-	if !tt.HasText("创建第一个渠道") && !tt.HasText("尚无渠道") {
+	// 空态文案随 Task 5 卡片列表改版为「还没有渠道」（spec §5.2 空态引导），
+	// 语义不变：空渠道时页面上必须有一句引导。
+	if !tt.HasText("还没有渠道") {
 		t.Fatalf("channels page hint missing: %v", tt.Texts())
 	}
 }
@@ -136,7 +153,10 @@ func TestChannelsNavSwitch(t *testing.T) {
 // TestChannelsModelDeleteTwoStage pin 审查 Finding 1（全局约束「删除一律
 // 两段确认」，简报模型段代码漏了）：「删除模型」首击仅武装——不落刀、
 // 列表长度不变；「确认删除模型」才调 RemoveModel，长度减一。
+// moved: Task 7（模型两段确认随详情迁出列表页，Task 6 改 AlertDialog；
+// 断言本体保留不删）
 func TestChannelsModelDeleteTwoStage(t *testing.T) {
+	t.Skip("moved: Task 7")
 	u, _ := testUI(t)
 	u.page = "channels"
 	tt := ui.NewTester(u.channelsView, 1000, 700)
@@ -173,7 +193,10 @@ func TestChannelsModelDeleteTwoStage(t *testing.T) {
 // ——A 行武装删除密钥后切到 B 行，B 面板下不得渲染「确认删除密钥」
 // （owner 不匹配视同未武装；渠道变更检测另清子选中与确认位），
 // B 的密钥数保持 0。
+// moved: Task 7（密钥确认位绑定随详情迁出列表页，Task 6 平移
+// confirmOwnerID 机制；断言本体保留不删）
 func TestChannelsKeyConfirmBoundToChannel(t *testing.T) {
+	t.Skip("moved: Task 7")
 	u, _ := testUI(t)
 	u.page = "channels"
 	tt := ui.NewTester(u.channelsView, 1000, 700)
@@ -216,5 +239,53 @@ func TestChannelsKeyConfirmBoundToChannel(t *testing.T) {
 	d, _ := u.svc.Channels.Get(u.svc.Channels.List()[1].ID)
 	if len(d.Keys) != 0 {
 		t.Fatalf("channel B keys must be untouched: %+v", d.Keys)
+	}
+}
+
+func TestChannelStats(t *testing.T) {
+	recs := []telemetry.RequestRecord{{Channel: "main", Status: 200}, {Channel: "main", Status: 500}, {Channel: "other", Status: 200}}
+	ok, fail := channelStats(recs, "main")
+	if ok != 1 || fail != 1 {
+		t.Fatalf("%d %d", ok, fail)
+	}
+}
+func TestChannelCardToggleKeepsFields(t *testing.T) {
+	u, _ := testUI(t)
+	v, err := u.svc.Channels.Create("anthropic-official", "main", "https://a.example.com", 10, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ui.NewTester(u.channelsView, 1080, 720)
+	u.toggleChannelEnabled(v.ID, false)
+	got := u.svc.Channels.List()[0]
+	if got.Enabled || got.BaseURL != "https://a.example.com" || got.Priority != 10 || !got.AllowPrivateUpstream {
+		t.Fatalf("toggle 丢字段: %+v", got)
+	}
+}
+func TestChannelListCardsAndDelete(t *testing.T) {
+	u, _ := testUI(t)
+	v, _ := u.svc.Channels.Create("anthropic-official", "main", "https://a.example.com", 10, true, false)
+	tt := ui.NewTester(u.channelsView, 1080, 720)
+	if !tt.HasText("首选") || !tt.HasText("https://a.example.com") {
+		t.Fatalf("%v", tt.Texts())
+	}
+	u.chDeleteArm, u.chDeleteID = true, v.ID
+	tt = ui.NewTester(u.channelsView, 1080, 720)
+	if err := tt.Click("确认删除"); err != nil {
+		t.Fatal(err)
+	}
+	if len(u.svc.Channels.List()) != 0 {
+		t.Fatal("确认后须删除")
+	}
+}
+func TestChannelCardOpensDetail(t *testing.T) {
+	u, _ := testUI(t)
+	v, _ := u.svc.Channels.Create("anthropic-official", "main", "https://a.example.com", 10, true, false)
+	tt := ui.NewTester(u.channelsView, 1080, 720)
+	if err := tt.Click("main"); err != nil {
+		t.Fatal(err)
+	}
+	if u.page != "channel-detail" || u.chDetailID != v.ID {
+		t.Fatalf("%q %q", u.page, u.chDetailID)
 	}
 }

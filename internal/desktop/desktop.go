@@ -43,11 +43,15 @@ type uiState struct {
 	// 模型聚合页（Task 9 重写：跨渠道只读 + 行内启停）：
 	modelList ui.ListState // 聚合表状态；Selected 经 modelSel 指向当前行
 	modelSel  int          // 聚合表当前行（-1=无）
-	// 渠道页（Task 8）：
-	chList            ui.ListState // 渠道表状态；Selected 经 chSel 指向当前行
+	// 渠道页（Task 5 卡片列表；Task 6/7 接详情/新建）：
+	chList            ui.ListState // 渠道表状态（旧表态；Task 6/7 迁移期保留）
 	chSel             int          // 渠道表当前行（-1=无）；详情三段面板锚定行选中
+	chDetailID        string       // 详情页锚定渠道 id（openChannelDetail 落值）
+	chDetailSeg       int          // 详情页分段选中（0=连接配置 1=密钥池 2=渠道模型）
+	chDeleteArm       bool         // 删除渠道 AlertDialog open 位
+	chDeleteID        string       // 删除武装对象——弹窗仅对匹配卡触发
 	chForm            chFormData   // 连接配置表单；editID 非空 = 编辑该渠道
-	chConfirmDelete   bool         // 渠道删除二次确认（两段式）
+	chConfirmDelete   bool         // 渠道删除二次确认（两段式，旧表单态）
 	chTestMsg         string       // 渠道/密钥连通测试结果展示
 	keyForm           keyFormData  // 密钥批量导入表单
 	keyConfirmDelete  bool         // 密钥删除二次确认（两段式）
