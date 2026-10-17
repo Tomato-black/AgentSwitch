@@ -2,57 +2,61 @@ package storage
 
 import (
 	"errors"
-	"time"
 )
 
 // ErrNotFound 是所有 Repo 查询未命中时的哨兵错误（经 mapNotFound 映射）。
 var ErrNotFound = errors.New("not found")
 
-// Channel 是渠道聚合根（spec 2026-10-17 §3.1）：上游入口定义（类型/协议/BaseURL）
-// 与路由优先级。
+// Channel 是渠道聚合根（spec 2026-10-17-logical-models §5）：上游入口定义，
+// 每渠道恰好一个凭据（CredentialRef 指向 OS 密钥存储）。时间戳为 Unix 毫秒。
 type Channel struct {
 	ID                   string
 	Name                 string
-	Type                 string
 	Protocol             string
 	BaseURL              string
-	Priority             int
+	CredentialRef        string
+	PresetID             string
 	Enabled              bool
 	AllowPrivateUpstream bool
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+	CreatedAt            int64
+	UpdatedAt            int64
 }
 
-// ChannelKey 是渠道下的凭据引用（SecretKey 指向密钥存储本体；KeyTail 为非秘密尾 4）。
-type ChannelKey struct {
-	ID            string
-	ChannelID     string
-	Name          string
-	SecretKey     string
-	SecretBackend string
-	KeyTail       string
-	Priority      int
-	Enabled       bool
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-}
-
-// ChannelModel 是渠道级模型映射；同一公开名可存在于多个渠道（UNIQUE(channel_id, public_model)）。
+// ChannelModel 是渠道的模型建议列表（添加逻辑模型目标时的下拉数据源），
+// 不再是路由主体；UNIQUE(channel_id, model_name)。
 type ChannelModel struct {
-	ID            string
-	ChannelID     string
-	PublicModel   string
-	UpstreamModel string
-	Enabled       bool
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID        string
+	ChannelID string
+	ModelName string
+	CreatedAt int64
+}
+
+// LogicalModel 是网关对外的逻辑模型（Name 为对外模型名），经目标链映射到
+// 各渠道的具体模型。
+type LogicalModel struct {
+	ID          string
+	Name        string
+	Description string
+	Enabled     bool
+	CreatedAt   int64
+	UpdatedAt   int64
+}
+
+// LogicalModelTarget 是逻辑模型目标链的一环；priority 越小越优先。
+type LogicalModelTarget struct {
+	ID             string
+	LogicalModelID string
+	ChannelID      string
+	ModelName      string
+	Priority       int
 }
 
 // Store 是持久层入口。
 type Store interface {
 	Channels() ChannelRepo
-	ChannelKeys() ChannelKeyRepo
 	ChannelModels() ChannelModelRepo
+	LogicalModels() LogicalModelRepo
+	LogicalModelTargets() LogicalModelTargetRepo
 	Settings() SettingsRepo
 	Close() error
 }
@@ -63,38 +67,41 @@ type SettingsRepo interface {
 	Set(key, value string) error
 }
 
-// ChannelRepo 读写 channels 表；List 已按路由序（priority,id）。
+// ChannelRepo 读写 channels 表（单 Key：credential_ref 非空即有可用凭据）。
 type ChannelRepo interface {
 	List() ([]Channel, error)
 	Get(id string) (Channel, error)
-	Save(c Channel) error
+	Save(c Channel) (Channel, error)
 	Delete(id string) error
 	SetEnabled(id string, on bool) error
-	// HasUsableKey 报告是否存在 enabled 渠道×enabled 密钥（readyz/Degraded 口径）。
+	// HasUsableKey 报告是否存在 enabled 且 credential_ref 非空的渠道（readyz 口径）。
 	HasUsableKey() (bool, error)
 }
 
-// ChannelKeyRepo 读写 channel_keys（secret_key 是凭据引用，本体在密钥存储）。
-type ChannelKeyRepo interface {
-	List() ([]ChannelKey, error)
-	ListByChannel(channelID string) ([]ChannelKey, error)
-	Get(id string) (ChannelKey, error)
-	Save(k ChannelKey) error
+// ChannelModelRepo 读写渠道模型建议列表；UNIQUE(channel_id, model_name)。
+type ChannelModelRepo interface {
+	ListByChannel(channelID string) ([]ChannelModel, error)
+	Save(m ChannelModel) (ChannelModel, error)
 	Delete(id string) error
-	SetEnabled(id string, on bool) error
-	CountByChannel(channelID string) (int, error)
+	DeleteByChannel(channelID string) error
+	// Suggestions 返回渠道的模型名列表（目标编辑下拉数据源，按名排序）。
+	Suggestions(channelID string) ([]string, error)
 }
 
-// ChannelModelRepo 读写渠道级模型清单；UNIQUE(channel_id, public_model)。
-type ChannelModelRepo interface {
-	List() ([]ChannelModel, error)
-	ListByChannel(channelID string) ([]ChannelModel, error)
-	ListByPublic(public string) ([]ChannelModel, error)
-	Get(id string) (ChannelModel, error)
-	Save(m ChannelModel) error
+// LogicalModelRepo 读写 logical_models；name UNIQUE（网关对外模型名）。
+type LogicalModelRepo interface {
+	List() ([]LogicalModel, error)
+	Get(id string) (LogicalModel, error)
+	GetByName(name string) (LogicalModel, error)
+	Save(m LogicalModel) (LogicalModel, error)
 	Delete(id string) error
 	SetEnabled(id string, on bool) error
-	// PublicModels 去重输出 enabled 公开模型名（/v1/models 并集）。
-	PublicModels() ([]string, error)
-	CountByChannel(channelID string) (int, error)
+}
+
+// LogicalModelTargetRepo 读写 logical_model_targets；priority 越小越优先。
+type LogicalModelTargetRepo interface {
+	ListByModel(modelID string) ([]LogicalModelTarget, error)
+	Save(t LogicalModelTarget) (LogicalModelTarget, error)
+	Delete(id string) error
+	DeleteByModel(modelID string) error
 }

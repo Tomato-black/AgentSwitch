@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -50,6 +51,90 @@ func TestMigrationIdempotent(t *testing.T) {
 	}
 	if rows.Err() != nil || len(got) != 1 || got[0] != 1 {
 		t.Fatalf("schema_migrations = %v, want [1]", got)
+	}
+}
+
+// TestMigrationFinalSchema 断言删库重建后的最终表结构：logical_models /
+// logical_model_targets 必须存在、channel_keys 必须不存在；channels 单 Key
+// 列（credential_ref/preset_id/allow_private_upstream）就位，旧列
+// priority/type 退役。
+func TestMigrationFinalSchema(t *testing.T) {
+	s := tempStore(t)
+	ds, ok := s.(*dbStore)
+	if !ok {
+		t.Fatalf("Store = %T, want *dbStore", s)
+	}
+	tables := map[string]bool{}
+	rows, err := ds.db.Query(`SELECT name FROM sqlite_master WHERE type='table'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		tables[name] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"channels", "channel_models", "logical_models", "logical_model_targets", "settings"} {
+		if !tables[want] {
+			t.Fatalf("missing table %s (have %v)", want, tables)
+		}
+	}
+	if tables["channel_keys"] {
+		t.Fatal("channel_keys must not exist in final schema")
+	}
+	cols := map[string]bool{}
+	crows, err := ds.db.Query(`SELECT name FROM pragma_table_info('channels')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for crows.Next() {
+		var name string
+		if err := crows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		cols[name] = true
+	}
+	crows.Close()
+	for _, want := range []string{"credential_ref", "preset_id", "allow_private_upstream"} {
+		if !cols[want] {
+			t.Fatalf("channels missing column %s (have %v)", want, cols)
+		}
+	}
+	for _, gone := range []string{"priority", "type"} {
+		if cols[gone] {
+			t.Fatalf("channels must not have column %s", gone)
+		}
+	}
+}
+
+// TestOpenRejectsLegacySchema 覆盖删库重建的旧库守卫：DB 里存在 channel_keys
+// （多 Key 旧 schema）时 Open 必须拒绝并提示删除，不得静默清库或就地迁移。
+func TestOpenRejectsLegacySchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	// 手工造一个带 channel_keys 的旧库（不经过 Open，避免旧 schema 干扰）。
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE channel_keys (id TEXT PRIMARY KEY, channel_id TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(path)
+	if err == nil {
+		s.Close()
+		t.Fatal("Open must reject legacy schema containing channel_keys")
+	}
+	if !strings.Contains(err.Error(), "删除") {
+		t.Fatalf("error must mention 删除: %v", err)
 	}
 }
 
@@ -111,133 +196,150 @@ func TestForeignKeysOnEveryConnection(t *testing.T) {
 	}
 }
 
-// ---- 渠道化三表（migration v1，spec 2026-10-17 §3.1）----
+// ---- 逻辑模型重构（migration v1，spec 2026-10-17-logical-models §5）----
 
 func channelFixture(t *testing.T, s Store) (Channel, Channel) {
 	t.Helper()
-	a := Channel{ID: NewID(), Name: "b", Type: "anthropic-compatible", Protocol: "anthropic",
-		BaseURL: "https://b.example.com", Priority: 20, Enabled: true}
-	z := Channel{ID: NewID(), Name: "a", Type: "anthropic-official", Protocol: "anthropic",
-		BaseURL: "https://api.anthropic.com", Priority: 10, Enabled: true}
+	a := Channel{ID: NewID(), Name: "beta", Protocol: "anthropic", BaseURL: "https://b.example.com",
+		CredentialRef: "account:b1", PresetID: "custom", Enabled: true}
+	z := Channel{ID: NewID(), Name: "alpha", Protocol: "anthropic", BaseURL: "https://api.anthropic.com",
+		CredentialRef: "account:a1", PresetID: "anthropic", Enabled: true}
 	for _, c := range []Channel{a, z} {
-		if err := s.Channels().Save(c); err != nil {
+		if _, err := s.Channels().Save(c); err != nil {
 			t.Fatal(err)
 		}
 	}
 	return a, z
 }
 
-func TestChannelRepoOrderingAndLifecycle(t *testing.T) {
+func TestChannelSaveRoundTrip(t *testing.T) {
+	s := tempStore(t)
+	in := Channel{ID: NewID(), Name: "solo", Protocol: "openai", BaseURL: "https://x.example.com",
+		CredentialRef: "account:x1", PresetID: "openai-compatible", Enabled: true, AllowPrivateUpstream: true}
+	saved, err := s.Channels().Save(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.ID != in.ID || saved.CreatedAt == 0 || saved.UpdatedAt == 0 {
+		t.Fatalf("Save returned: %+v", saved)
+	}
+	got, err := s.Channels().Get(in.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := in
+	want.CreatedAt, want.UpdatedAt = got.CreatedAt, got.UpdatedAt
+	if got != want {
+		t.Fatalf("Get = %+v, want %+v", got, want)
+	}
+}
+
+func TestChannelLifecycle(t *testing.T) {
 	s := tempStore(t)
 	a, z := channelFixture(t, s)
 	list, err := s.Channels().List()
 	if err != nil {
 		t.Fatal(err)
 	}
-	// priority ASC：10 的 z 在前（路由序由 SQL 保证）
-	if len(list) != 2 || list[0].ID != z.ID || list[1].ID != a.ID {
-		t.Fatalf("ordering: %+v", list)
+	if len(list) != 2 {
+		t.Fatalf("List = %+v", list)
 	}
 	if err := s.Channels().SetEnabled(z.ID, false); err != nil {
 		t.Fatal(err)
 	}
-	got, _ := s.Channels().Get(z.ID)
-	if got.Enabled {
-		t.Fatal("SetEnabled(false) failed")
+	got, err := s.Channels().Get(z.ID)
+	if err != nil || got.Enabled {
+		t.Fatalf("SetEnabled(false): %+v %v", got, err)
 	}
-	if err := s.Channels().Delete(z.ID); err != nil {
+	if err := s.Channels().Delete(a.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Channels().Get(z.ID); err != ErrNotFound {
+	if _, err := s.Channels().Get(a.ID); err != ErrNotFound {
 		t.Fatalf("want ErrNotFound, got %v", err)
 	}
 }
 
-func TestChannelKeyCascadeAndCount(t *testing.T) {
+func TestChannelDeleteCascadeModels(t *testing.T) {
 	s := tempStore(t)
-	a, z := channelFixture(t, s)
-	k1 := ChannelKey{ID: NewID(), ChannelID: a.ID, Name: "k1", SecretKey: "account:x1",
-		SecretBackend: "os-keychain", KeyTail: "x1", Priority: 10, Enabled: true}
-	k2 := ChannelKey{ID: NewID(), ChannelID: a.ID, Name: "k2", SecretKey: "account:x2",
-		SecretBackend: "os-keychain", KeyTail: "x2", Priority: 5, Enabled: true}
-	// z 优先级更低但 key 优先级更小——只验证渠道内排序
-	k3 := ChannelKey{ID: NewID(), ChannelID: z.ID, Name: "k3", SecretKey: "account:x3",
-		SecretBackend: "os-keychain", Priority: 1, Enabled: true}
-	for _, k := range []ChannelKey{k1, k2, k3} {
-		if err := s.ChannelKeys().Save(k); err != nil {
+	a, _ := channelFixture(t, s)
+	for _, name := range []string{"m1", "m2"} {
+		if _, err := s.ChannelModels().Save(ChannelModel{ID: NewID(), ChannelID: a.ID, ModelName: name}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	keys, err := s.ChannelKeys().ListByChannel(a.ID)
-	if err != nil {
+	if err := s.Channels().Delete(a.ID); err != nil {
 		t.Fatal(err)
 	}
-	if len(keys) != 2 || keys[0].ID != k2.ID || keys[1].ID != k1.ID {
-		t.Fatalf("keys ordering: %+v", keys)
-	}
-	n, _ := s.ChannelKeys().CountByChannel(a.ID)
-	if n != 2 {
-		t.Fatalf("count = %d", n)
-	}
-	// 级联：删渠道 → keys 消失
-	if err := s.Channels().Delete(z.ID); err != nil {
-		t.Fatal(err)
-	}
-	if ks, _ := s.ChannelKeys().ListByChannel(z.ID); len(ks) != 0 {
-		t.Fatal("cascade delete failed")
+	ms, err := s.ChannelModels().ListByChannel(a.ID)
+	if err != nil || len(ms) != 0 {
+		t.Fatalf("cascade: %v %v", ms, err)
 	}
 }
 
-func TestChannelModelUniquePerChannelAndQueries(t *testing.T) {
+func TestChannelModelSuggestions(t *testing.T) {
 	s := tempStore(t)
 	a, z := channelFixture(t, s)
-	m := func(cid, pub, up string) ChannelModel {
-		return ChannelModel{ID: NewID(), ChannelID: cid, PublicModel: pub, UpstreamModel: up, Enabled: true}
+	for _, name := range []string{"claude-x", "claude-a", "claude-m"} {
+		if _, err := s.ChannelModels().Save(ChannelModel{ID: NewID(), ChannelID: a.ID, ModelName: name}); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := s.ChannelModels().Save(m(a.ID, "claude-x", "up-x")); err != nil {
+	if _, err := s.ChannelModels().Save(ChannelModel{ID: NewID(), ChannelID: z.ID, ModelName: "other"}); err != nil {
 		t.Fatal(err)
 	}
-	// 同渠道同公开名 → UNIQUE 冲突
-	if err := s.ChannelModels().Save(m(a.ID, "claude-x", "up-y")); err == nil {
-		t.Fatal("duplicate (channel,public) must fail")
-	}
-	// 跨渠道同公开名 → 允许（渠道级语义核心）
-	if err := s.ChannelModels().Save(m(z.ID, "claude-x", "up-z")); err != nil {
+	got, err := s.ChannelModels().Suggestions(a.ID)
+	if err != nil {
 		t.Fatal(err)
 	}
-	byPub, _ := s.ChannelModels().ListByPublic("claude-x")
-	if len(byPub) != 2 {
-		t.Fatalf("ListByPublic = %d", len(byPub))
+	want := []string{"claude-a", "claude-m", "claude-x"}
+	if len(got) != len(want) {
+		t.Fatalf("Suggestions = %v, want %v", got, want)
 	}
-	// enabled 过滤必须可观察（Task 1 审查加固）：原先两行共用公开名
-	// "claude-x"，DISTINCT 去重把禁用掩盖——补一枚不同公开名的行并禁用，
-	// PublicModels 只能剩 "claude-x"。
-	if err := s.ChannelModels().Save(m(z.ID, "claude-y", "up-y")); err != nil {
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("Suggestions = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestChannelModelUniquePerChannel(t *testing.T) {
+	s := tempStore(t)
+	a, z := channelFixture(t, s)
+	if _, err := s.ChannelModels().Save(ChannelModel{ID: NewID(), ChannelID: a.ID, ModelName: "claude-x"}); err != nil {
 		t.Fatal(err)
 	}
-	y, _ := s.ChannelModels().ListByPublic("claude-y")
-	if err := s.ChannelModels().SetEnabled(y[0].ID, false); err != nil {
+	// 同渠道同模型名 → UNIQUE(channel_id, model_name) 冲突
+	if _, err := s.ChannelModels().Save(ChannelModel{ID: NewID(), ChannelID: a.ID, ModelName: "claude-x"}); err == nil {
+		t.Fatal("duplicate (channel,model_name) must fail")
+	}
+	// 跨渠道同名 → 允许
+	if _, err := s.ChannelModels().Save(ChannelModel{ID: NewID(), ChannelID: z.ID, ModelName: "claude-x"}); err != nil {
 		t.Fatal(err)
 	}
-	pubs, _ := s.ChannelModels().PublicModels()
-	if len(pubs) != 1 || pubs[0] != "claude-x" {
-		t.Fatalf("PublicModels = %v (distinct+enabled)", pubs)
+	ms, _ := s.ChannelModels().ListByChannel(z.ID)
+	if len(ms) != 1 || ms[0].ModelName != "claude-x" {
+		t.Fatalf("ListByChannel = %+v", ms)
 	}
 }
 
 func TestHasUsableKey(t *testing.T) {
 	s := tempStore(t)
-	a, _ := channelFixture(t, s)
 	ok, err := s.Channels().HasUsableKey()
 	if err != nil || ok {
-		t.Fatalf("no key yet: ok=%v err=%v", ok, err)
+		t.Fatalf("empty store: ok=%v err=%v", ok, err)
 	}
-	if err := s.ChannelKeys().Save(ChannelKey{ID: NewID(), ChannelID: a.ID, Name: "k",
-		SecretKey: "account:h", SecretBackend: "os-keychain", Enabled: true}); err != nil {
-		t.Fatal(err)
-	}
+	a, z := channelFixture(t, s)
 	ok, err = s.Channels().HasUsableKey()
 	if err != nil || !ok {
 		t.Fatalf("usable: ok=%v err=%v", ok, err)
+	}
+	for _, id := range []string{a.ID, z.ID} {
+		if err := s.Channels().SetEnabled(id, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ok, err = s.Channels().HasUsableKey()
+	if err != nil || ok {
+		t.Fatalf("all disabled: ok=%v err=%v", ok, err)
 	}
 }
