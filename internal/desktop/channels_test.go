@@ -89,22 +89,24 @@ func TestChannelsLoadSelectedAndDeleteConfirm(t *testing.T) {
 	}
 }
 
-// moved: Task 7（密钥面板随详情迁出列表页；Task 6 改经详情页路径驱动，
-// Task 7 收口。断言本体保留不删）
+// TestChannelsKeysBatchAdd 经详情页密钥池段驱动批量导入（Task 6 路径）：
+// openChannelDetail 锚定渠道 → 「＋ 批量导入」开表单 → 导入密钥；空行跳过、
+// 导入后表单复位语义与旧列表页一致。
 func TestChannelsKeysBatchAdd(t *testing.T) {
-	t.Skip("moved: Task 7")
 	u, _ := testUI(t)
-	u.page = "channels"
-	tt := ui.NewTester(u.channelsView, 1000, 700)
-	u.chForm.name, u.chForm.baseURL = "m", "https://m.example.com"
-	_ = tt.Click("保存渠道")
-	u.chSel = 0
+	v, _ := u.svc.Channels.Create("anthropic-official", "m", "https://m.example.com", 10, true, false)
+	u.openChannelDetail(v.ID)
+	u.chDetailSeg = 1 // 密钥池段
+	tt := ui.NewTester(u.channelDetailView, 1080, 720)
+	if err := tt.Click("＋ 批量导入"); err != nil {
+		t.Fatal(err)
+	}
 	u.keyForm.name = "pool"
 	u.keyForm.keysText = "sk-aaa11111\n\nsk-bbb22222\n"
 	if err := tt.Click("导入密钥"); err != nil {
 		t.Fatal(err)
 	}
-	d, err := u.svc.Channels.Get(u.svc.Channels.List()[0].ID)
+	d, err := u.svc.Channels.Get(v.ID)
 	if err != nil || len(d.Keys) != 2 {
 		t.Fatalf("keys %+v err %v", d.Keys, err)
 	}
@@ -113,22 +115,26 @@ func TestChannelsKeysBatchAdd(t *testing.T) {
 	}
 }
 
-// moved: Task 7（模型面板随详情迁出列表页；断言本体保留不删）
+// TestChannelsModelAddAndDuplicate 经详情页渠道模型段驱动：添加模型成功，
+// 同名公开模型重复添加须把可读错误留在 chModelForm.msg。
 func TestChannelsModelAddAndDuplicate(t *testing.T) {
-	t.Skip("moved: Task 7")
 	u, _ := testUI(t)
-	u.page = "channels"
-	tt := ui.NewTester(u.channelsView, 1000, 700)
-	u.chForm.name, u.chForm.baseURL = "m", "https://m.example.com"
-	_ = tt.Click("保存渠道")
+	v, _ := u.svc.Channels.Create("anthropic-official", "m", "https://m.example.com", 10, true, false)
+	u.openChannelDetail(v.ID)
+	u.chDetailSeg = 2 // 渠道模型段
+	tt := ui.NewTester(u.channelDetailView, 1080, 720)
 	u.chModelForm.public, u.chModelForm.upstream = "pub", "up"
-	_ = tt.Click("添加模型")
-	d, _ := u.svc.Channels.Get(u.svc.Channels.List()[0].ID)
+	if err := tt.Click("添加模型"); err != nil {
+		t.Fatal(err)
+	}
+	d, _ := u.svc.Channels.Get(v.ID)
 	if len(d.Models) != 1 || d.Models[0].PublicModel != "pub" {
 		t.Fatalf("models %+v", d.Models)
 	}
 	u.chModelForm.public, u.chModelForm.upstream = "pub", "up2"
-	_ = tt.Click("添加模型")
+	if err := tt.Click("添加模型"); err != nil {
+		t.Fatal(err)
+	}
 	if u.chModelForm.msg == "" {
 		t.Fatal("duplicate must surface in model form msg")
 	}
@@ -151,36 +157,36 @@ func TestChannelsNavSwitch(t *testing.T) {
 }
 
 // TestChannelsModelDeleteTwoStage pin 审查 Finding 1（全局约束「删除一律
-// 两段确认」，简报模型段代码漏了）：「删除模型」首击仅武装——不落刀、
-// 列表长度不变；「确认删除模型」才调 RemoveModel，长度减一。
-// moved: Task 7（模型两段确认随详情迁出列表页，Task 6 改 AlertDialog；
-// 断言本体保留不删）
+// 两段确认」）：行尾 ⋯ 菜单「删除」首击仅武装——不落刀、列表长度不变；
+// AlertDialog「确认删除模型」才调 RemoveModel，长度减一（取消居末位，==0 落刀）。
 func TestChannelsModelDeleteTwoStage(t *testing.T) {
-	t.Skip("moved: Task 7")
 	u, _ := testUI(t)
-	u.page = "channels"
-	tt := ui.NewTester(u.channelsView, 1000, 700)
-	u.chForm.name, u.chForm.baseURL = "m", "https://m.example.com"
-	_ = tt.Click("保存渠道") // 创建即自动选中，详情面板立即可用
+	v, _ := u.svc.Channels.Create("anthropic-official", "m", "https://m.example.com", 10, true, false)
+	u.openChannelDetail(v.ID)
+	u.chDetailSeg = 2 // 渠道模型段
+	tt := ui.NewTester(u.channelDetailView, 1080, 720)
 	u.chModelForm.public, u.chModelForm.upstream = "pub1", "up1"
 	_ = tt.Click("添加模型")
 	u.chModelForm.public, u.chModelForm.upstream = "pub2", "up2"
 	_ = tt.Click("添加模型")
-	u.chModelSel = 0
-	if err := tt.Click("删除模型"); err != nil {
+	// 行尾 ⋯ 菜单「删除」：武装确认（AlertDialog 随即弹出），不落刀。
+	if err := tt.Click("⋯"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.ChooseMenuItem("删除"); err != nil {
 		t.Fatal(err)
 	}
 	if !u.chModelConfirmDel {
 		t.Fatal("first click must arm the confirmation")
 	}
-	d, _ := u.svc.Channels.Get(u.svc.Channels.List()[0].ID)
+	d, _ := u.svc.Channels.Get(v.ID)
 	if len(d.Models) != 2 {
 		t.Fatalf("arm must not delete: %+v", d.Models)
 	}
 	if err := tt.Click("确认删除模型"); err != nil {
 		t.Fatal(err)
 	}
-	d, _ = u.svc.Channels.Get(u.svc.Channels.List()[0].ID)
+	d, _ = u.svc.Channels.Get(v.ID)
 	if len(d.Models) != 1 || d.Models[0].PublicModel != "pub2" {
 		t.Fatalf("confirm must remove the selected row: %+v", d.Models)
 	}
@@ -190,26 +196,20 @@ func TestChannelsModelDeleteTwoStage(t *testing.T) {
 }
 
 // TestChannelsKeyConfirmBoundToChannel pin 审查 Finding 2：确认位绑定渠道
-// ——A 行武装删除密钥后切到 B 行，B 面板下不得渲染「确认删除密钥」
+// ——A 详情武装删除密钥后 openChannelDetail 切到 B，B 下不得渲染「确认删除密钥」
 // （owner 不匹配视同未武装；渠道变更检测另清子选中与确认位），
-// B 的密钥数保持 0。
-// moved: Task 7（密钥确认位绑定随详情迁出列表页，Task 6 平移
-// confirmOwnerID 机制；断言本体保留不删）
+// B 的密钥数保持 0，A 语境的操作提示一并清除。
 func TestChannelsKeyConfirmBoundToChannel(t *testing.T) {
-	t.Skip("moved: Task 7")
 	u, _ := testUI(t)
-	u.page = "channels"
-	tt := ui.NewTester(u.channelsView, 1000, 700)
-	// a 优先级更低，钉死表序（行 0=a、行 1=b，同 TestChannelsLoadSelectedAndDeleteConfirm）。
-	u.chForm.name, u.chForm.baseURL, u.chForm.priorityInput = "a", "https://a.example.com", "1"
-	_ = tt.Click("保存渠道")
-	u.chForm.name, u.chForm.baseURL = "b", "https://b.example.com"
-	_ = tt.Click("保存渠道")
-	// 创建 b 后自动选中行 1——详情此刻是 b；显式选回行 0 让详情回到 a，
-	// 密钥才导进 a（细节面板跟随行选中）。
-	u.chSel = 0
-	tt.Frame()
-	// A 渠道导一枚密钥，选中并武装删除确认。
+	a, _ := u.svc.Channels.Create("anthropic-official", "a", "https://a.example.com", 10, true, false)
+	b, _ := u.svc.Channels.Create("anthropic-official", "b", "https://b.example.com", 20, true, false)
+	u.openChannelDetail(a.ID)
+	u.chDetailSeg = 1 // 密钥池段
+	tt := ui.NewTester(u.channelDetailView, 1080, 720)
+	// A 渠道导一枚密钥（结果提示属 A 语境）。
+	if err := tt.Click("＋ 批量导入"); err != nil {
+		t.Fatal(err)
+	}
 	u.keyForm.name = "k"
 	u.keyForm.keysText = "sk-aaa11111"
 	if err := tt.Click("导入密钥"); err != nil {
@@ -218,17 +218,20 @@ func TestChannelsKeyConfirmBoundToChannel(t *testing.T) {
 	if u.keyForm.msg == "" {
 		t.Fatal("import must leave a result msg on channel A")
 	}
-	u.chKeySel = 0
-	if err := tt.Click("删除密钥"); err != nil {
+	// 行尾 ⋯ 菜单「删除」：武装确认（绑定 A）。
+	if err := tt.Click("⋯"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.ChooseMenuItem("删除"); err != nil {
 		t.Fatal(err)
 	}
 	if !u.keyConfirmDelete || !tt.HasText("确认删除密钥") {
 		t.Fatalf("arm on channel A: armed=%v", u.keyConfirmDelete)
 	}
-	// 切到 B 行：确认钮消失，B 的密钥数不变；A 语境的操作提示一并清除
+	// 切到 B 详情：确认钮消失，B 的密钥数不变；A 语境的操作提示一并清除
 	//（Task 8 复审 Finding：提示残留跨渠道误导）。
-	u.chSel = 1
-	tt.Frame()
+	u.openChannelDetail(b.ID)
+	tt = ui.NewTester(u.channelDetailView, 1080, 720)
 	if tt.HasText("确认删除密钥") {
 		t.Fatalf("confirm must not render for another channel: %v", tt.Texts())
 	}
@@ -236,7 +239,7 @@ func TestChannelsKeyConfirmBoundToChannel(t *testing.T) {
 		t.Fatalf("switching channels must clear stale msgs: key=%q model=%q test=%q",
 			u.keyForm.msg, u.chModelForm.msg, u.chTestMsg)
 	}
-	d, _ := u.svc.Channels.Get(u.svc.Channels.List()[1].ID)
+	d, _ := u.svc.Channels.Get(b.ID)
 	if len(d.Keys) != 0 {
 		t.Fatalf("channel B keys must be untouched: %+v", d.Keys)
 	}
@@ -287,5 +290,50 @@ func TestChannelCardOpensDetail(t *testing.T) {
 	}
 	if u.page != "channel-detail" || u.chDetailID != v.ID {
 		t.Fatalf("%q %q", u.page, u.chDetailID)
+	}
+}
+
+func TestDetailSectionsRender(t *testing.T) {
+	u, _ := testUI(t)
+	v, _ := u.svc.Channels.Create("anthropic-official", "main", "https://a.example.com", 10, true, false)
+	u.svc.Channels.AddKeys(v.ID, "k1", "sk-test-1234", false)
+	u.openChannelDetail(v.ID)
+	tt := ui.NewTester(u.channelDetailView, 1080, 720)
+	for _, want := range []string{"连接配置", "密钥池 1", "渠道模型 0", "保存渠道", "连通测试"} {
+		if !tt.HasText(want) {
+			t.Fatalf("missing %q: %v", want, tt.Texts())
+		}
+	}
+}
+func TestDetailConfirmDisarmOnChannelSwitch(t *testing.T) {
+	u, _ := testUI(t)
+	v1, _ := u.svc.Channels.Create("anthropic-official", "c1", "https://1.example.com", 10, true, false)
+	v2, _ := u.svc.Channels.Create("anthropic-official", "c2", "https://2.example.com", 20, true, false)
+	u.openChannelDetail(v1.ID)
+	u.keyConfirmDelete, u.confirmOwnerID = true, v1.ID // 模拟在 c1 武装
+	u.openChannelDetail(v2.ID)                         // 切渠道必须清位
+	if u.keyConfirmDelete || u.confirmOwnerID != "" {
+		t.Fatal("切换后确认位必须解除")
+	}
+	tt := ui.NewTester(u.channelDetailView, 1080, 720)
+	if tt.HasText("确认删除密钥") {
+		t.Fatal("未重新武装不得出现确认钮")
+	}
+}
+func TestDetailTypeChangeConfirm(t *testing.T) {
+	u, _ := testUI(t)
+	v, _ := u.svc.Channels.Create("anthropic-official", "c1", "https://api.anthropic.com", 10, true, false)
+	u.openChannelDetail(v.ID)
+	tt := ui.NewTester(u.channelDetailView, 1080, 720)
+	u.chForm.typeID = "openai-compatible" // 模拟 Select 变更
+	tt = ui.NewTester(u.channelDetailView, 1080, 720)
+	if !u.chTypeResetConfirm {
+		t.Fatal("已保存渠道换类型必须武装确认")
+	}
+	if err := tt.Click("确认更换"); err != nil {
+		t.Fatal(err)
+	}
+	if u.chForm.baseURL == "https://api.anthropic.com" {
+		t.Fatal("确认后须预填新预设默认 URL")
 	}
 }

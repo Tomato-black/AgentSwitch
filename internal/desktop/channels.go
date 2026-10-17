@@ -3,6 +3,7 @@ package desktop
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/egoist/mygo/ui"
 
@@ -55,8 +56,42 @@ func channelStats(recs []telemetry.RequestRecord, channel string) (ok, fail int)
 	return ok, fail
 }
 
-// openChannelDetail 跳渠道详情页（Task 6 渲染）：锚定渠道 id、分段归零。
+// keyStats 统计遥测环里该渠道+密钥名的近况：口径同 channelStats（ok=2xx、
+// fail=Status==0||>=400），按 rec.Channel==渠道名 && rec.Account==密钥名
+// 过滤（渠道化后 Account 语义 = 密钥名）。密钥池「近 100 条」列消费。
+func keyStats(recs []telemetry.RequestRecord, channel, account string) (ok, fail int) {
+	for _, r := range recs {
+		if r.Channel != channel || r.Account != account {
+			continue
+		}
+		switch {
+		case r.Status >= 200 && r.Status < 300:
+			ok++
+		case r.Status == 0 || r.Status >= 400:
+			fail++
+		}
+	}
+	return ok, fail
+}
+
+// clearDetailContext 渠道上下文切换清位（原 prevChannelID 块语义平移）：
+// 清子表选中、两个确认位、confirmOwnerID 与三处提示——确认位武装后换渠道
+// 必须解除（防落刀他渠道），提示属上一渠道操作语境、残留即误导（审查
+// Finding 2 / Task 8 复审 Finding）。
+func (u *uiState) clearDetailContext() {
+	u.chKeySel, u.chModelSel = -1, -1
+	u.keyConfirmDelete, u.chModelConfirmDel = false, false
+	u.confirmOwnerID = ""
+	u.keyForm.msg, u.chModelForm.msg, u.chTestMsg = "", "", ""
+}
+
+// openChannelDetail 跳渠道详情页：锚定渠道 id、分段归零；目标渠道变化即
+// 清上下文（确认位/子选中/提示）——切换即解除武装，不待渲染
+// （TestDetailConfirmDisarmOnChannelSwitch）。
 func (u *uiState) openChannelDetail(id string) {
+	if u.chDetailID != id {
+		u.clearDetailContext()
+	}
 	u.page = "channel-detail"
 	u.chDetailID = id
 	u.chDetailSeg = 0
@@ -235,16 +270,362 @@ func (u *uiState) selectChannel(id string) {
 	}
 }
 
-func (u *uiState) loadChannel(v bridge.ChannelView) {
-	u.chForm = chFormData{typeID: v.Type, name: v.Name, baseURL: v.BaseURL,
-		priorityInput: strconv.Itoa(v.Priority), enabled: v.Enabled,
-		allowPrivate: v.AllowPrivateUpstream, editID: v.ID}
-	u.chTestMsg = ""
-	u.chConfirmDelete = false
-	u.keyConfirmDelete = false  // 既有三页模式：换行/换渠道必须清确认位（防落刀他行）
-	u.chModelConfirmDel = false // 审查 Finding 1：模型确认位同清
-	u.keyForm = keyFormData{}
-	u.chModelForm = channelModelFormData{}
+// segmented 是自组分段控件（spec §4）：SegmentedBase 的框架默认选中片取
+// pressedColor——浅色下是 Background 白片，白底隐身（toggle.go:45-54），
+// 故选中片显式上应用级选中灰 selectedColor，Track 上 SurfacePressed。
+func segmented(c *ui.Context, t *ui.Theme, selected *int, labels []string) {
+	parts := ui.SegmentedBase(c, selected, len(labels))
+	parts.Track.Background(t.SurfacePressed).Radius(8).Padding(3).Gap(3).Children(func() {
+		for i, label := range labels {
+			seg := parts.Segment(i)
+			if i == *selected {
+				seg.Background(selectedColor(t))
+			}
+			seg.Radius(6).Padding(6, 12).Center().Children(func() {
+				ui.Text(c, label).SingleLine()
+			})
+		}
+	})
+}
+
+// channelDetailView 是渠道详情页（spec §5.2）：锚定 chDetailID，页头
+// （返回+tile+名称徽章+连通测试+保存）+ Segmented 三段（连接配置/密钥池/
+// 渠道模型）+ 段内容。Get 失败或渠道已删 → 兜底回列表；进入详情（prevDetailID
+// 变化）回显表单并清上下文。内容列包 ui.Scroll（三段内容可超视口）。
+func (u *uiState) channelDetailView(c *ui.Context) {
+	t := c.Theme()
+	s := softs(t)
+	detail, err := u.svc.Channels.Get(u.chDetailID)
+	if err != nil {
+		u.page = "channels" // 渠道已删/加载失败 → 兜底返回列表
+		return
+	}
+	v := detail.Channel
+	// 进入详情（prevDetailID 变化）：回显渠道现值进表单（原 loadChannel
+	// 职责）+ 清上下文。openChannelDetail 已清过位，此处幂等再清防
+	// chDetailID 直改路径漏清。
+	if u.prevDetailID != v.ID {
+		u.prevDetailID = v.ID
+		u.clearDetailContext()
+		u.chForm = chFormData{typeID: v.Type, name: v.Name, baseURL: v.BaseURL,
+			priorityInput: strconv.Itoa(v.Priority), enabled: v.Enabled,
+			allowPrivate: v.AllowPrivateUpstream, editID: v.ID}
+		u.prevType = u.chForm.typeID
+	}
+	ui.Scroll(c).Grow(1).Children(func() {
+		ui.Column(c).Gap(12).Children(func() {
+			u.channelDetailHeader(c, t, s, detail)
+			if u.chTestMsg != "" {
+				ui.Text(c, u.chTestMsg)
+			}
+			segmented(c, t, &u.chDetailSeg, []string{"连接配置",
+				fmt.Sprintf("密钥池 %d", len(detail.Keys)),
+				fmt.Sprintf("渠道模型 %d", len(detail.Models))})
+			switch u.chDetailSeg {
+			case 1:
+				u.channelKeyPoolSection(c, t, s, detail)
+			case 2:
+				u.channelModelSection(c, t, s, detail)
+			default:
+				u.channelConnSection(c, t)
+			}
+		})
+	})
+	// 类型变更检测放在段内容之后：同帧 Select 变更即时武装，不滞后一帧。
+	_, byLabel := presetLabels()
+	tid := resolveTypeID(byLabel, u.chForm.typeID)
+	if u.prevType != u.chForm.typeID {
+		u.prevType = u.chForm.typeID
+		if u.chForm.editID == "" {
+			u.chForm.baseURL = presetOf(tid).DefaultBaseURL // 新建态（Task 7）：预填不经确认
+		} else {
+			u.chTypeResetConfirm = true // 详情态：换类型会重置 Base URL，须确认
+		}
+	}
+	// 类型更换确认（取消居末位；==0 确认）：确认→预填新类型默认 URL，
+	// 取消/Escape→typeID 回退为渠道现类型。
+	if u.chTypeResetConfirm {
+		switch i := ui.AlertDialog(c, &u.chTypeResetConfirm, "更换类型",
+			"Base URL 将重置为该类型预设默认值。", "确认更换", "取消"); i {
+		case 0:
+			u.chForm.baseURL = presetOf(tid).DefaultBaseURL
+		case 1, ui.AlertDismissed:
+			u.chForm.typeID = detail.Channel.Type
+			u.prevType = u.chForm.typeID
+		}
+	}
+	// 密钥/模型删除确认（AlertDialog，==0 落刀）：confirmOwnerID 绑定渠道
+	// ——弹窗仅对武装时的渠道渲染（审查 Finding 2）。
+	if u.keyConfirmDelete && u.confirmOwnerID == v.ID {
+		switch i := ui.AlertDialog(c, &u.keyConfirmDelete, "删除密钥",
+			"确认删除该密钥？密钥本体将从密钥存储移除。", "确认删除密钥", "取消"); i {
+		case 0:
+			if u.chKeySel >= 0 && u.chKeySel < len(detail.Keys) {
+				if err := u.svc.Channels.RemoveKey(detail.Keys[u.chKeySel].ID); err != nil {
+					u.keyForm.msg = err.Error()
+				}
+			}
+			u.confirmOwnerID = ""
+		case 1, ui.AlertDismissed:
+			u.confirmOwnerID = ""
+		}
+	}
+	if u.chModelConfirmDel && u.confirmOwnerID == v.ID {
+		switch i := ui.AlertDialog(c, &u.chModelConfirmDel, "删除模型",
+			"确认删除该模型映射？", "确认删除模型", "取消"); i {
+		case 0:
+			if u.chModelSel >= 0 && u.chModelSel < len(detail.Models) {
+				if err := u.svc.Channels.RemoveModel(detail.Models[u.chModelSel].ID); err != nil {
+					u.chModelForm.msg = err.Error()
+				}
+			}
+			u.confirmOwnerID = ""
+		case 1, ui.AlertDismissed:
+			u.confirmOwnerID = ""
+		}
+	}
+}
+
+// channelDetailHeader 是详情页头：返回钮 + 类型 tile + 名称/徽章 + 右侧
+// 「连通测试」（结果写 chTestMsg，与列表页共用信息位）与「保存渠道」主钮。
+func (u *uiState) channelDetailHeader(c *ui.Context, t *ui.Theme, s softPalette, detail bridge.ChannelDetail) {
+	v := detail.Channel
+	ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
+		if ui.Button(c, "返回列表").Clicked() {
+			u.page = "channels"
+		}
+		tile(c, t, s, v.Name, 40)
+		ui.Column(c).Gap(4).Grow(1).Children(func() {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, v.Name).Bold().SingleLine()
+				if v.Enabled {
+					softBadge(c, t, s, "ok", "启用")
+				} else {
+					softBadge(c, t, s, "gray", "已停用")
+				}
+				if v.CoolingCount > 0 {
+					softBadge(c, t, s, "warn", fmt.Sprintf("冷却 %d 把", v.CoolingCount))
+				}
+			})
+			ui.Text(c, v.BaseURL).Font(monoFont).TextColor(s.Link).SingleLine()
+		})
+		if softButton(c, t, s, "act", "连通测试").Clicked() {
+			res := u.svc.Channels.Test(v.ID)
+			if res.OK {
+				u.chTestMsg = "连通正常 (" + res.Stage + ")"
+			} else {
+				u.chTestMsg = res.Stage + " 失败: " + res.Error
+			}
+		}
+		if pillButton(c, t, "保存渠道").Clicked() {
+			// Update 回写分支 Task 7 接线（submitChannel Update 语义平移）；
+			// 本任务占位保编译与文案位。
+		}
+	})
+}
+
+// channelConnSection 是「连接配置」段：类型 Select（详情态换类型走确认）+
+// 名称/Base URL/优先级/启用/允许私网 + 提示位。
+func (u *uiState) channelConnSection(c *ui.Context, t *ui.Theme) {
+	card(c, t, func() {
+		ui.Column(c).Gap(12).Children(func() {
+			ui.Text(c, "连接配置").Bold()
+			labels, byLabel := presetLabels()
+			tid := resolveTypeID(byLabel, u.chForm.typeID)
+			ui.Row(c).Gap(12).Children(func() {
+				ui.Text(c, "类型:").Width(96).TextColor(t.TextMuted)
+				ui.Select(c, &u.chForm.typeID, labelsOf(labels, byLabel, u.chForm.typeID))
+				ui.Text(c, presetOf(tid).Description).TextColor(t.TextMuted)
+			})
+			ui.Row(c).Gap(12).Children(func() {
+				ui.Text(c, "名称:").Width(96).TextColor(t.TextMuted)
+				ui.TextInput(c, &u.chForm.name).Grow(1)
+			})
+			ui.Row(c).Gap(12).Children(func() {
+				ui.Text(c, "Base URL:").Width(96).TextColor(t.TextMuted)
+				ui.TextInput(c, &u.chForm.baseURL).Grow(1)
+			})
+			ui.Row(c).Gap(12).Children(func() {
+				ui.Text(c, "优先级:").Width(96).TextColor(t.TextMuted)
+				ui.TextInput(c, &u.chForm.priorityInput).Width(96)
+			})
+			ui.Row(c).Gap(16).Children(func() {
+				ui.Text(c, "启用").TextColor(t.TextMuted)
+				ui.Switch(c, &u.chForm.enabled)
+				ui.Text(c, "允许私网上游").TextColor(t.TextMuted)
+				ui.Switch(c, &u.chForm.allowPrivate)
+			})
+			if u.chForm.msg != "" {
+				ui.Text(c, u.chForm.msg)
+			}
+		})
+	})
+}
+
+// channelKeyPoolSection 是「密钥池」段：工具行（「＋ 批量导入」切表单）+
+// 批量导入表单（开时显示）+ 密钥表（名称/尾4/存储/状态/优先级/近 100 条/
+// ⋯ 菜单：停用启用、测试、删除——删除走 AlertDialog 且确认位绑定渠道）。
+func (u *uiState) channelKeyPoolSection(c *ui.Context, t *ui.Theme, s softPalette, detail bridge.ChannelDetail) {
+	v := detail.Channel
+	card(c, t, func() {
+		ui.Column(c).Gap(12).Children(func() {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "密钥池").Bold().Grow(1)
+				if softButton(c, t, s, "act", "＋ 批量导入").Clicked() {
+					u.keyFormOpen = !u.keyFormOpen
+				}
+			})
+			if u.keyFormOpen {
+				ui.Row(c).Gap(12).Children(func() {
+					ui.Text(c, "密钥名称:").Width(96).TextColor(t.TextMuted)
+					ui.TextInput(c, &u.keyForm.name).Grow(1)
+				})
+				ui.Row(c).Gap(12).Children(func() {
+					ui.Text(c, "API Keys（每行一枚）:").Width(140).TextColor(t.TextMuted)
+					ui.TextArea(c, &u.keyForm.keysText).Grow(1).MinHeight(0).Height(64)
+				})
+				ui.Row(c).Gap(8).Children(func() {
+					ui.Text(c, "允许文件降级").TextColor(t.TextMuted)
+					ui.Switch(c, &u.keyForm.allowFallback)
+					if pillButton(c, t, "导入密钥").Clicked() {
+						n, err := u.svc.Channels.AddKeys(v.ID, u.keyForm.name,
+							u.keyForm.keysText, u.keyForm.allowFallback)
+						if err != nil {
+							u.keyForm.msg = err.Error()
+						} else {
+							u.keyForm.msg = fmt.Sprintf("已导入 %d 枚密钥", n)
+							u.keyForm.name, u.keyForm.keysText = "", ""
+						}
+					}
+				})
+			}
+			if len(detail.Keys) == 0 {
+				ui.Text(c, "尚无密钥——导入一枚后该渠道才能接流量").TextColor(t.TextMuted)
+			} else {
+				keyCols := []ui.TableColumn{{Title: "名称"}, {Title: "尾4"}, {Title: "存储"},
+					{Title: "状态"}, {Title: "优先级"}, {Title: "近 100 条"}, {Title: ""}}
+				ui.Table(c, &u.chKeyList, keyCols, len(detail.Keys), func(row, col int) {
+					k := detail.Keys[row]
+					switch col {
+					case 0:
+						ui.Text(c, k.Name).SingleLine()
+					case 1:
+						ui.Text(c, k.KeyTail).SingleLine().Font(monoFont)
+					case 2:
+						ui.Text(c, k.SecretBackend).SingleLine().Font(monoFont)
+					case 3:
+						if k.Cooling {
+							ui.Textf(c, "冷却 %ds (%s)", k.CoolingRemainSec, k.CoolingReason).TextColor(t.Warning)
+						} else if k.Enabled {
+							softBadge(c, t, s, "ok", "启用")
+						} else {
+							softBadge(c, t, s, "gray", "已停用")
+						}
+					case 4:
+						ui.Text(c, strconv.Itoa(k.Priority)).SingleLine().Font(monoFont)
+					case 5:
+						okN, failN := keyStats(u.recent, v.Name, k.Name)
+						if okN+failN == 0 {
+							ui.Text(c, "—").TextColor(t.TextMuted)
+						} else {
+							ui.Textf(c, "%d✓ %d✗", okN, failN).SingleLine()
+						}
+					case 6:
+						ui.MenuButton(c, "⋯", func(m *ui.Menu) {
+							if m.Item("停用/启用").Chosen() {
+								_ = u.svc.Channels.SetKeyEnabled(k.ID, !k.Enabled)
+							}
+							if m.Item("测试").Chosen() {
+								res := u.svc.Channels.TestKey(k.ID)
+								if res.OK {
+									u.chTestMsg = "连通正常 (" + res.Stage + ")"
+								} else {
+									u.chTestMsg = res.Stage + " 失败: " + res.Error
+								}
+							}
+							if m.Item("删除").Chosen() {
+								u.chKeySel = row // 确认落刀目标 = 本行
+								u.keyConfirmDelete = true
+								u.confirmOwnerID = v.ID // 确认位绑定渠道（审查 Finding 2）
+							}
+						})
+					}
+				}).Height(140) // 定高内部滚动（防详情页超视口）
+			}
+			if u.keyForm.msg != "" {
+				ui.Text(c, u.keyForm.msg)
+			}
+		})
+	})
+}
+
+// channelModelSection 是「渠道模型」段：添加表单 + 「从上游获取」+ 模型表
+// （公开模型/上游模型/启用 + 行尾 ⋯ 菜单：停用启用、删除——删除走 AlertDialog
+// 且确认位绑定渠道）。
+func (u *uiState) channelModelSection(c *ui.Context, t *ui.Theme, s softPalette, detail bridge.ChannelDetail) {
+	v := detail.Channel
+	card(c, t, func() {
+		ui.Column(c).Gap(12).Children(func() {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "渠道模型").Bold().Grow(1)
+				if softButton(c, t, s, "gray", "从上游获取").Clicked() {
+					if ids, err := u.svc.Channels.FetchModels(v.ID); err != nil {
+						u.chModelForm.msg = err.Error()
+					} else {
+						u.chModelForm.msg = "上游模型: " + strings.Join(ids, ", ")
+					}
+				}
+			})
+			ui.Row(c).Gap(12).Children(func() {
+				ui.Text(c, "公开模型名:").Width(96).TextColor(t.TextMuted)
+				ui.TextInput(c, &u.chModelForm.public).Grow(1)
+				ui.Text(c, "上游模型名:").Width(96).TextColor(t.TextMuted)
+				ui.TextInput(c, &u.chModelForm.upstream).Grow(1)
+				if pillButton(c, t, "添加模型").Clicked() {
+					if _, err := u.svc.Channels.AddModel(v.ID,
+						u.chModelForm.public, u.chModelForm.upstream); err != nil {
+						u.chModelForm.msg = err.Error()
+					} else {
+						u.chModelForm = channelModelFormData{}
+					}
+				}
+			})
+			if u.chModelForm.msg != "" {
+				ui.Text(c, u.chModelForm.msg)
+			}
+			if len(detail.Models) == 0 {
+				ui.Text(c, "尚无模型——该渠道不会接到任何请求，先添加公开模型").TextColor(t.TextMuted)
+			} else {
+				mCols := []ui.TableColumn{{Title: "公开模型"}, {Title: "上游模型"}, {Title: "启用"}, {Title: ""}}
+				ui.Table(c, &u.chModelList, mCols, len(detail.Models), func(row, col int) {
+					m := detail.Models[row]
+					switch col {
+					case 0:
+						ui.Text(c, m.PublicModel).SingleLine()
+					case 1:
+						ui.Text(c, m.UpstreamModel).SingleLine().Font(monoFont)
+					case 2:
+						if m.Enabled {
+							softBadge(c, t, s, "ok", "启用")
+						} else {
+							softBadge(c, t, s, "gray", "已停用")
+						}
+					case 3:
+						ui.MenuButton(c, "⋯", func(mn *ui.Menu) {
+							if mn.Item("停用/启用").Chosen() {
+								_ = u.svc.Channels.SetModelEnabled(m.ID, !m.Enabled)
+							}
+							if mn.Item("删除").Chosen() {
+								u.chModelSel = row // 确认落刀目标 = 本行
+								u.chModelConfirmDel = true
+								u.confirmOwnerID = v.ID // 确认位绑定渠道（审查 Finding 2）
+							}
+						})
+					}
+				}).Height(140) // 定高内部滚动（同密钥表）
+			}
+		})
+	})
 }
 
 func (u *uiState) resetChannelForm() {
