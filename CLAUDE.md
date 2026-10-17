@@ -8,7 +8,7 @@ AgentSwitch：面向本地 AI Agent 的**模型 API 网关**——为 Claude Cod
 
 技术选型（v2.0 设计稿确定）：Go 实现网关核心，**MyGo**（https://github.com/egoist/mygo，桌面框架）做桌面壳与前后端桥接，前端 TypeScript + HTML/CSS，数据用 SQLite，凭据存 OS 密钥存储。
 
-当前仓库已完成 P0-A′ 桌面优先 MVP（实现计划：`docs/superpowers/plans/2026-10-15-agentswitch-p0a-desktop-first.md`）：单二进制桌面应用，入口 `cmd/agentswitch`，Go 1.27.2，依赖 mygo v0.5.1 与 modernc.org/sqlite；核心包在 `internal/{app,bridge,config,credential,desktop,gateway,protocol,provider,router,storage,telemetry,account}`，测试全部离线（httptest Fake Provider），`README.md` 含首次使用流程。相对 v2.0 目标结构（§12）的落地差异：管理面以进程内 `bridge`（`mygo.Bind` 桌面桥接、无独立管理端口）替代 `controlapi`；migrations 内嵌在 `internal/storage`。**UI 决策（2026-10-17）**：后续全部使用 MyGo 原生视图（`internal/desktop`），`frontend/` TS 工程方案**废弃**——这是对 docx §12 前端规划的明示偏离（docx 不改，以 `docs/superpowers/specs/2026-10-17-desktop-ui-mygo-native-design.md` 为凭证）；桌面 UI 设计系统（「交换机面板」）见该 spec 与 `internal/desktop/theme.go`。下一步 P0-B（多账号池与故障转移），后续项留档见该计划文档末尾。
+当前仓库已完成 P0-A′ 桌面优先 MVP（实现计划：`docs/superpowers/plans/2026-10-15-agentswitch-p0a-desktop-first.md`）：单二进制桌面应用，入口 `cmd/agentswitch`，Go 1.27.2，依赖 mygo v0.5.1 与 modernc.org/sqlite；核心包在 `internal/{app,bridge,config,credential,desktop,gateway,protocol,provider,router,storage,telemetry}`，测试全部离线（httptest Fake Provider），`README.md` 含首次使用流程。相对 v2.0 目标结构（§12）的落地差异：管理面以进程内 `bridge`（`mygo.Bind` 桌面桥接、无独立管理端口）替代 `controlapi`；migrations 内嵌在 `internal/storage`（当前单一 v1）。**UI 决策（2026-10-17）**：后续全部使用 MyGo 原生视图（`internal/desktop`），`frontend/` TS 工程方案**废弃**——这是对 docx §12 前端规划的明示偏离（docx 不改，以 `docs/superpowers/specs/2026-10-17-desktop-ui-mygo-native-design.md` 为凭证）；桌面 UI 设计系统（「交换机面板」）见该 spec 与 `internal/desktop/theme.go`。下一步 P0-B（多账号池与故障转移），后续项留档见该计划文档末尾。2026-10-17 起渠道模型为 new-api 式 **channels 聚合根**（`channels`/`channel_keys`/`channel_models` 三表，渠道级模型清单与重定向；providers/accounts/models 旧表已退役）——设计见 `docs/superpowers/specs/2026-10-17-channels-models-p0b-design.md`，实现计划见 `docs/superpowers/plans/2026-10-17-channels-models-p0b.md`。P0-B（优先级故障转移、冷却、二次校验）随该 spec 落地。**该重构采用删库重建**：schema 合并为单一 migration v1，老用户需删除一次 `~/Library/Application Support/AgentSwitch/agentswitch.db`。
 
 **权威设计文档**是仓库根目录的 docx（磁盘上文件名经 URL 编码，实际为 `AgentSwitch_MyGo桌面应用重新设计方案_v2.0.docx`）。任何功能实现前先查文档对应章节；代码与文档冲突时，以文档为准并指出来。文档是 zip 格式，可用以下命令提取纯文本：
 
@@ -42,7 +42,7 @@ go tool mygo build    # 打包（产物在 build/）
 
 ### 目标目录与依赖规则（文档 §12、§12.1，硬约束）
 
-目标结构：`cmd/{agentswitch,agentswitch-gateway}`、`internal/{app,gateway,controlapi,protocol,provider,router,account,config,credential,storage,telemetry,desktop}`、`migrations/`、`tests/{fixtures,fakeprovider,integration}`；`frontend/` 不再建设（UI 决策 2026-10-17）。
+目标结构：`cmd/{agentswitch,agentswitch-gateway}`、`internal/{app,gateway,controlapi,protocol,provider,router,config,credential,storage,telemetry,desktop}`、`migrations/`、`tests/{fixtures,fakeprovider,integration}`；`frontend/` 不再建设（UI 决策 2026-10-17）。
 
 - `router` 不依赖 MyGo、UI 或具体 HTTP handler；`provider` 通过接口暴露调用能力，不反向依赖 `router`。
 - `gateway` 组合 protocol/router/provider，不自行实现每家供应商的错误判断；`controlapi` 只调应用服务，不绕过 Repository。

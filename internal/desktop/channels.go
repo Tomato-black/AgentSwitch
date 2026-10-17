@@ -153,13 +153,15 @@ func (u *uiState) channelsView(c *ui.Context) {
 			ui.Textf(c, "渠道详情加载失败: %v", err).TextColor(t.Danger)
 			return
 		}
-		// 渠道上下文切换（详情渠道变更）：清子表选中与两个确认位——
-		// 既有三页「确认清位」模式的渠道级版（审查 Finding 2，防落刀他渠道）。
+		// 渠道上下文切换（详情渠道变更）：清子表选中、两个确认位与三处提示
+		// 残留——既有三页「确认清位」模式的渠道级版（审查 Finding 2，防落刀
+		// 他渠道）；提示属上一渠道的操作语境，换渠道后留在面板上即误导。
 		if u.prevChannelID != detail.Channel.ID {
 			u.prevChannelID = detail.Channel.ID
 			u.chKeySel, u.chModelSel = -1, -1
 			u.keyConfirmDelete, u.chModelConfirmDel = false, false
 			u.confirmOwnerID = ""
+			u.keyForm.msg, u.chModelForm.msg, u.chTestMsg = "", "", ""
 		}
 		ui.Divider(c)
 

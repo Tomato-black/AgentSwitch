@@ -103,7 +103,7 @@ func Open(opts Options) (*App, error) {
 		log:      logger,
 		logClose: closer,
 		ring:     telemetry.NewRing(100),
-		// AllowFallback：显式确认闸在 bridge 的 pickBackend(allowFallback)——无密钥环且
+		// AllowFallback：显式确认闸在 bridge 的 pickBackendFor(allowFallback)——无密钥环且
 		// 用户未确认时在 Set 之前就报错；Manager 层放行是其配套，否则确认后仍失败。
 		// settings 的 credential.fallback_enabled 留作后续 UI 记忆偏好（P0-A 不接）。
 		creds: credential.Manager{Primary: credential.OSKeychain{}, Fallback: fb, AllowFallback: true},

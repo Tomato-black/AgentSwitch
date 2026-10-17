@@ -59,7 +59,7 @@ func TestLifecycleDegradedAndRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 	if a.State().State != StateDegraded {
-		t.Fatalf("no accounts → degraded, got %s", a.State().State)
+		t.Fatalf("no usable channel keys → degraded, got %s", a.State().State)
 	}
 	if err := a.StopGateway(context.Background()); err != nil {
 		t.Fatal(err)

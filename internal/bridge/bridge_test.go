@@ -2,15 +2,12 @@ package bridge
 
 import (
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"AgentSwitch/internal/app"
-	"AgentSwitch/internal/credential"
 	"AgentSwitch/internal/storage"
 )
 
@@ -26,222 +23,50 @@ func tempApp(t *testing.T) *app.App {
 	return a
 }
 
-func TestProviderCRUDAndValidation(t *testing.T) {
-	a := tempApp(t)
-	ps := Providers{A: a}
-	p, err := ps.Create("main", "anthropic", "https://api.example.com", true, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ps.Create("bad", "openai", "https://x.example.com", true, false); err == nil {
-		t.Fatal("non-anthropic protocol must be rejected in P0-A")
-	}
-	if _, err := ps.Create("badurl", "anthropic", "http://plain.example.com", true, false); err == nil {
-		t.Fatal("non-loopback http must be rejected")
-	}
-	if err := ps.Update(p.ID, "main2", "https://api2.example.com", false, false); err != nil {
-		t.Fatal(err)
-	}
-	if got := ps.List(); len(got) != 1 || got[0].Name != "main2" || got[0].Enabled {
-		t.Fatalf("list %+v", got)
-	}
-	if err := ps.Remove(p.ID); err != nil {
-		t.Fatal(err)
-	}
-	if len(ps.List()) != 0 {
-		t.Fatal("remove failed")
-	}
-}
-
-func TestAccountSecretLifecycle(t *testing.T) {
-	a := tempApp(t)
-	// 本地 manager 存密钥：Providers/Accounts 两侧注入同一 store（R-a），级联断言才成立。
-	creds := credential.Manager{
-		Primary:       credential.NewFallbackFile(filepath.Join(t.TempDir(), "s.json")),
-		AllowFallback: true,
-	}
-	ps := Providers{A: a, Creds: &creds}
-	p, _ := ps.Create("main", "anthropic", "https://api.example.com", true, false)
-	// KeychainAvailable 注入 false（R-b）：不探测/不写真实钥匙环，backend 断言为 fallback-file。
-	as := Accounts{A: a, Creds: &creds, KeychainAvailable: func() bool { return false }}
-	av, err := as.Create("acc1", p.ID, "sk-ant-xyz7890", 10, true, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if av.KeyTail != "7890" || av.SecretBackend != "fallback-file" {
-		t.Fatalf("view %+v", av)
-	}
-	got, err := creds.Get(credential.AccountKey(av.ID))
-	if err != nil || string(got) != "sk-ant-xyz7890" {
-		t.Fatalf("secret: %q %v", got, err)
-	}
-	if err := as.SetEnabled(av.ID, false); err != nil {
-		t.Fatal(err)
-	}
-	if l := as.List(); len(l) != 1 || l[0].Enabled || l[0].KeyTail != "7890" {
-		t.Fatalf("setEnabled %+v", l)
-	}
-	if err := as.RotateSecret(av.ID, "sk-ant-newkey99", true); err != nil {
-		t.Fatal(err)
-	}
-	if v, _ := creds.Get(credential.AccountKey(av.ID)); string(v) != "sk-ant-newkey99" {
-		t.Fatal("rotate failed")
-	}
-	// 轮换后 List 回读的尾 4 同步刷新（持久化 key_tail）。
-	if l := as.List(); len(l) != 1 || l[0].KeyTail != "ey99" {
-		t.Fatalf("list tail after rotate: %+v", l)
-	}
-	// 删除 provider 级联删除账号与密钥
-	if err := ps.Remove(p.ID); err != nil {
-		t.Fatal(err)
-	}
-	if len(as.List()) != 0 {
-		t.Fatal("cascade failed")
-	}
-	if _, err := creds.Get(credential.AccountKey(av.ID)); err == nil {
-		t.Fatal("cascade must delete secret")
-	}
-}
-
-func TestModelsCRUDAndUnique(t *testing.T) {
-	a := tempApp(t)
-	ms := Models{A: a}
-	m, err := ms.Create("claude-opus", "up-opus")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ms.Create("claude-opus", "other"); err == nil {
-		t.Fatal("duplicate alias must fail")
-	}
-	if err := ms.Update(m.ID, "claude-opus-2", "up-opus"); err != nil {
-		t.Fatal(err)
-	}
-	if got := ms.List(); len(got) != 1 || got[0].PublicModel != "claude-opus-2" {
-		t.Fatalf("%+v", got)
-	}
-	if err := ms.Remove(m.ID); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestAccountProbeStages(t *testing.T) {
-	a := tempApp(t)
-	// 本地 401 上游：httptest 走 127.0.0.1 回环，Probe dns 阶段对回环免解析，
-	// 全离线（不解析/不访问任何真实主机）。
-	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
-	}))
-	t.Cleanup(up.Close)
-	creds := credential.Manager{
-		Primary:       credential.NewFallbackFile(filepath.Join(t.TempDir(), "s.json")),
-		AllowFallback: true,
-	}
-	ps := Providers{A: a, Creds: &creds}
-	p, err := ps.Create("main", "anthropic", up.URL, true, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	as := Accounts{A: a, Creds: &creds, KeychainAvailable: func() bool { return false }}
-	av, err := as.Create("acc1", p.ID, "sk-ant-xyz7890", 10, true, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r := as.Test("missing"); r.Stage != "lookup" || r.OK {
-		t.Fatalf("lookup miss %+v", r)
-	}
-	r := as.Test(av.ID)
-	if r.Stage != "auth" || r.OK {
-		t.Fatalf("want auth-stage 401 from local upstream, got %+v", r)
-	}
-	if err := creds.Delete(credential.AccountKey(av.ID)); err != nil {
-		t.Fatal(err)
-	}
-	if r := as.Test(av.ID); r.Stage != "credential" || r.OK {
-		t.Fatalf("credential miss %+v", r)
-	}
-}
-
-// TestAccountKeyTailVisibleInList 覆盖 spec §12.4 KeyTail 持久化后的 List 回读
-// （原恒 "" 契约已废止）：Create 落行即回读 "1234"，RotateSecret 换密钥后回读
-// 新尾 4——UI"密钥尾4"列取自 List，必须是真值。
-func TestAccountKeyTailVisibleInList(t *testing.T) {
-	a := tempApp(t)
-	creds := credential.Manager{
-		Primary:       credential.NewFallbackFile(filepath.Join(t.TempDir(), "s.json")),
-		AllowFallback: true,
-	}
-	ps := Providers{A: a, Creds: &creds}
-	p, err := ps.Create("main", "anthropic", "https://api.example.com", true, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	as := Accounts{A: a, Creds: &creds, KeychainAvailable: func() bool { return false }}
-	av, err := as.Create("acc1", p.ID, "sk-ant-1234", 10, true, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if av.KeyTail != "1234" {
-		t.Fatalf("create view tail: %+v", av)
-	}
-	if l := as.List(); len(l) != 1 || l[0].KeyTail != "1234" {
-		t.Fatalf("list after create: %+v", l)
-	}
-	if err := as.RotateSecret(av.ID, "sk-ant-5678", true); err != nil {
-		t.Fatal(err)
-	}
-	if l := as.List(); len(l) != 1 || l[0].KeyTail != "5678" {
-		t.Fatalf("list after rotate: %+v", l)
-	}
-	if g, err := a.Store().Accounts().Get(av.ID); err != nil || g.KeyTail != "5678" {
-		t.Fatalf("row after rotate: key_tail=%q err=%v", g.KeyTail, err)
-	}
-}
-
 // TestAuditLinesCarryActorAndResult 覆盖 I5 的审计字段（spec §9）：bridge 全部
 // 审计行带 actor="ui"（发起方=桌面管理面）与 result="ok"（这些行只在成功后记）。
-// 逐条解析日志文件 JSON 行，对已知审计 msg 断言两字段齐全。
+// 逐条解析日志文件 JSON 行，对已知审计 msg 断言两字段齐全（旧供应商/账号/
+// 全局别名服务退役后，覆盖存活服务 Gateway 与 Channels 的写路径）。
 func TestAuditLinesCarryActorAndResult(t *testing.T) {
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "audit.log")
-	a, err := app.Open(app.Options{
-		DBPath: filepath.Join(dir, "b.db"), LogPath: logPath, Host: "127.0.0.1",
-	})
+	cs, _ := channelsSvc(t)
+	a := cs.A
+	c, err := cs.Create("anthropic-compatible", "main", "https://api.example.com", 10, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { a.Close() })
-	creds := credential.Manager{
-		Primary:       credential.NewFallbackFile(filepath.Join(dir, "s.json")),
-		AllowFallback: true,
-	}
-	ps := Providers{A: a, Creds: &creds}
-	p, err := ps.Create("main", "anthropic", "https://api.example.com", true, false)
-	if err != nil {
+	if err := cs.Update(c.ID, "main2", "https://api2.example.com", 10, true, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := ps.Update(p.ID, "main2", "https://api2.example.com", true, false); err != nil {
+	if err := cs.SetEnabled(c.ID, false); err != nil {
 		t.Fatal(err)
 	}
-	as := Accounts{A: a, Creds: &creds, KeychainAvailable: func() bool { return false }}
-	av, err := as.Create("acc1", p.ID, "sk-ant-1234", 10, true, true)
-	if err != nil {
+	if _, err := cs.AddKeys(c.ID, "pool", "sk-ant-1234", true); err != nil {
 		t.Fatal(err)
 	}
-	if err := as.Update(av.ID, "acc1-renamed", 11); err != nil {
+	d, err := cs.Get(c.ID)
+	if err != nil || len(d.Keys) != 1 {
+		t.Fatalf("keys %+v err %v", d.Keys, err)
+	}
+	if err := cs.SetKeyEnabled(d.Keys[0].ID, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := as.SetEnabled(av.ID, false); err != nil {
+	if _, err := cs.AddModel(c.ID, "claude-opus", "up-opus"); err != nil {
 		t.Fatal(err)
 	}
-	if err := as.RotateSecret(av.ID, "sk-ant-5678", true); err != nil {
+	mods, _ := cs.A.Store().ChannelModels().ListByChannel(c.ID)
+	if len(mods) != 1 {
+		t.Fatalf("models %+v", mods)
+	}
+	if err := cs.UpdateModel(mods[0].ID, "claude-opus-2", "up-opus"); err != nil {
 		t.Fatal(err)
 	}
-	ms := Models{A: a}
-	m, err := ms.Create("claude-opus", "up-opus")
-	if err != nil {
+	if err := cs.SetModelEnabled(mods[0].ID, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := ms.Update(m.ID, "claude-opus-2", "up-opus"); err != nil {
+	if err := cs.RemoveModel(mods[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := cs.RemoveKey(d.Keys[0].ID); err != nil {
 		t.Fatal(err)
 	}
 	g := Gateway{A: a}
@@ -251,25 +76,20 @@ func TestAuditLinesCarryActorAndResult(t *testing.T) {
 	if _, err := g.SaveSettings(17891, 60); err != nil {
 		t.Fatal(err)
 	}
-	if err := as.Remove(av.ID); err != nil {
+	if err := cs.Remove(c.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := ms.Remove(m.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := ps.Remove(p.ID); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(logPath)
+	data, err := os.ReadFile(a.LogPath())
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := map[string]bool{
 		"token regenerated": false, "settings saved": false,
-		"provider created": false, "provider updated": false, "provider removed": false,
-		"account created": false, "account updated": false, "account enabled": false,
-		"account secret rotated": false, "account removed": false,
-		"model created": false, "model updated": false, "model removed": false,
+		"channel created": false, "channel updated": false, "channel enabled": false,
+		"channel keys added": false, "channel key enabled": false, "channel key removed": false,
+		"channel model added": false, "channel model updated": false,
+		"channel model enabled": false, "channel model removed": false,
+		"channel removed": false,
 	}
 	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
 		if line == "" {
@@ -292,42 +112,6 @@ func TestAuditLinesCarryActorAndResult(t *testing.T) {
 		if !ok {
 			t.Errorf("audit line %q not found in log", msg)
 		}
-	}
-}
-
-// TestProvidersNilCredsSelfHeals 覆盖合并前卫生项：未注入 Creds 的 Providers
-// （测试助手常见形态）Remove/Test 走 nil 自愈回退 a.Creds()——原先直用 s.Creds
-// 对 nil 接口调用即 panic。级联删行不受影响（密钥 miss 由 Manager.Delete 容忍）。
-func TestProvidersNilCredsSelfHeals(t *testing.T) {
-	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
-	}))
-	t.Cleanup(up.Close)
-	a := tempApp(t)
-	creds := credential.Manager{
-		Primary:       credential.NewFallbackFile(filepath.Join(t.TempDir(), "s.json")),
-		AllowFallback: true,
-	}
-	ps := Providers{A: a, Creds: &creds}
-	p, err := ps.Create("main", "anthropic", up.URL, true, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	as := Accounts{A: a, Creds: &creds, KeychainAvailable: func() bool { return false }}
-	if _, err := as.Create("acc1", p.ID, "sk-ant-1234", 10, true, true); err != nil {
-		t.Fatal(err)
-	}
-	bare := Providers{A: a} // Creds 未注入
-	// Test 走回退：a.Creds() 读不到本地密钥 → 空 key 探 httptest 回环（离线）。
-	if r := bare.Test(p.ID); r.Stage != "auth" {
-		t.Fatalf("bare Test stage: %+v", r)
-	}
-	// Remove 走回退：原先此处 panic（nil 接口方法调用）。
-	if err := bare.Remove(p.ID); err != nil {
-		t.Fatalf("bare Remove: %v", err)
-	}
-	if len(as.List()) != 0 {
-		t.Fatalf("cascade delete failed: %+v", as.List())
 	}
 }
 

@@ -37,9 +37,10 @@ func TestModelsAggregateShowsCrossChannel(t *testing.T) {
 	if !tt.HasText("模型") || !tt.HasText("pub-1") {
 		t.Fatalf("texts %v", tt.Texts())
 	}
-	// 聚合页提示编辑入口在渠道页（决策 7 的文案承载）
-	if !tt.HasText("渠道") {
-		t.Fatalf("channel column missing: %v", tt.Texts())
+	// 聚合页提示编辑入口在渠道页（决策 7 的文案承载）——钉住提示行本体，
+	// 防退化成仅剩列名（「渠道」同时是列名，测不出提示行丢失）。
+	if !tt.HasText("编辑请到渠道页") {
+		t.Fatalf("edit-hint line missing: %v", tt.Texts())
 	}
 }
 

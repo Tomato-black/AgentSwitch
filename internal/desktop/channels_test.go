@@ -192,6 +192,9 @@ func TestChannelsKeyConfirmBoundToChannel(t *testing.T) {
 	if err := tt.Click("导入密钥"); err != nil {
 		t.Fatal(err)
 	}
+	if u.keyForm.msg == "" {
+		t.Fatal("import must leave a result msg on channel A")
+	}
 	u.chKeySel = 0
 	if err := tt.Click("删除密钥"); err != nil {
 		t.Fatal(err)
@@ -199,11 +202,16 @@ func TestChannelsKeyConfirmBoundToChannel(t *testing.T) {
 	if !u.keyConfirmDelete || !tt.HasText("确认删除密钥") {
 		t.Fatalf("arm on channel A: armed=%v", u.keyConfirmDelete)
 	}
-	// 切到 B 行：确认钮消失，B 的密钥数不变。
+	// 切到 B 行：确认钮消失，B 的密钥数不变；A 语境的操作提示一并清除
+	//（Task 8 复审 Finding：提示残留跨渠道误导）。
 	u.chSel = 1
 	tt.Frame()
 	if tt.HasText("确认删除密钥") {
 		t.Fatalf("confirm must not render for another channel: %v", tt.Texts())
+	}
+	if u.keyForm.msg != "" || u.chModelForm.msg != "" || u.chTestMsg != "" {
+		t.Fatalf("switching channels must clear stale msgs: key=%q model=%q test=%q",
+			u.keyForm.msg, u.chModelForm.msg, u.chTestMsg)
 	}
 	d, _ := u.svc.Channels.Get(u.svc.Channels.List()[1].ID)
 	if len(d.Keys) != 0 {

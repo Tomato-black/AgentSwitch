@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
 func tempStore(t *testing.T) Store {
@@ -29,57 +28,9 @@ func TestMigrationIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	s2.Close()
-}
-
-// TestAccountKeyTailPersistsAcrossReopen 覆盖 spec §12.4 的 key_tail 列
-// （migration 002）：Save 落列、Get/List/ListByProvider 回读、轮换（改写 Save）
-// 更新尾 4；重开（migrate 幂等重放 v1+v2+v3 不得报错）后仍可读；schema_migrations
-// 记录 v1、v2、v3 各一次。
-func TestAccountKeyTailPersistsAcrossReopen(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "kt.db")
-	s1, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	p := Provider{ID: NewID(), Name: "p", Protocol: "anthropic", BaseURL: "https://x.example.com", Enabled: true}
-	if err := s1.Providers().Save(p); err != nil {
-		t.Fatal(err)
-	}
-	a := Account{ID: NewID(), ProviderID: p.ID, Name: "a1", SecretKey: "account:k1",
-		SecretBackend: "fallback-file", KeyTail: "1234", Priority: 10, Enabled: true}
-	if err := s1.Accounts().Save(a); err != nil {
-		t.Fatal(err)
-	}
-	assertKeyTail := func(s Store, want string, when string) {
-		t.Helper()
-		if g, err := s.Accounts().Get(a.ID); err != nil || g.KeyTail != want {
-			t.Fatalf("%s Get: key_tail=%q err=%v", when, g.KeyTail, err)
-		}
-		if l, err := s.Accounts().List(); err != nil || len(l) != 1 || l[0].KeyTail != want {
-			t.Fatalf("%s List: %+v err=%v", when, l, err)
-		}
-		if l, err := s.Accounts().ListByProvider(p.ID); err != nil || len(l) != 1 || l[0].KeyTail != want {
-			t.Fatalf("%s ListByProvider: %+v err=%v", when, l, err)
-		}
-	}
-	assertKeyTail(s1, "1234", "after save")
-	// 轮换语义（bridge RotateSecret 的存储侧）：改写 KeyTail 再 Save → 回读更新。
-	a.KeyTail = "5678"
-	if err := s1.Accounts().Save(a); err != nil {
-		t.Fatal(err)
-	}
-	assertKeyTail(s1, "5678", "after rotate")
-	// 幂等重开：已记录版本按序跳过，数据不丢。
-	if err := s1.Close(); err != nil {
-		t.Fatal(err)
-	}
-	s2, err := Open(path)
-	if err != nil {
-		t.Fatalf("reopen: %v", err)
-	}
 	t.Cleanup(func() { s2.Close() })
-	assertKeyTail(s2, "5678", "after reopen")
+	// 渠道化重构后 schema 只剩单一 v1（删库重建，spec 决策 5）；重开时已记录
+	// 版本按序跳过，不得重放报错，schema_migrations 也必须恰有一条 v1。
 	ds, ok := s2.(*dbStore)
 	if !ok {
 		t.Fatalf("Store = %T", s2)
@@ -97,121 +48,22 @@ func TestAccountKeyTailPersistsAcrossReopen(t *testing.T) {
 		}
 		got = append(got, v)
 	}
-	if rows.Err() != nil || len(got) != 3 || got[0] != 1 || got[1] != 2 || got[2] != 3 {
-		t.Fatalf("schema_migrations = %v, want [1 2 3]", got)
+	if rows.Err() != nil || len(got) != 1 || got[0] != 1 {
+		t.Fatalf("schema_migrations = %v, want [1]", got)
 	}
 }
 
-// TestMigration002UpgradesLegacyV1Database 覆盖升级路径：只有 v1 记录的库
-// （migration 001 建的 accounts 无 key_tail 列）再次 Open 必须按版本序补跑
-// 002（ALTER TABLE ADD COLUMN），随后 key_tail 可读写。
-func TestMigration002UpgradesLegacyV1Database(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "legacy.db")
-	raw, err := sql.Open("sqlite", "file:"+path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := raw.Exec(migration001); err != nil {
-		t.Fatalf("seed v1 schema: %v", err)
-	}
-	if _, err := raw.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := raw.Exec(`INSERT INTO schema_migrations(version) VALUES (1)`); err != nil {
-		t.Fatal(err)
-	}
-	raw.Close()
-	s, err := Open(path)
-	if err != nil {
-		t.Fatalf("upgrade open: %v", err)
-	}
-	t.Cleanup(func() { s.Close() })
-	p := Provider{ID: NewID(), Name: "p", Protocol: "anthropic", BaseURL: "https://x.example.com", Enabled: true}
-	if err := s.Providers().Save(p); err != nil {
-		t.Fatal(err)
-	}
-	a := Account{ID: NewID(), ProviderID: p.ID, Name: "a1", SecretKey: "account:k1",
-		SecretBackend: "fallback-file", KeyTail: "9999", Priority: 10, Enabled: true}
-	if err := s.Accounts().Save(a); err != nil {
-		t.Fatalf("save after upgrade: %v", err)
-	}
-	if g, err := s.Accounts().Get(a.ID); err != nil || g.KeyTail != "9999" {
-		t.Fatalf("get after upgrade: key_tail=%q err=%v", g.KeyTail, err)
-	}
-}
-
-func TestProviderCRUD(t *testing.T) {
+func TestSettingsGetSet(t *testing.T) {
 	s := tempStore(t)
-	p := Provider{ID: NewID(), Name: "p1", Protocol: "anthropic", BaseURL: "https://api.example.com", Enabled: true}
-	if err := s.Providers().Save(p); err != nil {
-		t.Fatal(err)
-	}
-	got, err := s.Providers().Get(p.ID)
-	if err != nil || got.BaseURL != p.BaseURL {
-		t.Fatalf("get: %+v %v", got, err)
-	}
-	got.BaseURL = "https://api2.example.com"
-	got.Protocol = "openai"
-	if err := s.Providers().Save(got); err != nil {
-		t.Fatal(err)
-	}
-	if g2, _ := s.Providers().Get(p.ID); g2.BaseURL != "https://api2.example.com" {
-		t.Fatal("update not persisted")
-	}
-	if g2, _ := s.Providers().Get(p.ID); g2.Protocol != "openai" {
-		t.Fatalf("protocol update not persisted: %q", g2.Protocol)
-	}
-	if err := s.Providers().Delete(p.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Providers().Get(p.ID); err != ErrNotFound {
-		t.Fatalf("want ErrNotFound, got %v", err)
-	}
-}
-
-func TestAccountCascadeAndSettings(t *testing.T) {
-	s := tempStore(t)
-	p := Provider{ID: NewID(), Name: "p", Protocol: "anthropic", BaseURL: "https://x.example.com", Enabled: true}
-	s.Providers().Save(p)
-	a := Account{ID: NewID(), ProviderID: p.ID, Name: "a1", SecretKey: "account:k1", SecretBackend: "os-keychain", Priority: 10, Enabled: true, CreatedAt: time.Now()}
-	if err := s.Accounts().Save(a); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Accounts().SetEnabled(a.ID, false); err != nil {
-		t.Fatal(err)
-	}
-	if g, _ := s.Accounts().Get(a.ID); g.Enabled {
-		t.Fatal("SetEnabled failed")
-	}
-	if err := s.Providers().Delete(p.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Accounts().Get(a.ID); err != ErrNotFound {
-		t.Fatalf("cascade delete missing: %v", err)
-	}
 	if err := s.Settings().Set("k", "v"); err != nil {
 		t.Fatal(err)
 	}
 	if v, err := s.Settings().Get("k"); err != nil || v != "v" {
 		t.Fatalf("settings: %q %v", v, err)
 	}
-}
-
-func TestModelUniquePublic(t *testing.T) {
-	s := tempStore(t)
-	m := ModelMapping{ID: NewID(), PublicModel: "claude-opus", UpstreamModel: "up-opus", Enabled: true}
-	if err := s.Models().Save(m); err != nil {
-		t.Fatal(err)
-	}
-	m2 := ModelMapping{ID: NewID(), PublicModel: "claude-opus", UpstreamModel: "other", Enabled: true}
-	if err := s.Models().Save(m2); err == nil {
-		t.Fatal("duplicate public_model must fail")
-	}
-	if g, err := s.Models().GetByPublic("claude-opus"); err != nil || g.UpstreamModel != "up-opus" {
-		t.Fatalf("getByPublic: %+v %v", g, err)
-	}
-	if _, err := s.Models().GetByPublic("nope"); err != ErrNotFound {
-		t.Fatalf("want ErrNotFound, got %v", err)
+	// 缺失键返回空串而非错误（config.Load 视为默认值）。
+	if v, err := s.Settings().Get("missing"); err != nil || v != "" {
+		t.Fatalf("missing key: %q %v", v, err)
 	}
 }
 
@@ -259,7 +111,7 @@ func TestForeignKeysOnEveryConnection(t *testing.T) {
 	}
 }
 
-// ---- 渠道化三表（迁移 003，spec 2026-10-17 §3.1）----
+// ---- 渠道化三表（migration v1，spec 2026-10-17 §3.1）----
 
 func channelFixture(t *testing.T, s Store) (Channel, Channel) {
 	t.Helper()
@@ -357,8 +209,14 @@ func TestChannelModelUniquePerChannelAndQueries(t *testing.T) {
 	if len(byPub) != 2 {
 		t.Fatalf("ListByPublic = %d", len(byPub))
 	}
-	first := byPub[0]
-	if err := s.ChannelModels().SetEnabled(first.ID, false); err != nil {
+	// enabled 过滤必须可观察（Task 1 审查加固）：原先两行共用公开名
+	// "claude-x"，DISTINCT 去重把禁用掩盖——补一枚不同公开名的行并禁用，
+	// PublicModels 只能剩 "claude-x"。
+	if err := s.ChannelModels().Save(m(z.ID, "claude-y", "up-y")); err != nil {
+		t.Fatal(err)
+	}
+	y, _ := s.ChannelModels().ListByPublic("claude-y")
+	if err := s.ChannelModels().SetEnabled(y[0].ID, false); err != nil {
 		t.Fatal(err)
 	}
 	pubs, _ := s.ChannelModels().PublicModels()
