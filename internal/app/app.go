@@ -322,8 +322,8 @@ func (a *App) StartGateway() error {
 			return err == nil && s.PassthroughUnregistered
 		},
 		Cooldowns: a.cooldowns,
-		Cred:       &a.creds,
-		Router:     router.PriorityRouter{},
+		Cred:      &a.creds,
+		Router:    router.PriorityRouter{},
 		AdapterFor: func(protocol string) (provider.Adapter, error) {
 			ad, ok := a.adapters[protocol]
 			if !ok {
