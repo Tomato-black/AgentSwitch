@@ -63,19 +63,22 @@ type uiState struct {
 	modelForm          modelFormData
 	modelConfirmDelete bool // 删除二次确认（裁定 3，两段式）
 	// 渠道页（Task 8）：
-	chList           ui.ListState // 渠道表状态；Selected 经 chSel 指向当前行
-	chSel            int          // 渠道表当前行（-1=无）；详情三段面板锚定行选中
-	chForm           chFormData   // 连接配置表单；editID 非空 = 编辑该渠道
-	chConfirmDelete  bool         // 渠道删除二次确认（两段式）
-	chTestMsg        string       // 渠道/密钥连通测试结果展示
-	keyForm          keyFormData  // 密钥批量导入表单
-	keyConfirmDelete bool         // 密钥删除二次确认（两段式）
-	chModelForm      channelModelFormData
-	prevType         string // 类型 Select 变更检测（预填 BaseURL）
-	chKeyList        ui.ListState
-	chModelList      ui.ListState
-	chKeySel         int
-	chModelSel       int
+	chList            ui.ListState // 渠道表状态；Selected 经 chSel 指向当前行
+	chSel             int          // 渠道表当前行（-1=无）；详情三段面板锚定行选中
+	chForm            chFormData   // 连接配置表单；editID 非空 = 编辑该渠道
+	chConfirmDelete   bool         // 渠道删除二次确认（两段式）
+	chTestMsg         string       // 渠道/密钥连通测试结果展示
+	keyForm           keyFormData  // 密钥批量导入表单
+	keyConfirmDelete  bool         // 密钥删除二次确认（两段式）
+	chModelForm       channelModelFormData
+	chModelConfirmDel bool   // 模型删除二次确认（两段式，审查 Finding 1；名字避开模型页 modelConfirmDelete）
+	prevType          string // 类型 Select 变更检测（预填 BaseURL）
+	confirmOwnerID    string // 确认位武装时的渠道 id——确认钮仅对本渠道详情渲染（审查 Finding 2）
+	prevChannelID     string // 详情渠道变更检测：变更即清子选中与确认位（审查 Finding 2）
+	chKeyList         ui.ListState
+	chModelList       ui.ListState
+	chKeySel          int
+	chModelSel        int
 }
 
 // provFormData 是供应商页的新建/编辑表单。
@@ -95,7 +98,7 @@ type chFormData struct {
 	msg, editID                          string
 }
 
-// keyFormData 是密钥批量导入表单；keysText 每行一枚（单行输入亦容忍逗号分隔）。
+// keyFormData 是密钥批量导入表单；keysText 每行一枚（TextArea 多行输入）。
 type keyFormData struct {
 	name, keysText string
 	allowFallback  bool
