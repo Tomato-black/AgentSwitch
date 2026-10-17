@@ -31,7 +31,7 @@ type uiState struct {
 	recent           []telemetry.RequestRecord
 	token            string
 	logPath          string       // 日志文件路径（a.LogPath()；概览恒显的"日志:"提示）
-	page             string       // 当前页；"overview" 默认（边栏 Sidebar 选中 id）
+	page             string       // 当前页；"overview" 默认（自绘侧栏选中 id，经 navSel 归一）
 	showToken        bool         // 令牌明文显示开关
 	portInput        string       // 设置面板端口输入（打开时回显 Status.Port）
 	timeoutInput     string       // 设置面板超时输入（打开时回显 Status.TimeoutSeconds）
@@ -105,43 +105,102 @@ func newUIState(svc Services, a *app.App) *uiState {
 	return u
 }
 
-// view 是窗口根：按系统外观选品牌主题，左边栏（导航 + 页脚全局状态位）、
-// 右内容列（首关横条 + 当前页）。SetTheme 必须在任何子件构建前调用
-// （api_gen.go：SetTheme makes the frame use t）。u.page 直接充当 Sidebar
-// 的选中 id（三个 id 与导航项一致），点选即切页，无需 Changed 处理。
+// navItems 是侧栏导航的三项：id 即 u.page 的分发 id（pageView 消费），
+// label 供渲染与测试点击。
+var navItems = []struct {
+	id, label string
+	icon      *ui.SVG
+}{
+	{"overview", "概览", iconOverview},
+	{"channels", "渠道", iconChannels},
+	{"models", "模型", iconModels},
+}
+
+// view 是窗口根：按系统外观选品牌主题，左列自绘侧栏（品牌行 + 导航 +
+// 页脚全局状态位）、右内容列（首关横条 + 当前页）。SetTheme 必须在任何
+// 子件构建前调用（api_gen.go：SetTheme makes the frame use t）。导航点击
+// 直接 u.page = id（三个 id 与 pageView 分发一致），点选即切页，无需
+// Changed 处理；选中项经 navSel 归一（渠道详情/新建页点亮「渠道」项）。
+// 侧栏弃用 ui.Sidebar：其选中项硬编码 Accent 底（sidebar.go:188），与
+// cc-switch 的中性灰选中冲突（spec §3.4），自绘列底色用 sidebarColor。
 func (u *uiState) view(c *ui.Context) {
 	c.SetTheme(buildTheme(c.Theme().Dark, c.Preferences().TextScale))
 	t := c.Theme()
 	ui.Row(c).Gap(0).Grow(1).Children(func() {
-		// 左列：边栏 + 分隔线 + 页脚状态位（状态是主角：任何页可见）
-		ui.Column(c).Gap(0).Children(func() {
-			ui.Sidebar(c, &u.page, func() {
-				ui.SidebarItem(c, "overview", iconOverview, "概览")
-				ui.SidebarItem(c, "channels", iconChannels, "渠道")
-				ui.SidebarItem(c, "models", iconModels, "模型")
-			}).Width(200).Grow(1)
-			ui.Divider(c)
+		// 左列：自绘侧栏（spec §5.1）——品牌行、导航、底部页脚状态位
+		// （状态是主角：任何页可见）；spacer 把页脚钉在栏底（原
+		// Sidebar.Grow(1) 的布局效果）。
+		ui.Column(c).Gap(0).Width(200).Grow(1).Background(sidebarColor(t)).Children(func() {
+			ui.Row(c).AlignItems(ui.Center).Padding(t.Space(3), t.Space(2.5)).
+				Children(func() { ui.Text(c, "AgentSwitch").Bold().FontSize(14) })
+			ui.Column(c).Gap(2).Padding(t.Space(1), t.Space(2)).Children(func() {
+				for _, it := range navItems {
+					u.navItem(c, t, it.id, it.label, it.icon)
+				}
+			})
+			ui.Box(c).Grow(1)
 			u.sidebarFooter(c, t)
 		})
 		// 右列：首关横条（全页可见，I4）+ 当前页
 		ui.Column(c).Gap(12).Padding(16).Grow(1).Children(func() {
 			if u.closeNotice && !u.closeConfirmed {
-				ui.Row(c).Gap(8).Padding(8).Border(1, t.Border).Children(func() {
-					ui.Text(c, "窗口关闭后应用将驻留托盘，网关继续运行。").Grow(1)
-					if ui.PrimaryButton(c, "继续关闭窗口").Clicked() {
-						u.closeConfirmed = true
-						if w := mygo.FocusedWindow(); w != nil {
-							w.Close()
+				card(c, t, func() {
+					ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, "窗口关闭后应用将驻留托盘，网关继续运行。").Grow(1)
+						if pillButton(c, t, "继续关闭窗口").Clicked() {
+							u.closeConfirmed = true
+							if w := mygo.FocusedWindow(); w != nil {
+								w.Close()
+							}
 						}
-					}
-					if ui.Button(c, "取消").Clicked() {
-						u.closeNotice = false
-					}
+						if ui.Button(c, "取消").Clicked() {
+							u.closeNotice = false
+						}
+					})
 				})
 			}
 			u.pageView(c)
 		})
 	})
+}
+
+// navSel 把 u.page 归一成侧栏导航的选中项：渠道详情/新建两页（Task 6/7
+// 各自追加进 pageView 分发）都点亮「渠道」项，其余页 id 原样（与三个
+// 导航 id 一一对应）。
+func (u *uiState) navSel() string {
+	switch u.page {
+	case "channel-detail", "channel-new":
+		return "channels"
+	default:
+		return u.page
+	}
+}
+
+// navItem 是一枚自绘导航项：ButtonBase 底（可聚焦，指针/Enter/Space 报
+// Clicked），高 30、Radius 8；选中底 = 应用级选中灰 selectedColor（与
+// 品牌橙无关，且选中项 hover 不换底——灰底不漂移），未选中 hover 用
+// SurfaceHover；激活项图标着 Accent，其余继承正文色（spec §3.4/§5.1）。
+// 点击直接落 u.page。
+func (u *uiState) navItem(c *ui.Context, t *ui.Theme, id, label string, icon *ui.SVG) {
+	b := ui.ButtonBase(c)
+	on := u.navSel() == id
+	bg := ui.Color{}
+	if on {
+		bg = selectedColor(t)
+	} else if b.Hovered() {
+		bg = t.SurfaceHover
+	}
+	b.Height(30).Radius(8).Background(bg).Gap(t.Space(2)).
+		Padding(0, t.Space(2)).Children(func() {
+		ic := ui.Icon(c, icon).FontSize(16)
+		if on {
+			ic.TextColor(t.Accent)
+		}
+		ui.Text(c, label).Grow(1).SingleLine()
+	})
+	if b.Clicked() {
+		u.page = id
+	}
 }
 
 // pageView 按 u.page 分发页面；未识别的 page 落到概览。

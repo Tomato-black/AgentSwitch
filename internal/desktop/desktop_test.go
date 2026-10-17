@@ -107,6 +107,35 @@ func TestNavigationSwitchesPage(t *testing.T) {
 	}
 }
 
+func TestNavSelMapping(t *testing.T) {
+	u, _ := testUI(t)
+	for page, want := range map[string]string{
+		"overview": "overview", "channels": "channels", "models": "models",
+		"channel-detail": "channels", "channel-new": "channels",
+	} {
+		u.page = page
+		if got := u.navSel(); got != want {
+			t.Fatalf("navSel(%q)=%q want %q", page, got, want)
+		}
+	}
+}
+func TestSidebarSwitchesPages(t *testing.T) {
+	u, _ := testUI(t)
+	tt := ui.NewTester(u.view, 1080, 720)
+	if err := tt.Click("渠道"); err != nil {
+		t.Fatal(err)
+	}
+	if u.page != "channels" {
+		t.Fatalf("page %q", u.page)
+	}
+	if err := tt.Click("概览"); err != nil {
+		t.Fatal(err)
+	}
+	if u.page != "overview" {
+		t.Fatalf("page %q", u.page)
+	}
+}
+
 // TestNeedsReopen 覆盖托盘"打开主窗口"的重建判据：无窗口 → 重建；存活
 // （未销毁）窗口 → 复用 Restore/Focus。destroyed=true 的一例依赖真实关闭
 // 的窗口（destroyed 字段未导出），无头测试无法伪造，由 mygo 的
