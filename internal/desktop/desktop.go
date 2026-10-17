@@ -31,7 +31,7 @@ type uiState struct {
 	recent         []telemetry.RequestRecord
 	token          string
 	logPath        string       // 日志文件路径（a.LogPath()；概览恒显的"日志:"提示）
-	page           string       // 当前页；"overview" 默认（自绘侧栏选中 id，经 navSel 归一）
+	page           string       // 当前页；"logical" 默认（自绘侧栏选中 id，经 normalizedPage 归一）
 	showToken      bool         // 令牌明文显示开关
 	portInput      string       // 设置卡端口输入（为空时回显 Status.Port）
 	timeoutInput   string       // 设置卡超时输入（为空时回显 Status.TimeoutSeconds）
@@ -94,7 +94,7 @@ func newUIState(svc Services, a *app.App) *uiState {
 	st, _ := a.CurrentSettings()
 	u := &uiState{svc: svc, status: si, recent: a.Recent(), token: st.GatewayToken,
 		logPath:  a.LogPath(),
-		page:     "overview",
+		page:     "logical",
 		chForm:   chFormData{typeID: "anthropic-official", baseURL: "https://api.anthropic.com", enabled: true, priorityInput: "10"},
 		keyForm:  keyFormData{},
 		modelSel: -1,
@@ -109,32 +109,23 @@ func newUIState(svc Services, a *app.App) *uiState {
 	return u
 }
 
-// navItems 是侧栏导航的三项：id 即 u.page 的分发 id（pageView 消费），
-// label 供渲染与测试点击。
-var navItems = []struct {
-	id, label string
-	icon      *ui.SVG
-}{
-	{"overview", "概览", iconOverview},
-	{"channels", "渠道", iconChannels},
-	{"models", "模型", iconModels},
-}
+// navItems、navItem、gatewayStatusBar、pageView 与各页占位视图在 shell.go
+// （cc-switch 式侧栏壳 + 底条网关状态）。
 
 // view 是窗口根：按系统外观选品牌主题，左列自绘侧栏（品牌行 + 导航 +
-// 页脚全局状态位）、右内容列（首关横条 + 当前页）。SetTheme 必须在任何
+// 底条网关状态）、右内容列（首关横条 + 当前页）。SetTheme 必须在任何
 // 子件构建前调用（api_gen.go：SetTheme makes the frame use t）。导航点击
-// 直接 u.page = id（三个 id 与 pageView 分发一致），点选即切页，无需
-// Changed 处理；选中项经 navSel 归一（渠道详情/新建页点亮「渠道」项）。
+// 直接 u.page = id（四个 id 与 pageView 分发一致），点选即切页，无需
+// Changed 处理。
 // 侧栏弃用 ui.Sidebar：其选中项硬编码 Accent 底（sidebar.go:188），与
 // cc-switch 的中性灰选中冲突（spec §3.4），自绘列底色用 sidebarColor。
 func (u *uiState) view(c *ui.Context) {
 	c.SetTheme(buildTheme(c.Theme().Dark, c.Preferences().TextScale))
 	t := c.Theme()
 	ui.Row(c).Gap(0).Grow(1).Children(func() {
-		// 左列：自绘侧栏（spec §5.1）——品牌行、导航、底部页脚状态位
-		// （状态是主角：任何页可见）；spacer 把页脚钉在栏底（原
-		// Sidebar.Grow(1) 的布局效果）。
-		ui.Column(c).Gap(0).Width(200).Grow(1).Background(sidebarColor(t)).Children(func() {
+		// 左列：自绘侧栏（spec §6.1）——品牌行、导航、底条网关状态
+		// （状态是主角：任何页可见）；spacer 把底条钉在栏底。
+		ui.Column(c).Gap(0).Width(180).Grow(1).Background(sidebarColor(t)).Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Padding(t.Space(3), t.Space(2.5)).
 				Children(func() { ui.Text(c, "AgentSwitch").Bold().FontSize(14) })
 			ui.Column(c).Gap(2).Padding(t.Space(1), t.Space(2)).Children(func() {
@@ -143,7 +134,7 @@ func (u *uiState) view(c *ui.Context) {
 				}
 			})
 			ui.Box(c).Grow(1)
-			u.sidebarFooter(c, t)
+			gatewayStatusBar(c, u)
 		})
 		// 右列：首关横条（全页可见，I4）+ 当前页
 		ui.Column(c).Gap(12).Padding(16).Grow(1).Children(func() {
@@ -164,78 +155,6 @@ func (u *uiState) view(c *ui.Context) {
 				})
 			}
 			u.pageView(c)
-		})
-	})
-}
-
-// navSel 把 u.page 归一成侧栏导航的选中项：渠道详情/新建两页（Task 6/7
-// 各自追加进 pageView 分发）都点亮「渠道」项，其余页 id 原样（与三个
-// 导航 id 一一对应）。
-func (u *uiState) navSel() string {
-	switch u.page {
-	case "channel-detail", "channel-new":
-		return "channels"
-	default:
-		return u.page
-	}
-}
-
-// navItem 是一枚自绘导航项：ButtonBase 底（可聚焦，指针/Enter/Space 报
-// Clicked），高 30、Radius 8；选中底 = 应用级选中灰 selectedColor（与
-// 品牌橙无关，且选中项 hover 不换底——灰底不漂移），未选中 hover 用
-// SurfaceHover；激活项图标着 Accent，其余继承正文色（spec §3.4/§5.1）。
-// 点击直接落 u.page。
-func (u *uiState) navItem(c *ui.Context, t *ui.Theme, id, label string, icon *ui.SVG) {
-	b := ui.ButtonBase(c)
-	on := u.navSel() == id
-	bg := ui.Color{}
-	if on {
-		bg = selectedColor(t)
-	} else if b.Hovered() {
-		bg = t.SurfaceHover
-	}
-	b.Height(30).Radius(8).Background(bg).Gap(t.Space(2)).
-		Padding(0, t.Space(2)).Children(func() {
-		ic := ui.Icon(c, icon).FontSize(16)
-		if on {
-			ic.TextColor(t.Accent)
-		}
-		ui.Text(c, label).Grow(1).SingleLine()
-	})
-	if b.Clicked() {
-		u.page = id
-	}
-}
-
-// pageView 按 u.page 分发页面；未识别的 page 落到概览。
-func (u *uiState) pageView(c *ui.Context) {
-	switch u.page {
-	case "channels":
-		u.channelsView(c)
-	case "channel-new":
-		u.channelNewView(c)
-	case "channel-detail":
-		u.channelDetailView(c)
-	case "models":
-		u.modelsView(c)
-	default:
-		u.overviewView(c)
-	}
-}
-
-// sidebarFooter 是边栏页脚的全局状态位：LED + 状态词 + 等宽地址。
-// 地址空（未启动过）显示「未监听」。
-func (u *uiState) sidebarFooter(c *ui.Context, t *ui.Theme) {
-	state := string(u.status.State)
-	ui.Row(c).Gap(8).Padding(12).Children(func() {
-		ledDot(c, t, state)
-		ui.Column(c).Gap(2).Children(func() {
-			ui.Text(c, stateWord(state))
-			addr := u.status.Addr
-			if addr == "" {
-				addr = "未监听"
-			}
-			ui.Text(c, addr).Font(monoFont).TextColor(t.TextMuted)
 		})
 	})
 }

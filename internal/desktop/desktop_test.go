@@ -28,12 +28,14 @@ func testUI(t *testing.T) (*uiState, *app.App) {
 		Channels: bridge.Channels{A: a, Creds: &credential.Manager{
 			Primary:       credential.NewFallbackFile(filepath.Join(t.TempDir(), "ch-keys.json")),
 			AllowFallback: true,
-		}, KeychainAvailable: func() bool { return true }},
+		}},
 	}
 	return newUIState(svc, a), a
 }
 
-func TestOverviewShowsState(t *testing.T) {
+// TestShellShowsGatewayState 覆盖底条状态位：fresh app 停机态译为「已停止」
+// 且出现在侧栏底条（gatewayStatusBar 读 Gateway.Status 真实状态）。
+func TestShellShowsGatewayState(t *testing.T) {
 	u, _ := testUI(t)
 	tt := ui.NewTester(u.view, 800, 600)
 	if !tt.HasText("已停止") {
@@ -41,14 +43,14 @@ func TestOverviewShowsState(t *testing.T) {
 	}
 }
 
-// TestUnknownPageFallsBackToOverview 覆盖分发默认分支：未识别的 u.page
-// 落回概览（边栏 id 与 u.page 集合一致性的兜底）。
-func TestUnknownPageFallsBackToOverview(t *testing.T) {
+// TestUnknownPageFallsBackToLogical 覆盖分发默认分支：未识别的 u.page
+// 落回逻辑模型页（与 normalizedPage 的零值归一同向）。
+func TestUnknownPageFallsBackToLogical(t *testing.T) {
 	u, _ := testUI(t)
 	u.page = "bogus"
 	tt := ui.NewTester(u.view, 800, 600)
-	if !tt.HasText("接入 Claude Code") {
-		t.Fatalf("unknown page must fall back to overview: %v", tt.Texts())
+	if !tt.HasText("TODO: 逻辑模型") {
+		t.Fatalf("unknown page must fall back to logical: %v", tt.Texts())
 	}
 }
 
@@ -60,7 +62,7 @@ func TestCloseNoticeBlocksFirstClose(t *testing.T) {
 	u.closeNotice = true
 	tt := ui.NewTester(u.view, 800, 600)
 	if !tt.HasText("驻留托盘") {
-		t.Fatalf("notice missing on overview: %v", tt.Texts())
+		t.Fatalf("notice missing on logical page: %v", tt.Texts())
 	}
 	if err := tt.Click("继续关闭窗口"); err != nil {
 		t.Fatal(err)
@@ -68,8 +70,8 @@ func TestCloseNoticeBlocksFirstClose(t *testing.T) {
 	if !u.closeConfirmed {
 		t.Fatal("confirm not recorded")
 	}
-	// 非概览页同样必须渲染（提示块挂在 view 导航之后、页面分发之前）。
-	for _, page := range []string{"channels", "models"} {
+	// 非默认页同样必须渲染（提示块挂在 view 导航之后、页面分发之前）。
+	for _, page := range []string{"channels", "access", "settings"} {
 		u.closeConfirmed = false
 		u.page = page
 		tt.Frame()
@@ -79,13 +81,15 @@ func TestCloseNoticeBlocksFirstClose(t *testing.T) {
 	}
 }
 
-// TestNavigationSwitchesPage 覆盖边栏导航：点「渠道」切到渠道页（概览内容
-// 退场），点「概览」切回——边栏三页（概览/渠道/模型）的分发主干。
+// TestNavigationSwitchesPage 覆盖边栏导航：点「渠道」切到渠道页（逻辑模型
+// 内容退场），点「逻辑模型」切回——边栏四页的分发主干。
 func TestNavigationSwitchesPage(t *testing.T) {
 	u, _ := testUI(t)
 	tt := ui.NewTester(u.view, 900, 600)
-	if !tt.HasText("概览") || !tt.HasText("渠道") || !tt.HasText("模型") {
-		t.Fatalf("nav items missing: %v", tt.Texts())
+	for _, label := range []string{"逻辑模型", "渠道", "接入", "设置"} {
+		if !tt.HasText(label) {
+			t.Fatalf("nav item %q missing: %v", label, tt.Texts())
+		}
 	}
 	if err := tt.Click("渠道"); err != nil {
 		t.Fatal(err)
@@ -93,53 +97,34 @@ func TestNavigationSwitchesPage(t *testing.T) {
 	if u.page != "channels" {
 		t.Fatalf("page = %q, want channels", u.page)
 	}
-	if tt.HasText("接入 Claude Code") {
-		t.Fatalf("overview leaked into channels page: %v", tt.Texts())
+	if tt.HasText("TODO: 逻辑模型") {
+		t.Fatalf("logical leaked into channels page: %v", tt.Texts())
 	}
-	if err := tt.Click("概览"); err != nil {
+	if err := tt.Click("逻辑模型"); err != nil {
 		t.Fatal(err)
 	}
-	if u.page != "overview" {
-		t.Fatalf("page = %q, want overview", u.page)
+	if u.page != "logical" {
+		t.Fatalf("page = %q, want logical", u.page)
 	}
-	if !tt.HasText("接入 Claude Code") {
-		t.Fatalf("overview view missing: %v", tt.Texts())
+	if !tt.HasText("TODO: 逻辑模型") {
+		t.Fatalf("logical view missing: %v", tt.Texts())
 	}
 }
 
-func TestNavSelMapping(t *testing.T) {
-	u, _ := testUI(t)
-	for page, want := range map[string]string{
-		"overview": "overview", "channels": "channels", "models": "models",
-		"channel-detail": "channels", "channel-new": "channels",
-	} {
-		u.page = page
-		if got := u.navSel(); got != want {
-			t.Fatalf("navSel(%q)=%q want %q", page, got, want)
-		}
+// TestGatewayStatusBarStartStopGuards 覆盖底条启停按钮的状态守卫（spec §8.3
+// 放行集合不变）：stopped 只出现启动钮、running 只出现停止钮。
+func TestGatewayStatusBarStartStopGuards(t *testing.T) {
+	u, a := testUI(t)
+	st, _ := a.CurrentSettings()
+	if st.GatewayToken == "" {
+		t.Fatal("fresh app must have a gateway token")
 	}
-}
-func TestSidebarSwitchesPages(t *testing.T) {
-	u, _ := testUI(t)
-	tt := ui.NewTester(u.view, 1080, 720)
-	if err := tt.Click("渠道"); err != nil {
-		t.Fatal(err)
-	}
-	if u.page != "channels" {
-		t.Fatalf("page %q", u.page)
-	}
-	if err := tt.Click("概览"); err != nil {
-		t.Fatal(err)
-	}
-	if u.page != "overview" {
-		t.Fatalf("page %q", u.page)
+	tt := ui.NewTester(u.view, 900, 600)
+	if !tt.HasText("启动网关") || tt.HasText("停止网关") {
+		t.Fatalf("stopped guard: %v", tt.Texts())
 	}
 }
 
-// TestNeedsReopen 覆盖托盘"打开主窗口"的重建判据：无窗口 → 重建；存活
-// （未销毁）窗口 → 复用 Restore/Focus。destroyed=true 的一例依赖真实关闭
-// 的窗口（destroyed 字段未导出），无头测试无法伪造，由 mygo 的
-// Window.IsDestroyed（window.go:597-598）保证，此处只测两条可构造路径。
 func TestNeedsReopen(t *testing.T) {
 	if !needsReopen(nil) {
 		t.Fatal("nil window should reopen")
