@@ -6,28 +6,47 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-// TestBuildThemeTokens 覆盖 spec §3.2：双外观主色锚点、Success==Accent
-// （一个颜色想法）、语义色互异、度量常量。
+// TestBuildThemeTokens 覆盖 cc-switch 重设计 spec §3.2/§3.3：橙主操作锚点
+// （双外观同值）、Success 与 Accent 分离（绿=链路健康、橙=品牌操作，不再
+// 旧档 §2.3 的「一个颜色想法」）、Focus 浅色随 Accent/深色降饱和一档、
+// Radius 8（卡片 12 由 Box 显式盖）、应用级选中灰与侧栏灰、软色板双边
+// 取值锚点与软底/前景字互异。
 func TestBuildThemeTokens(t *testing.T) {
 	light, dark := buildTheme(false, 1), buildTheme(true, 1)
-	if light.Accent != ui.Hex("#0E7A5F") {
-		t.Fatalf("light accent %v", light.Accent)
+	if light.Accent != ui.Hex("#F97316") || dark.Accent != ui.Hex("#F97316") {
+		t.Fatal("accent")
 	}
-	if dark.Accent != ui.Hex("#45D0B4") {
-		t.Fatalf("dark accent %v", dark.Accent)
+	if light.Success != ui.Hex("#16A34A") || dark.Success != ui.Hex("#22C55E") {
+		t.Fatal("success")
 	}
-	if light.Success != light.Accent || dark.Success != dark.Accent {
-		t.Fatal("Success must equal Accent (spec §3.2: one color idea)")
+	if light.Success == light.Accent {
+		t.Fatal("绿橙必须分离（spec §1）")
 	}
-	if light.Focus != light.Accent || dark.Focus != dark.Accent {
-		t.Fatal("Focus must equal Accent")
+	if light.Focus != light.Accent {
+		t.Fatal("light focus")
 	}
-	for _, th := range []*ui.Theme{light, dark} {
-		if th.Danger == th.Accent || th.Warning == th.Accent || th.TextMuted == th.Accent {
-			t.Fatal("Danger/Warning/TextMuted must differ from Accent")
-		}
-		if th.Radius != 6 || th.Spacing != 4 {
-			t.Fatalf("metrics %v %v", th.Radius, th.Spacing)
+	if dark.Focus != ui.Hex("#D8783A") {
+		t.Fatal("dark focus")
+	}
+	if light.Radius != 8 {
+		t.Fatal("radius 8（卡片 12 由 Box 显式盖）")
+	}
+	if selectedColor(light) != ui.Hex("#E4E4EA") || selectedColor(dark) != ui.Hex("#3A3A40") {
+		t.Fatal("selected")
+	}
+	if sidebarColor(light) != ui.Hex("#F5F5F7") || sidebarColor(dark) != ui.Hex("#232327") {
+		t.Fatal("sidebar")
+	}
+	sl, sd := softs(light), softs(dark)
+	if sl.Act != ui.Hex("#FFF1E6") || sl.ActText != ui.Hex("#C2410C") {
+		t.Fatal("soft act light")
+	}
+	if sd.Link != ui.Hex("#5AA9F8") {
+		t.Fatal("soft link dark")
+	}
+	for _, s := range []softPalette{sl, sd} {
+		if s.Act == s.ActText || s.Ok == s.OkText || s.Warn == s.WarnText || s.Danger == s.DangerText {
+			t.Fatal("soft fg/bg 互异")
 		}
 	}
 	if light.Background == dark.Background {
@@ -47,7 +66,8 @@ func TestBuildThemeTextScale(t *testing.T) {
 }
 
 // TestStateWordAndColor 覆盖状态视觉词汇（Review Focus 4）：四态映射 +
-// 未知状态原样回显、落弱灰，四态颜色互异。
+// 未知状态原样回显、落弱灰，四态颜色互异；running 从 Accent 改挂
+// Success——状态色与品牌橙分离（新 spec §1）。
 func TestStateWordAndColor(t *testing.T) {
 	th := buildTheme(true, 1)
 	for state, want := range map[string]string{
@@ -63,8 +83,11 @@ func TestStateWordAndColor(t *testing.T) {
 	if stateColor(th, "hibernating") != th.TextMuted {
 		t.Fatal("unknown state must fall back to TextMuted")
 	}
+	if got := stateColor(th, "running"); got != th.Success || got == th.Accent {
+		t.Fatal("running 必须= Success 且不再= Accent（spec §1 绿橙分离）")
+	}
 	cols := map[string]ui.Color{
-		"running": th.Accent, "degraded": th.Warning, "failed": th.Danger, "stopped": th.TextMuted,
+		"running": th.Success, "degraded": th.Warning, "failed": th.Danger, "stopped": th.TextMuted,
 	}
 	seen := map[ui.Color]string{}
 	for state, col := range cols {
@@ -75,6 +98,22 @@ func TestStateWordAndColor(t *testing.T) {
 			t.Fatalf("color collision %s vs %s", prev, state)
 		}
 		seen[col] = state
+	}
+}
+
+// TestSelectionStillVisible 守住文本选区暖色：框架 Theme.Selection 只管
+// 文本选区，必须保持 #FFDDBB/#4A3423 可见度，与应用级选中灰
+// （selectedColor，导航/列表选中底）是两个东西——选区变灰会淹没光标。
+func TestSelectionStillVisible(t *testing.T) {
+	light, dark := buildTheme(false, 1), buildTheme(true, 1)
+	if light.Selection != ui.Hex("#FFDDBB") {
+		t.Fatalf("light selection %v, want #FFDDBB", light.Selection)
+	}
+	if dark.Selection != ui.Hex("#4A3423") {
+		t.Fatalf("dark selection %v, want #4A3423", dark.Selection)
+	}
+	if light.Selection == selectedColor(light) || dark.Selection == selectedColor(dark) {
+		t.Fatal("文本选区暖色不得与应用级选中灰同值")
 	}
 }
 
