@@ -213,40 +213,144 @@ func (r *channelModelRepo) Suggestions(channelID string) ([]string, error) {
 	return out, rows.Err()
 }
 
-// ---- logical_models / logical_model_targets 骨架（Task 3 补全行为）----
+// ---- logical_models / logical_model_targets ----
 
 type logicalModelRepo struct{ db *sql.DB }
 
+const logicalModelCols = `id,name,description,enabled,created_at,updated_at`
+
+func scanLogicalModel(sc func(...any) error) (LogicalModel, error) {
+	var m LogicalModel
+	var en int
+	if err := sc(&m.ID, &m.Name, &m.Description, &en, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		return LogicalModel{}, err
+	}
+	m.Enabled = en == 1
+	return m, nil
+}
+
 func (r *logicalModelRepo) List() ([]LogicalModel, error) {
-	return nil, nil
+	rows, err := r.db.Query(`SELECT ` + logicalModelCols + ` FROM logical_models ORDER BY name ASC, id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []LogicalModel
+	for rows.Next() {
+		m, err := scanLogicalModel(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
 }
 
 func (r *logicalModelRepo) Get(id string) (LogicalModel, error) {
-	return LogicalModel{}, ErrNotFound
+	m, err := scanLogicalModel(r.db.QueryRow(`SELECT `+logicalModelCols+` FROM logical_models WHERE id=?`, id).Scan)
+	if err != nil {
+		return LogicalModel{}, mapNotFound(err)
+	}
+	return m, nil
 }
 
 func (r *logicalModelRepo) GetByName(name string) (LogicalModel, error) {
-	return LogicalModel{}, ErrNotFound
+	m, err := scanLogicalModel(r.db.QueryRow(`SELECT `+logicalModelCols+` FROM logical_models WHERE name=?`, name).Scan)
+	if err != nil {
+		return LogicalModel{}, mapNotFound(err)
+	}
+	return m, nil
 }
 
 func (r *logicalModelRepo) Save(m LogicalModel) (LogicalModel, error) {
-	return LogicalModel{}, ErrNotFound
+	if m.ID == "" {
+		m.ID = NewID()
+	}
+	// 与 Channel.Save 同口径：更新保留原 created_at，返回值与库内一致。
+	existing, err := r.Get(m.ID)
+	if err == nil {
+		m.CreatedAt = existing.CreatedAt
+	} else if !errors.Is(err, ErrNotFound) {
+		return LogicalModel{}, err
+	}
+	if m.CreatedAt == 0 {
+		m.CreatedAt = nowMS()
+	}
+	m.UpdatedAt = nowMS()
+	// name UNIQUE 冲突由驱动冒泡为非 nil error（bridge 负责友好化）。
+	_, err = r.db.Exec(`INSERT INTO logical_models(id,name,description,enabled,created_at,updated_at)
+		VALUES(?,?,?,?,?,?)
+		ON CONFLICT(id) DO UPDATE SET name=excluded.name, description=excluded.description,
+			enabled=excluded.enabled, updated_at=excluded.updated_at`,
+		m.ID, m.Name, m.Description, boolInt(m.Enabled), m.CreatedAt, m.UpdatedAt)
+	if err != nil {
+		return LogicalModel{}, err
+	}
+	return m, nil
 }
 
-func (r *logicalModelRepo) Delete(id string) error { return nil }
+func (r *logicalModelRepo) Delete(id string) error {
+	_, err := r.db.Exec(`DELETE FROM logical_models WHERE id=?`, id)
+	return err
+}
 
-func (r *logicalModelRepo) SetEnabled(id string, on bool) error { return nil }
+func (r *logicalModelRepo) SetEnabled(id string, on bool) error {
+	_, err := r.db.Exec(`UPDATE logical_models SET enabled=? WHERE id=?`, boolInt(on), id)
+	return err
+}
 
 type logicalModelTargetRepo struct{ db *sql.DB }
 
+const targetCols = `id,logical_model_id,channel_id,model_name,priority`
+
+func scanTarget(sc func(...any) error) (LogicalModelTarget, error) {
+	var t LogicalModelTarget
+	if err := sc(&t.ID, &t.LogicalModelID, &t.ChannelID, &t.ModelName, &t.Priority); err != nil {
+		return LogicalModelTarget{}, err
+	}
+	return t, nil
+}
+
 func (r *logicalModelTargetRepo) ListByModel(modelID string) ([]LogicalModelTarget, error) {
-	return nil, nil
+	// priority 越小越优先——升序即故障转移链顺序。
+	rows, err := r.db.Query(`SELECT `+targetCols+` FROM logical_model_targets WHERE logical_model_id=? ORDER BY priority ASC, id ASC`, modelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []LogicalModelTarget
+	for rows.Next() {
+		t, err := scanTarget(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
 }
 
 func (r *logicalModelTargetRepo) Save(t LogicalModelTarget) (LogicalModelTarget, error) {
-	return LogicalModelTarget{}, ErrNotFound
+	if t.ID == "" {
+		t.ID = NewID()
+	}
+	// UNIQUE(logical_model_id, channel_id, model_name) 冲突由驱动冒泡为非 nil error。
+	_, err := r.db.Exec(`INSERT INTO logical_model_targets(id,logical_model_id,channel_id,model_name,priority)
+		VALUES(?,?,?,?,?)
+		ON CONFLICT(id) DO UPDATE SET logical_model_id=excluded.logical_model_id, channel_id=excluded.channel_id,
+			model_name=excluded.model_name, priority=excluded.priority`,
+		t.ID, t.LogicalModelID, t.ChannelID, t.ModelName, t.Priority)
+	if err != nil {
+		return LogicalModelTarget{}, err
+	}
+	return t, nil
 }
 
-func (r *logicalModelTargetRepo) Delete(id string) error { return nil }
+func (r *logicalModelTargetRepo) Delete(id string) error {
+	_, err := r.db.Exec(`DELETE FROM logical_model_targets WHERE id=?`, id)
+	return err
+}
 
-func (r *logicalModelTargetRepo) DeleteByModel(modelID string) error { return nil }
+func (r *logicalModelTargetRepo) DeleteByModel(modelID string) error {
+	_, err := r.db.Exec(`DELETE FROM logical_model_targets WHERE logical_model_id=?`, modelID)
+	return err
+}

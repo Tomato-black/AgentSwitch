@@ -343,3 +343,94 @@ func TestHasUsableKey(t *testing.T) {
 		t.Fatalf("all disabled: ok=%v err=%v", ok, err)
 	}
 }
+
+// ---- LogicalModel / LogicalModelTarget 仓储（Task 3）----
+
+func logicalFixture(t *testing.T, s Store) LogicalModel {
+	t.Helper()
+	m, err := s.LogicalModels().Save(LogicalModel{ID: NewID(), Name: "claude-sonnet", Description: "default", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+// TestLogicalModelNameUnique：name UNIQUE——不同 ID 同名第二次 Save 必须报错。
+func TestLogicalModelNameUnique(t *testing.T) {
+	s := tempStore(t)
+	logicalFixture(t, s)
+	if _, err := s.LogicalModels().Save(LogicalModel{ID: NewID(), Name: "claude-sonnet", Enabled: true}); err == nil {
+		t.Fatal("duplicate logical model name must fail")
+	}
+}
+
+// TestLogicalModelGetByName：Save 后 GetByName 命中并回读字段；未知名返回 ErrNotFound。
+func TestLogicalModelGetByName(t *testing.T) {
+	s := tempStore(t)
+	in := logicalFixture(t, s)
+	got, err := s.LogicalModels().GetByName("claude-sonnet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != in.ID || got.Name != in.Name || got.Description != "default" || !got.Enabled {
+		t.Fatalf("GetByName = %+v, want %+v", got, in)
+	}
+	if got.CreatedAt == 0 || got.UpdatedAt == 0 {
+		t.Fatalf("timestamps unset: %+v", got)
+	}
+	if _, err := s.LogicalModels().GetByName("unknown-model"); err != ErrNotFound {
+		t.Fatalf("want ErrNotFound, got %v", err)
+	}
+}
+
+// TestLogicalModelDeleteCascadeTargets：删逻辑模型后其目标链必须清空（FK ON DELETE CASCADE）。
+func TestLogicalModelDeleteCascadeTargets(t *testing.T) {
+	s := tempStore(t)
+	a, z := channelFixture(t, s)
+	m := logicalFixture(t, s)
+	for _, tg := range []LogicalModelTarget{
+		{ID: NewID(), LogicalModelID: m.ID, ChannelID: a.ID, ModelName: "up-a", Priority: 1},
+		{ID: NewID(), LogicalModelID: m.ID, ChannelID: z.ID, ModelName: "up-b", Priority: 2},
+	} {
+		if _, err := s.LogicalModelTargets().Save(tg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.LogicalModels().Delete(m.ID); err != nil {
+		t.Fatal(err)
+	}
+	ts, err := s.LogicalModelTargets().ListByModel(m.ID)
+	if err != nil || len(ts) != 0 {
+		t.Fatalf("cascade: %v %v", ts, err)
+	}
+}
+
+// TestTargetListOrdered：ListByModel 按 priority 升序（priority 越小越优先）。
+func TestTargetListOrdered(t *testing.T) {
+	s := tempStore(t)
+	a, z := channelFixture(t, s)
+	m := logicalFixture(t, s)
+	// 插入顺序故意乱序：30 → 10 → 20。
+	for _, tg := range []LogicalModelTarget{
+		{ID: NewID(), LogicalModelID: m.ID, ChannelID: a.ID, ModelName: "up-a", Priority: 30},
+		{ID: NewID(), LogicalModelID: m.ID, ChannelID: z.ID, ModelName: "up-b", Priority: 10},
+		{ID: NewID(), LogicalModelID: m.ID, ChannelID: a.ID, ModelName: "up-c", Priority: 20},
+	} {
+		if _, err := s.LogicalModelTargets().Save(tg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ts, err := s.LogicalModelTargets().ListByModel(m.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{10, 20, 30}
+	if len(ts) != len(want) {
+		t.Fatalf("ListByModel = %+v", ts)
+	}
+	for i, p := range want {
+		if ts[i].Priority != p {
+			t.Fatalf("ListByModel priorities = %+v, want %v", ts, want)
+		}
+	}
+}
