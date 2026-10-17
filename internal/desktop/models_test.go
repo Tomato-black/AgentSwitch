@@ -28,8 +28,9 @@ func aggFixture(t *testing.T) *uiState {
 	return u
 }
 
-// TestModelsAggregateShowsCrossChannel 覆盖聚合页主形态（spec §8 决策 7）：
-// 跨渠道展平（pub-1 两行）、渠道列承载编辑入口指向（"渠道" 列名）。
+// TestModelsAggregateShowsCrossChannel 覆盖聚合页主形态（spec §8 决策 7 /
+// §5.4）：跨渠道展平（pub-1 两行）+ 页头统计行；编辑入口由来源渠道 chip
+// 承载——点 chip 跳该渠道详情（决策 7「增删改在渠道页」的新交互落点）。
 func TestModelsAggregateShowsCrossChannel(t *testing.T) {
 	u := aggFixture(t)
 	u.page = "models"
@@ -37,26 +38,46 @@ func TestModelsAggregateShowsCrossChannel(t *testing.T) {
 	if !tt.HasText("模型") || !tt.HasText("pub-1") {
 		t.Fatalf("texts %v", tt.Texts())
 	}
-	// 聚合页提示编辑入口在渠道页（决策 7 的文案承载）——钉住提示行本体，
-	// 防退化成仅剩列名（「渠道」同时是列名，测不出提示行丢失）。
-	if !tt.HasText("编辑请到渠道页") {
-		t.Fatalf("edit-hint line missing: %v", tt.Texts())
+	// 页头统计行（spec §5.4 格式）——钉住「N 条渠道模型 · 来自 M 渠道 · 停用 X」，
+	// 防退化成裸计数。
+	if !tt.HasText("2 条渠道模型 · 来自 2 渠道 · 停用 0") {
+		t.Fatalf("header stats missing: %v", tt.Texts())
+	}
+	// 来源渠道 chip = 编辑入口（决策 7 新落点）：点渠道 a 的 chip 进详情。
+	if err := tt.Click("a"); err != nil {
+		t.Fatal(err)
+	}
+	if u.page != "channel-detail" {
+		t.Fatalf("chip click must open channel detail, page=%q", u.page)
+	}
+	want := ""
+	for _, ch := range u.svc.Channels.List() {
+		if ch.Name == "a" {
+			want = ch.ID
+		}
+	}
+	if want == "" || u.chDetailID != want {
+		t.Fatalf("chDetailID=%q want %q", u.chDetailID, want)
 	}
 }
 
-// TestModelsAggregateToggleEnabled 覆盖行内启停：选中行 + 「停用/启用」
-// 翻转 ChannelModels.Enabled——聚合页唯一写操作（只读 + 启停）。
+// TestModelsAggregateToggleEnabled 覆盖行内启停：点行内 Switch 翻转该行
+// ChannelModels.Enabled——聚合页唯一写操作（只读 + 每行开关）。
 func TestModelsAggregateToggleEnabled(t *testing.T) {
 	u := aggFixture(t)
 	u.page = "models"
 	tt := ui.NewTester(u.modelsView, 1000, 700)
-	u.modelSel = 0
-	if err := tt.Click("停用/启用"); err != nil {
+	if err := tt.Click("启用 a 的 pub-1"); err != nil {
 		t.Fatal(err)
 	}
 	rows := bridge.ModelsAgg{A: u.svc.Channels.A}.ListAll()
-	if rows[0].Enabled {
-		t.Fatalf("toggle failed: %+v", rows[0])
+	for _, r := range rows {
+		if r.ChannelName == "a" && r.Enabled {
+			t.Fatalf("toggle failed: %+v", r)
+		}
+		if r.ChannelName == "b" && !r.Enabled {
+			t.Fatalf("b 行不得被波及: %+v", r)
+		}
 	}
 }
 
@@ -68,5 +89,41 @@ func TestModelsAggregateEmptyHint(t *testing.T) {
 	tt := ui.NewTester(u.modelsView, 1000, 700)
 	if !tt.HasText("尚无模型") {
 		t.Fatalf("texts %v", tt.Texts())
+	}
+}
+
+func TestSortModelRows(t *testing.T) {
+	rows := []bridge.ModelAggregateView{{PublicModel: "b", ChannelName: "z"}, {PublicModel: "a", ChannelName: "y"}, {PublicModel: "a", ChannelName: "x"}}
+	sortModelRows(rows)
+	if rows[0].ChannelName != "x" || rows[2].PublicModel != "b" {
+		t.Fatal("分组排序")
+	}
+}
+func TestModelsToggleOnlyTargetRow(t *testing.T) {
+	u, _ := testUI(t)
+	c1, _ := u.svc.Channels.Create("anthropic-official", "c1", "https://1.example.com", 10, true, false)
+	c2, _ := u.svc.Channels.Create("anthropic-official", "c2", "https://2.example.com", 20, true, false)
+	m1, _ := u.svc.Channels.AddModel(c1.ID, "same-model", "up-1")
+	m2, _ := u.svc.Channels.AddModel(c2.ID, "same-model", "up-2")
+	u.toggleModelRow(m2.ID, false)
+	rows := bridge.ModelsAgg{A: u.svc.Channels.A}.ListAll()
+	for _, r := range rows {
+		if r.ID == m1.ID && !r.Enabled {
+			t.Fatal("c1 行不得被波及")
+		}
+		if r.ID == m2.ID && r.Enabled {
+			t.Fatal("c2 行须已停用")
+		}
+	}
+}
+func TestModelsSearchFilter(t *testing.T) {
+	u, _ := testUI(t)
+	c1, _ := u.svc.Channels.Create("anthropic-official", "c1", "https://1.example.com", 10, true, false)
+	u.svc.Channels.AddModel(c1.ID, "glm-4.7", "glm-4.7")
+	u.svc.Channels.AddModel(c1.ID, "kimi-k2", "kimi-k2")
+	u.modelQuery = "glm"
+	tt := ui.NewTester(u.modelsView, 1080, 720)
+	if !tt.HasText("glm-4.7") || tt.HasText("kimi-k2") {
+		t.Fatalf("过滤失效: %v", tt.Texts())
 	}
 }

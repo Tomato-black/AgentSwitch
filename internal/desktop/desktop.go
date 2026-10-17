@@ -40,9 +40,10 @@ type uiState struct {
 	table          ui.ListState // 最近请求表状态
 	closeNotice    bool         // 首关教育提示
 	closeConfirmed bool         // 用户已知晓，允许关闭
-	// 模型聚合页（Task 9 重写：跨渠道只读 + 行内启停）：
-	modelList ui.ListState // 聚合表状态；Selected 经 modelSel 指向当前行
-	modelSel  int          // 聚合表当前行（-1=无）
+	// 模型聚合页（Task 8 重写：搜索 + 每行开关）：
+	modelList  ui.ListState // 聚合表状态；Selected 经 modelSel 指向当前行
+	modelSel   int          // 聚合表当前行（-1=无）
+	modelQuery string       // 页头搜索框查询（filterModelRows 消费）
 	// 渠道页（Task 5 卡片列表；Task 6/7 接详情/新建）：
 	chList             ui.ListState // 渠道表状态（旧表态；Task 6/7 迁移期保留）
 	chSel              int          // 渠道表当前行（-1=无）；详情三段面板锚定行选中
