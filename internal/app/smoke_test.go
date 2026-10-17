@@ -11,7 +11,7 @@ import (
 )
 
 // TestConfigChangeTakesEffectWithoutRestart 覆盖 spec §15 验收项 2：
-// 网关运行中修改模型别名，下一次请求即走新配置（agent 无感）。
+// 网关运行中修改目标上游模型，下一次请求即走新配置（agent 无感）。
 func TestConfigChangeTakesEffectWithoutRestart(t *testing.T) {
 	var lastModel string
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -23,12 +23,8 @@ func TestConfigChangeTakesEffectWithoutRestart(t *testing.T) {
 	}))
 	defer up.Close()
 
+	// newTestApp 夹具：逻辑模型 "alias" → t1 → c1/model-v1。
 	a := newTestApp(t, up.URL, true)
-	if err := a.Store().ChannelModels().Save(storage.ChannelModel{
-		ID: "m1", ChannelID: "c1", PublicModel: "alias", UpstreamModel: "model-v1", Enabled: true,
-	}); err != nil {
-		t.Fatal(err)
-	}
 	if err := a.StartGateway(); err != nil {
 		t.Fatal(err)
 	}
@@ -50,16 +46,13 @@ func TestConfigChangeTakesEffectWithoutRestart(t *testing.T) {
 	if got := call(); got != "model-v1" {
 		t.Fatalf("first call upstream model %q", got)
 	}
-	// 运行中改别名 → 下一请求生效（无需重启网关/agent）
-	m, err := a.Store().ChannelModels().Get("m1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	m.UpstreamModel = "model-v2"
-	if err := a.Store().ChannelModels().Save(m); err != nil {
+	// 运行中改目标上游模型 → 下一请求生效（无需重启网关/agent）。
+	if _, err := a.Store().LogicalModelTargets().Save(storage.LogicalModelTarget{
+		ID: "t1", LogicalModelID: "lm1", ChannelID: "c1", ModelName: "model-v2", Priority: 10,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if got := call(); got != "model-v2" {
-		t.Fatalf("after alias change upstream model %q", got)
+		t.Fatalf("after target change upstream model %q", got)
 	}
 }

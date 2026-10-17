@@ -131,7 +131,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		rec.Status, rec.ErrorClass = 503, "no_candidate"
 		reasons := make([]string, 0, len(decision.Filtered))
 		for _, f := range decision.Filtered {
-			reasons = append(reasons, f.Candidate.ChannelName+"/"+f.Candidate.KeyName+":"+f.Reason)
+			reasons = append(reasons, f.Candidate.ChannelName+":"+f.Reason)
 		}
 		writeErr(w, 503, protocol.ErrTypeAPI, "no usable candidate (filtered: "+strings.Join(reasons, "; ")+")")
 		return
@@ -152,7 +152,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		}
 		// 发送前二次校验（docx §7；TryAcquire 锁内原子，不写状态）
 		if s.deps.Cooldowns != nil {
-			if _, ok := s.deps.Cooldowns.TryAcquire(c.KeyID, time.Now()); !ok {
+			if _, ok := s.deps.Cooldowns.TryAcquire(c.ChannelID, time.Now()); !ok {
 				switches++
 				continue
 			}
@@ -163,7 +163,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 			// （ClassAuth→1h）再换下一候选——单枚死钥不得瘫痪整个池，也不得
 			// 每请求重试。此刻零字节已写客户端，属可转移窗口。
 			if s.deps.Cooldowns != nil {
-				s.deps.Cooldowns.MarkClassified(c.KeyID, provider.ClassAuth, 0, time.Now())
+				s.deps.Cooldowns.MarkClassified(c.ChannelID, provider.ClassAuth, 0, time.Now())
 			}
 			lastClass = "credential"
 			switches++
@@ -197,7 +197,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 			// 客户端写过任何字节，属可转移窗口。
 			lastClass = provider.ClassConnect
 			if s.deps.Cooldowns != nil {
-				s.deps.Cooldowns.MarkClassified(c.KeyID, provider.ClassConnect, 0, time.Now())
+				s.deps.Cooldowns.MarkClassified(c.ChannelID, provider.ClassConnect, 0, time.Now())
 			}
 			switches++
 			continue
@@ -209,13 +209,13 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 			if class == provider.ClassParam {
 				// 400 类=客户端自身问题：不冷却、不转移，原样回传（docx §6.3）
 				rec.Status, rec.ErrorClass = res.StatusCode, string(class)
-				rec.Account, rec.Channel = c.KeyName, c.ChannelName
+				rec.Account, rec.Channel = c.ChannelName, c.ChannelName
 				writeUpstreamError(w, res.StatusCode, snippet, res.Header)
 				return
 			}
 			lastClass = class
 			if s.deps.Cooldowns != nil {
-				s.deps.Cooldowns.MarkClassified(c.KeyID, class, res.RetryAfterSec, time.Now())
+				s.deps.Cooldowns.MarkClassified(c.ChannelID, class, res.RetryAfterSec, time.Now())
 			}
 			switches++
 			continue
@@ -223,7 +223,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		// 2xx：提交点——写响应头之后绝不转移（首字节后不重放，docx §6.3）
 		committed = true
 		rec.Status = res.StatusCode
-		rec.UpstreamModel, rec.Account, rec.Channel = c.UpstreamModel, c.KeyName, c.ChannelName
+		rec.UpstreamModel, rec.Account, rec.Channel = c.UpstreamModel, c.ChannelName, c.ChannelName
 		for _, h := range responseHeaderWhitelist {
 			if v := res.Header.Get(h); v != "" {
 				w.Header().Set(h, v)

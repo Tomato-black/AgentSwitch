@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -196,74 +197,100 @@ func (a *App) currentToken() string {
 // Cooldowns 暴露冷却存储（bridge PoolStatus 读取用）。
 func (a *App) Cooldowns() *router.Cooldowns { return a.cooldowns }
 
-// candidates 装配公开模型的候选集：enabled 渠道 × enabled 密钥 × enabled
-// channel_models(public=X)（spec §6.1），并标注冷却快照。SQL 已按渠道/密钥
-// 优先级有序；router 内再排序一次是双保险。
-func (a *App) candidates(public string) ([]router.Candidate, error) {
-	chans, err := a.store.Channels().List()
+// candidates 按逻辑模型名装配目标链候选（spec 2026-10-17-logical-models）：
+// GetByName → enabled 检查 → ListByModel（priority 升序）→ join channel。
+// 不可用目标（渠道 disabled / 缺 credential_ref）跳过并记日志——candidates
+// 只返回可用候选。未登记或 disabled：返回空切片，gateway 走「无候选」路径。
+// 冷却快照按 ChannelID 注入（冷却跨逻辑模型共享）。
+func (a *App) candidates(logicalName string) ([]router.Candidate, error) {
+	lm, err := a.store.LogicalModels().GetByName(logicalName)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return []router.Candidate{}, nil
+		}
+		return nil, err
+	}
+	if !lm.Enabled {
+		return []router.Candidate{}, nil
+	}
+	targets, err := a.store.LogicalModelTargets().ListByModel(lm.ID)
 	if err != nil {
 		return nil, err
 	}
 	cool := map[string]router.CooldownEntry{}
 	for _, e := range a.cooldowns.Snapshot(time.Now()) {
-		cool[e.KeyID] = e
+		cool[e.ChannelID] = e
 	}
-	var out []router.Candidate
-	for _, ch := range chans {
-		if !ch.Enabled {
-			continue
-		}
-		models, err := a.store.ChannelModels().ListByChannel(ch.ID)
+	out := make([]router.Candidate, 0, len(targets))
+	for _, t := range targets {
+		ch, err := a.store.Channels().Get(t.ChannelID)
 		if err != nil {
-			return nil, err
-		}
-		upstream, found := "", false
-		for _, m := range models {
-			if m.Enabled && m.PublicModel == public {
-				upstream, found = m.UpstreamModel, true
-				break
-			}
-		}
-		if !found {
-			continue
-		}
-		keys, err := a.store.ChannelKeys().ListByChannel(ch.ID)
-		if err != nil {
-			return nil, err
-		}
-		for _, k := range keys {
-			if !k.Enabled {
+			if errors.Is(err, storage.ErrNotFound) {
+				a.log.Debug("skip target: channel gone", "target", t.ID, "channel", t.ChannelID)
 				continue
 			}
-			c := router.Candidate{ChannelID: ch.ID, ChannelName: ch.Name,
-				KeyID: k.ID, KeyName: k.Name, SecretKey: k.SecretKey,
-				Protocol: ch.Protocol, BaseURL: ch.BaseURL,
-				AllowPrivate: ch.AllowPrivateUpstream, UpstreamModel: upstream,
-				ChannelPriority: ch.Priority, KeyPriority: k.Priority}
-			if e, ok := cool[k.ID]; ok {
-				c.CoolingUntil, c.CoolingReason = e.Until, e.Reason
-			}
-			out = append(out, c)
+			return nil, err
 		}
+		if !ch.Enabled || ch.CredentialRef == "" {
+			a.log.Debug("skip target: channel unusable", "target", t.ID, "channel", t.ChannelID,
+				"enabled", ch.Enabled, "hasCredential", ch.CredentialRef != "")
+			continue
+		}
+		c := router.Candidate{
+			TargetID: t.ID, LogicalModel: logicalName,
+			ChannelID: ch.ID, ChannelName: ch.Name,
+			Protocol: ch.Protocol, BaseURL: ch.BaseURL,
+			SecretKey: ch.CredentialRef, AllowPrivate: ch.AllowPrivateUpstream,
+			UpstreamModel: t.ModelName, Priority: t.Priority,
+		}
+		if e, ok := cool[ch.ID]; ok {
+			c.CoolingUntil, c.CoolingReason = e.Until, e.Reason
+		}
+		out = append(out, c)
 	}
 	return out, nil
 }
 
+// publicModels 返回 enabled 逻辑模型名（网关对外模型清单）。
 func (a *App) publicModels() []string {
-	ms, err := a.store.ChannelModels().PublicModels()
+	ms, err := a.store.LogicalModels().List()
 	if err != nil {
 		return nil
 	}
-	return ms
+	out := make([]string, 0, len(ms))
+	for _, m := range ms {
+		if m.Enabled {
+			out = append(out, m.Name)
+		}
+	}
+	return out
 }
 
+// hasUsableChannel 报告是否存在可用渠道（enabled 且 credential_ref 非空）。
 func (a *App) hasUsableChannel() bool {
 	ok, err := a.store.Channels().HasUsableKey()
 	return err == nil && ok
 }
 
+// hasRouteReady 是网关启动守卫：至少一个 enabled 逻辑模型且至少一个可用渠道。
+func (a *App) hasRouteReady() bool {
+	if !a.hasUsableChannel() {
+		return false
+	}
+	ms, err := a.store.LogicalModels().List()
+	if err != nil {
+		return false
+	}
+	for _, m := range ms {
+		if m.Enabled {
+			return true
+		}
+	}
+	return false
+}
+
 // StartGateway 组装 gateway.Deps 并启动：Starting → Running/Degraded
-// （零可用渠道/密钥 → Degraded 带 reason）；任一步失败 → Failed（reason=err）。
+// （无 enabled 逻辑模型或无可用渠道 → Degraded 带 reason）；任一步失败 → Failed（reason=err）。
 // lifecycleMu 串行化全函数；已在运行时拒绝且不改变状态（状态必须来自实际服务状态）。
 func (a *App) StartGateway() error {
 	a.lifecycleMu.Lock()
@@ -323,9 +350,9 @@ func (a *App) StartGateway() error {
 	a.gw = gw
 	a.mu.Unlock()
 	si := StateInfo{State: StateRunning, Addr: addr, Since: time.Now(), Version: a.State().Version}
-	if !a.hasUsableChannel() {
+	if !a.hasRouteReady() {
 		si.State = StateDegraded
-		si.DegradedReason = "no usable channel/key"
+		si.DegradedReason = "no enabled logical model or usable channel"
 	}
 	a.log.Info("gateway started", "addr", addr, "state", si.State)
 	a.setState(si)
@@ -380,7 +407,7 @@ func (a *App) regenerateToken() (string, error) {
 }
 
 // SaveSettings 保存端口与请求超时；网关运行中且端口变化时要求重启。
-// load→mutate→save 整段持 settingsMu（config.Save 写全部 7 键，交错会覆盖他人写入）。
+// load→mutate→save 整段持 settingsMu（config.Save 写全部键，交错会覆盖他人写入）。
 func (a *App) SaveSettings(port, timeoutSeconds int) (bool, error) {
 	a.settingsMu.Lock()
 	defer a.settingsMu.Unlock()

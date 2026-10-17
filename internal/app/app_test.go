@@ -14,7 +14,9 @@ import (
 	"AgentSwitch/internal/storage"
 )
 
-func newTestApp(t *testing.T, upstreamURL string, withKey bool) *App {
+// openApp 开空库应用（无渠道/模型夹具）；测试不得写真实 OS 钥匙环——
+// Primary 换本地 0600 文件（AllowFallback 本已 true）。
+func openApp(t *testing.T) *App {
 	t.Helper()
 	a, err := Open(Options{
 		DBPath:  filepath.Join(t.TempDir(), "app.db"),
@@ -26,26 +28,136 @@ func newTestApp(t *testing.T, upstreamURL string, withKey bool) *App {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { a.Close() })
-	// 测试不得写真实 OS 钥匙环：Primary 换本地 0600 文件（AllowFallback 本已 true）。
 	a.creds.Primary = credential.NewFallbackFile(filepath.Join(t.TempDir(), "secrets.json"))
-	if err := a.Store().Channels().Save(storage.Channel{
-		ID: "c1", Name: "up", Type: "anthropic-compatible", Protocol: "anthropic",
-		BaseURL: upstreamURL, Priority: 10, Enabled: true, AllowPrivateUpstream: true,
+	return a
+}
+
+// newTestApp 夹具：渠道 c1（withKey 时带 credential_ref=account:a1）+
+// enabled 逻辑模型 lm1"alias" + 目标 t1→c1/model-v1。withKey=false 即
+// 无可用凭据（HasUsableKey 假）。
+func newTestApp(t *testing.T, upstreamURL string, withKey bool) *App {
+	t.Helper()
+	a := openApp(t)
+	ref := ""
+	if withKey {
+		ref = "account:a1"
+	}
+	if _, err := a.Store().Channels().Save(storage.Channel{
+		ID: "c1", Name: "up", Protocol: "anthropic",
+		BaseURL: upstreamURL, CredentialRef: ref,
+		Enabled: true, AllowPrivateUpstream: true,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if withKey {
-		if err := a.Store().ChannelKeys().Save(storage.ChannelKey{
-			ID: "k1", ChannelID: "c1", Name: "acc", SecretKey: "account:a1",
-			SecretBackend: "fallback-file", Priority: 10, Enabled: true,
-		}); err != nil {
-			t.Fatal(err)
-		}
 		if err := a.Creds().Set("account:a1", []byte("sk-test")); err != nil {
 			t.Fatal(err)
 		}
 	}
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{
+		ID: "lm1", Name: "alias", Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Store().LogicalModelTargets().Save(storage.LogicalModelTarget{
+		ID: "t1", LogicalModelID: "lm1", ChannelID: "c1", ModelName: "model-v1", Priority: 10,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	return a
+}
+
+// TestCandidatesFromLogicalModel：两渠道两目标，candidates 长度=2 且按 Priority
+// 排序、UpstreamModel=目标 model_name、SecretKey=渠道 CredentialRef。
+func TestCandidatesFromLogicalModel(t *testing.T) {
+	a := openApp(t)
+	for _, ch := range []storage.Channel{
+		{ID: "c1", Name: "up1", Protocol: "anthropic", BaseURL: "http://u1", CredentialRef: "ref-1", Enabled: true, AllowPrivateUpstream: true},
+		{ID: "c2", Name: "up2", Protocol: "openai", BaseURL: "http://u2", CredentialRef: "ref-2", Enabled: true},
+	} {
+		if _, err := a.Store().Channels().Save(ch); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lm, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "m", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 故意先插 priority=2 再插 1——断言输出按 Priority 升序而非插入序。
+	if _, err := a.Store().LogicalModelTargets().Save(storage.LogicalModelTarget{
+		ID: "t2", LogicalModelID: lm.ID, ChannelID: "c2", ModelName: "model-b", Priority: 2,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Store().LogicalModelTargets().Save(storage.LogicalModelTarget{
+		ID: "t1", LogicalModelID: lm.ID, ChannelID: "c1", ModelName: "model-a", Priority: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cands, err := a.candidates("m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cands) != 2 {
+		t.Fatalf("len=%d want 2 (%+v)", len(cands), cands)
+	}
+	first, second := cands[0], cands[1]
+	if first.Priority != 1 || second.Priority != 2 {
+		t.Fatalf("priority order wrong: %d,%d", first.Priority, second.Priority)
+	}
+	if first.UpstreamModel != "model-a" || second.UpstreamModel != "model-b" {
+		t.Fatalf("upstream models: %q,%q", first.UpstreamModel, second.UpstreamModel)
+	}
+	if first.SecretKey != "ref-1" || second.SecretKey != "ref-2" {
+		t.Fatalf("secret keys: %q,%q", first.SecretKey, second.SecretKey)
+	}
+	// 装配映射契约（Task 6 消费字段）：TargetID/LogicalModel/ChannelID 随目标链。
+	if first.TargetID != "t1" || first.LogicalModel != "m" || first.ChannelID != "c1" {
+		t.Fatalf("first mapping: %+v", first)
+	}
+	if second.TargetID != "t2" || second.ChannelID != "c2" {
+		t.Fatalf("second mapping: %+v", second)
+	}
+	if first.ChannelName != "up1" || first.Protocol != "anthropic" || first.BaseURL != "http://u1" || !first.AllowPrivate {
+		t.Fatalf("channel fields: %+v", first)
+	}
+}
+
+// TestCandidatesUnknownModelEmpty：未登记逻辑模型名 → 空切片（gateway 走「无候选」路径）。
+func TestCandidatesUnknownModelEmpty(t *testing.T) {
+	a := openApp(t)
+	cands, err := a.candidates("nope")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cands) != 0 {
+		t.Fatalf("unknown model must yield empty, got %+v", cands)
+	}
+}
+
+// TestPublicModelsListsLogicalNames：两个 enabled + 一个 disabled → 仅前两个。
+func TestPublicModelsListsLogicalNames(t *testing.T) {
+	a := openApp(t)
+	for _, m := range []storage.LogicalModel{
+		{ID: "lm1", Name: "m1", Enabled: true},
+		{ID: "lm2", Name: "m2", Enabled: true},
+		{ID: "lm3", Name: "m3", Enabled: false},
+	} {
+		if _, err := a.Store().LogicalModels().Save(m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := a.publicModels()
+	if len(got) != 2 {
+		t.Fatalf("publicModels=%v want 2 names", got)
+	}
+	seen := map[string]bool{}
+	for _, n := range got {
+		seen[n] = true
+	}
+	if !seen["m1"] || !seen["m2"] || seen["m3"] {
+		t.Fatalf("publicModels=%v want {m1,m2}", got)
+	}
 }
 
 func TestLifecycleDegradedAndRunning(t *testing.T) {
@@ -59,7 +171,7 @@ func TestLifecycleDegradedAndRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 	if a.State().State != StateDegraded {
-		t.Fatalf("no usable channel keys → degraded, got %s", a.State().State)
+		t.Fatalf("no usable channel → degraded, got %s", a.State().State)
 	}
 	if err := a.StopGateway(context.Background()); err != nil {
 		t.Fatal(err)
@@ -79,16 +191,32 @@ func TestLifecycleDegradedAndRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 有密钥但禁用 → 可用渠道/密钥为零 → Degraded（spec §5；与 readyz/Router 过滤口径一致）。
+	// 渠道禁用 → 可用渠道为零 → Degraded（spec §5；与 readyz/Router 过滤口径一致）。
 	a3 := newTestApp(t, up.URL, true)
-	if err := a3.Store().ChannelKeys().SetEnabled("k1", false); err != nil {
+	if err := a3.Store().Channels().SetEnabled("c1", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := a3.StartGateway(); err != nil {
 		t.Fatal(err)
 	}
 	if a3.State().State != StateDegraded || a3.State().DegradedReason == "" {
-		t.Fatalf("disabled account → degraded, got %s (%q)", a3.State().State, a3.State().DegradedReason)
+		t.Fatalf("disabled channel → degraded, got %s (%q)", a3.State().State, a3.State().DegradedReason)
+	}
+	// Degraded 仍占端口——停掉再起 a4（默认端口同一 17890）。
+	if err := a3.StopGateway(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// 无 enabled 逻辑模型 → 同守卫 Degraded（「至少一个 enabled 逻辑模型且至少一个可用渠道」）。
+	a4 := newTestApp(t, up.URL, true)
+	if err := a4.Store().LogicalModels().SetEnabled("lm1", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := a4.StartGateway(); err != nil {
+		t.Fatal(err)
+	}
+	if a4.State().State != StateDegraded || a4.State().DegradedReason == "" {
+		t.Fatalf("no enabled logical model → degraded, got %s (%q)", a4.State().State, a4.State().DegradedReason)
 	}
 }
 
@@ -166,7 +294,7 @@ func TestOpenGeneratesTokenAndRegeneratePersists(t *testing.T) {
 func TestStartGatewayFailsOnBusyPortThenRecovers(t *testing.T) {
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer up.Close()
-	a := newTestApp(t, up.URL, true) // 启用账号在库 → 恢复后应为 Running
+	a := newTestApp(t, up.URL, true) // 启用渠道+逻辑模型在库 → 恢复后应为 Running
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -237,7 +365,7 @@ func TestDoubleStartRejected(t *testing.T) {
 }
 
 // TestSettingsConcurrencyConsistency：RegenerateToken 与 SaveSettings 并发交错下
-// load→mutate→save 临界区不得互相覆盖（config.Save 写全部 7 键含 GatewayToken）。
+// load→mutate→save 临界区不得互相覆盖（config.Save 写全部键含 GatewayToken）。
 // 断言强度说明：令牌回滚窗口由 settingsMu 临界区构造闭合，无法在单测里直接观测中间态；
 // 本测试是行为烟测——无 panic、最终 token 非空、端口值已持久化，纳入 -race 运行。
 func TestSettingsConcurrencyConsistency(t *testing.T) {

@@ -37,3 +37,27 @@ func TestLoadUsesDefaultsAndOverrides(t *testing.T) {
 		t.Fatalf("load wrong: %+v", s)
 	}
 }
+
+// TestPassthroughDefaultFalse：routing.passthrough_unregistered 缺省 false
+// （Default() 同），Set "1" → true。
+func TestPassthroughDefaultFalse(t *testing.T) {
+	if Default().PassthroughUnregistered {
+		t.Fatal("Default() must be false")
+	}
+	empty := func(string) (string, error) { return "", nil }
+	s, err := Load(empty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.PassthroughUnregistered {
+		t.Fatal("Load(空) must be false")
+	}
+	vals := map[string]string{KeyPassthrough: "1"}
+	s2, err := Load(func(k string) (string, error) { return vals[k], nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s2.PassthroughUnregistered {
+		t.Fatal(`Set "1" must load true`)
+	}
+}
