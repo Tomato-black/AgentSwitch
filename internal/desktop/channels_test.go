@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -59,6 +60,42 @@ func TestUpdateFromDetailKeepsFields(t *testing.T) {
 	got := u.svc.Channels.List()[0]
 	if got.Name != "renamed" || got.BaseURL != "https://a.example.com" || got.Priority != 10 || !got.AllowPrivateUpstream {
 		t.Fatalf("update 丢字段: %+v", got)
+	}
+}
+
+// TestNewPageAddKeysFailKeepsOneChannel pin 密钥随建随导失败分支（审查
+// round 1）：Create 成功后 AddKeys 失败——渠道保留且只建一份（表单复位防
+// 重点击克隆同名渠道），指路提示走列表信息位（chTestMsg）明示「已创建、
+// 去详情密钥池重试」，并落回列表。
+func TestNewPageAddKeysFailKeepsOneChannel(t *testing.T) {
+	u, _ := testUI(t)
+	u.chForm.name, u.chForm.baseURL, u.chForm.priorityInput = "main", "https://a.example.com", "10"
+	u.keyForm.keysText = "\n  \n" // 非空但无有效行 → AddKeys 失败
+	tt := ui.NewTester(u.channelNewView, 1080, 720)
+	if err := tt.Click("创建渠道"); err != nil {
+		t.Fatal(err)
+	}
+	if u.page != "channels" {
+		t.Fatalf("page %q", u.page)
+	}
+	got := u.svc.Channels.List()
+	if len(got) != 1 || got[0].Name != "main" {
+		t.Fatalf("渠道须保留且不重复: %+v", got)
+	}
+	d, err := u.svc.Channels.Get(got[0].ID)
+	if err != nil || len(d.Keys) != 0 {
+		t.Fatalf("keys %v err %v", d.Keys, err)
+	}
+	if !strings.Contains(u.chTestMsg, "渠道已创建") || !strings.Contains(u.chTestMsg, "密钥导入失败") ||
+		!strings.Contains(u.chTestMsg, "密钥池") {
+		t.Fatalf("须指路密钥失败提示: %q", u.chTestMsg)
+	}
+	if u.chForm.name != "" || u.keyForm.keysText != "" {
+		t.Fatalf("表单须复位防重创建: name=%q keys=%q", u.chForm.name, u.keyForm.keysText)
+	}
+	ttl := ui.NewTester(u.channelsView, 1080, 720)
+	if !ttl.HasText("渠道已创建") {
+		t.Fatalf("列表须显示指路提示: %v", ttl.Texts())
 	}
 }
 

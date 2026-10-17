@@ -332,8 +332,11 @@ func (u *uiState) channelFormRows(c *ui.Context, t *ui.Theme) {
 // createFromNewPage 落新建页「创建渠道」（原 submitChannel Create 分支+
 // 密钥随建随导）：优先级必须整数；Create 走类型预设 id（chips 写的就是 id，
 // 仍经 resolveTypeID 兜底 label→id）；成功后 keysText 非空则 AddKeys 随建
-// 随导（密钥名取渠道名）——AddKeys 失败错误写 chForm.msg、渠道保留不回滚
-// （表单不复位，提示可见）；全成则复位表单、落回列表并选中新渠道。
+// 随导（密钥名取渠道名）。Create 成功即复位表单、落回列表并选中新渠道——
+// AddKeys 失败渠道保留不回滚，但**不得**把表单留在原地（重点击会克隆同名
+// 渠道）；失败提示改走列表信息位 chTestMsg（resetChannelForm 会清 chForm.msg，
+// 字面留在表单上不可观察），明示已创建并指路详情「密钥池」重试
+// （TestNewPageAddKeysFailKeepsOneChannel）。
 func (u *uiState) createFromNewPage() {
 	prio, err := strconv.Atoi(u.chForm.priorityInput)
 	if err != nil {
@@ -348,14 +351,17 @@ func (u *uiState) createFromNewPage() {
 		u.chForm.msg = err.Error()
 		return
 	}
+	var keyErr error
 	if u.keyForm.keysText != "" {
 		if _, err := u.svc.Channels.AddKeys(v.ID, u.chForm.name,
 			u.keyForm.keysText, u.keyForm.allowFallback); err != nil {
-			u.chForm.msg = err.Error() // 渠道已建不回滚；密钥错误留表单可见
-			return
+			keyErr = err // 渠道已建不回滚
 		}
 	}
 	u.resetChannelForm()
+	if keyErr != nil { // reset 后写（reset 会清 chTestMsg）
+		u.chTestMsg = "渠道已创建，密钥导入失败: " + keyErr.Error() + "——请到详情「密钥池」重试"
+	}
 	u.page = "channels"
 	u.selectChannel(v.ID)
 }
