@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"AgentSwitch/internal/app"
 	"AgentSwitch/internal/credential"
@@ -14,11 +13,12 @@ import (
 	"AgentSwitch/internal/storage"
 )
 
-// Channels 是渠道聚合根管理面（spec §7）：渠道字段 + 密钥子表 + 模型子表。
+// Channels 是渠道聚合根管理面（logical-models spec §5）：每渠道单 Key
+// （credential_ref → OS 密钥存储，写在 credential.ChannelKey(id)）+
+// 模型建议列表（SetSuggestions 全量替换，目标编辑下拉数据源）。
 type Channels struct {
-	A                 *app.App
-	Creds             credential.Store
-	KeychainAvailable func() bool
+	A     *app.App
+	Creds credential.Store
 }
 
 func (s Channels) creds() credential.Store {
@@ -28,62 +28,26 @@ func (s Channels) creds() credential.Store {
 	return s.A.Creds()
 }
 
-func (s Channels) keychainAvailable() bool {
-	if s.KeychainAvailable != nil {
-		return s.KeychainAvailable()
-	}
-	return credential.OSKeychainAvailable()
-}
-
+// ChannelView 是渠道卡片视图；HasKey 即 credential_ref 非空（有可用凭据）。
 type ChannelView struct {
-	ID, Name, Type, Protocol, BaseURL  string
-	Priority                           int
-	Enabled, AllowPrivateUpstream      bool
-	KeyCount, ModelCount, CoolingCount int
+	ID, Name, PresetID, Protocol, BaseURL string
+	Enabled, AllowPrivate                 bool
+	HasKey                                bool
+	SuggestionCount                       int
 }
 
-type KeyView struct {
-	ID, ChannelID, Name, KeyTail, SecretBackend string
-	Priority                                    int
-	Enabled                                     bool
-	Cooling                                     bool
-	CoolingRemainSec                            int
-	CoolingReason                               string
-}
-
-type ChannelModelRow struct {
-	ID, ChannelID, PublicModel, UpstreamModel string
-	Enabled                                   bool
-}
-
+// ChannelDetail 是渠道详情：视图 + 模型建议列表。
 type ChannelDetail struct {
-	Channel ChannelView
-	Keys    []KeyView
-	Models  []ChannelModelRow
-}
-
-// coolingMap 取当前冷却快照（key id → 剩余秒）。
-func (s Channels) coolingMap() map[string]int {
-	now := time.Now()
-	out := map[string]int{}
-	for _, e := range s.A.Cooldowns().Snapshot(now) {
-		out[e.KeyID] = int(e.Until.Sub(now).Seconds()) + 1 // 钳为正（Review Focus 5）
-	}
-	return out
+	ChannelView
+	Suggestions []string
 }
 
 func (s Channels) view(c storage.Channel) ChannelView {
-	v := ChannelView{ID: c.ID, Name: c.Name, Type: c.Type, Protocol: c.Protocol,
-		BaseURL: c.BaseURL, Priority: c.Priority, Enabled: c.Enabled,
-		AllowPrivateUpstream: c.AllowPrivateUpstream}
-	v.KeyCount, _ = s.A.Store().ChannelKeys().CountByChannel(c.ID)
-	v.ModelCount, _ = s.A.Store().ChannelModels().CountByChannel(c.ID)
-	cool := s.coolingMap()
-	keys, _ := s.A.Store().ChannelKeys().ListByChannel(c.ID)
-	for _, k := range keys {
-		if _, ok := cool[k.ID]; ok {
-			v.CoolingCount++
-		}
+	v := ChannelView{ID: c.ID, Name: c.Name, PresetID: c.PresetID, Protocol: c.Protocol,
+		BaseURL: c.BaseURL, Enabled: c.Enabled, AllowPrivate: c.AllowPrivateUpstream,
+		HasKey: c.CredentialRef != ""}
+	if names, err := s.A.Store().ChannelModels().Suggestions(c.ID); err == nil {
+		v.SuggestionCount = len(names)
 	}
 	return v
 }
@@ -105,89 +69,103 @@ func (s Channels) Get(id string) (ChannelDetail, error) {
 	if err != nil {
 		return ChannelDetail{}, err
 	}
-	d := ChannelDetail{Channel: s.view(c)}
-	cool := s.coolingMap()
-	keys, _ := s.A.Store().ChannelKeys().ListByChannel(id)
-	for _, k := range keys {
-		kv := KeyView{ID: k.ID, ChannelID: k.ChannelID, Name: k.Name, KeyTail: k.KeyTail,
-			SecretBackend: k.SecretBackend, Priority: k.Priority, Enabled: k.Enabled}
-		if sec, ok := cool[k.ID]; ok {
-			kv.Cooling, kv.CoolingRemainSec = true, sec
-			for _, e := range s.A.Cooldowns().Snapshot(time.Now()) {
-				if e.KeyID == k.ID {
-					kv.CoolingReason = e.Reason
-				}
-			}
-		}
-		d.Keys = append(d.Keys, kv)
-	}
-	models, _ := s.A.Store().ChannelModels().ListByChannel(id)
-	for _, m := range models {
-		d.Models = append(d.Models, ChannelModelRow{ID: m.ID, ChannelID: m.ChannelID,
-			PublicModel: m.PublicModel, UpstreamModel: m.UpstreamModel, Enabled: m.Enabled})
-	}
+	d := ChannelDetail{ChannelView: s.view(c)}
+	d.Suggestions, _ = s.A.Store().ChannelModels().Suggestions(id)
 	return d, nil
 }
 
-func (s Channels) Create(typeID, name, baseURL string, priority int, enabled, allowPrivate bool) (ChannelView, error) {
-	preset, ok := provider.LookupPreset(typeID)
-	if !ok {
-		return ChannelView{}, fmt.Errorf("未知渠道类型: %s", typeID)
-	}
-	if baseURL == "" {
-		baseURL = preset.DefaultBaseURL
-	}
-	if baseURL == "" {
-		return ChannelView{}, fmt.Errorf("该类型需要填写 Base URL")
-	}
-	if err := provider.ValidateBaseURL(baseURL, allowPrivate); err != nil {
+// Create 建渠道，apiKey 非空则同时写入单 Key。presetID 仅作预设回显（可空），
+// protocol 与 baseURL 由调用方（预设表单）显式给出。
+func (s Channels) Create(presetID, name, baseURL, protocol, apiKey string, enabled, allowPrivate bool) (ChannelView, error) {
+	if err := validateChannelURL(baseURL, allowPrivate); err != nil {
 		return ChannelView{}, err
 	}
-	c := storage.Channel{ID: storage.NewID(), Name: name, Type: preset.ID,
-		Protocol: preset.Protocol, BaseURL: baseURL, Priority: priority,
-		Enabled: enabled, AllowPrivateUpstream: allowPrivate}
-	if err := s.A.Store().Channels().Save(c); err != nil {
-		return ChannelView{}, err
+	if protocol != "anthropic" && protocol != "openai" {
+		return ChannelView{}, fmt.Errorf("协议必须是 anthropic 或 openai")
 	}
-	s.A.Log().Info("channel created", "id", c.ID, "type", preset.ID, "actor", "ui", "result", "ok")
-	return s.view(c), nil
+	id := storage.NewID()
+	c := storage.Channel{ID: id, Name: name, Protocol: protocol, BaseURL: baseURL,
+		PresetID: presetID, Enabled: enabled, AllowPrivateUpstream: allowPrivate}
+	if apiKey != "" {
+		ref := credential.ChannelKey(id)
+		if err := s.creds().Set(ref, []byte(apiKey)); err != nil {
+			return ChannelView{}, fmt.Errorf("密钥写入密钥存储失败: %w", err)
+		}
+		c.CredentialRef = ref
+	}
+	saved, err := s.A.Store().Channels().Save(c)
+	if err != nil {
+		if c.CredentialRef != "" {
+			s.creds().Delete(c.CredentialRef)
+		}
+		return ChannelView{}, friendlySaveErr(err)
+	}
+	s.A.Log().Info("channel created", "id", id, "preset", presetID, "protocol", protocol, "actor", "ui", "result", "ok")
+	if c.CredentialRef != "" {
+		s.A.Log().Info("channel key set", "id", id, "actor", "ui", "result", "ok")
+	}
+	return s.view(saved), nil
 }
 
-func (s Channels) Update(id, name, baseURL string, priority int, enabled, allowPrivate bool) error {
+// Update 改渠道字段；apiKey 非空=覆盖单 Key，空=保持原 Key 不变。
+func (s Channels) Update(id, name, baseURL, apiKey string, enabled, allowPrivate bool) error {
 	c, err := s.A.Store().Channels().Get(id)
 	if err != nil {
 		return err
 	}
-	if err := provider.ValidateBaseURL(baseURL, allowPrivate); err != nil {
+	if err := validateChannelURL(baseURL, allowPrivate); err != nil {
 		return err
 	}
-	c.Name, c.BaseURL, c.Priority, c.Enabled, c.AllowPrivateUpstream = name, baseURL, priority, enabled, allowPrivate
-	if err := s.A.Store().Channels().Save(c); err != nil {
-		return err
+	c.Name, c.BaseURL, c.Enabled, c.AllowPrivateUpstream = name, baseURL, enabled, allowPrivate
+	keySet := false
+	if apiKey != "" {
+		ref := credential.ChannelKey(id)
+		if err := s.creds().Set(ref, []byte(apiKey)); err != nil {
+			return fmt.Errorf("密钥写入密钥存储失败: %w", err)
+		}
+		c.CredentialRef = ref
+		keySet = true
+	}
+	if _, err := s.A.Store().Channels().Save(c); err != nil {
+		return friendlySaveErr(err)
 	}
 	s.A.Log().Info("channel updated", "id", id, "actor", "ui", "result", "ok")
+	if keySet {
+		s.A.Log().Info("channel key set", "id", id, "actor", "ui", "result", "ok")
+	}
 	return nil
 }
 
-// Remove 删渠道并级联清理密钥本体（channel_keys 行由 FK CASCADE）。
-func (s Channels) Remove(id string) error {
-	keys, _ := s.A.Store().ChannelKeys().ListByChannel(id)
-	for _, k := range keys {
-		s.creds().Delete(k.SecretKey)
+// Remove 删渠道：先清密钥本体，再删行（channel_models 由 FK CASCADE）。
+func (s Channels) Remove(id string) {
+	if c, err := s.A.Store().Channels().Get(id); err == nil && c.CredentialRef != "" {
+		s.creds().Delete(c.CredentialRef)
 	}
 	if err := s.A.Store().Channels().Delete(id); err != nil {
-		return err
+		s.A.Log().Error("channel remove failed", "id", id, "err", err)
+		return
 	}
 	s.A.Log().Info("channel removed", "id", id, "actor", "ui", "result", "ok")
-	return nil
 }
 
-func (s Channels) SetEnabled(id string, on bool) error {
-	err := s.A.Store().Channels().SetEnabled(id, on)
-	if err == nil {
-		s.A.Log().Info("channel enabled", "id", id, "on", on, "actor", "ui", "result", "ok")
+func (s Channels) SetEnabled(id string, on bool) {
+	if err := s.A.Store().Channels().SetEnabled(id, on); err != nil {
+		s.A.Log().Error("channel enable failed", "id", id, "on", on, "err", err)
+		return
 	}
-	return err
+	s.A.Log().Info("channel enabled", "id", id, "on", on, "actor", "ui", "result", "ok")
+}
+
+// secret 取渠道单 Key 本体；未配置或取不到返回中文错误。
+func (s Channels) secret(c storage.Channel) (string, error) {
+	if c.CredentialRef == "" {
+		return "", fmt.Errorf("渠道未配置密钥")
+	}
+	v, err := s.creds().Get(c.CredentialRef)
+	if err != nil {
+		return "", fmt.Errorf("读取密钥失败: %w", err)
+	}
+	return string(v), nil
 }
 
 func (s Channels) Test(id string) provider.ProbeResult {
@@ -195,17 +173,11 @@ func (s Channels) Test(id string) provider.ProbeResult {
 	if err != nil {
 		return provider.ProbeResult{Stage: "lookup", Error: err.Error()}
 	}
-	apiKey := ""
-	keys, _ := s.A.Store().ChannelKeys().ListByChannel(id)
-	for _, k := range keys {
-		if k.Enabled {
-			if v, err := s.creds().Get(k.SecretKey); err == nil {
-				apiKey = string(v)
-			}
-			break
-		}
+	key, err := s.secret(c)
+	if err != nil {
+		return provider.ProbeResult{Stage: "credential", Error: err.Error()}
 	}
-	return provider.Probe(context15(), c.Protocol, c.BaseURL, apiKey, c.AllowPrivateUpstream)
+	return provider.Probe(context15(), c.Protocol, c.BaseURL, key, c.AllowPrivateUpstream)
 }
 
 // fetchModelsClient 是 FetchModels 专用的包级私有 client：不跟随重定向
@@ -225,18 +197,9 @@ func (s Channels) FetchModels(id string) ([]string, error) {
 	if err := provider.ValidateBaseURL(c.BaseURL, c.AllowPrivateUpstream); err != nil {
 		return nil, fmt.Errorf("Base URL 校验失败: %w", err)
 	}
-	key := ""
-	keys, _ := s.A.Store().ChannelKeys().ListByChannel(id)
-	for _, k := range keys {
-		if k.Enabled {
-			if v, gerr := s.creds().Get(k.SecretKey); gerr == nil {
-				key = string(v)
-			}
-			break
-		}
-	}
-	if key == "" {
-		return nil, fmt.Errorf("渠道无可用密钥，无法从上游获取模型")
+	key, err := s.secret(c)
+	if err != nil {
+		return nil, fmt.Errorf("渠道无可用密钥，无法从上游获取模型: %w", err)
 	}
 	req, err := http.NewRequestWithContext(context15(), http.MethodGet,
 		strings.TrimRight(c.BaseURL, "/")+"/v1/models", nil)
@@ -275,211 +238,50 @@ func (s Channels) FetchModels(id string) ([]string, error) {
 	return ids, nil
 }
 
-// AddKeys 批量导入：keysText 每行一枚（空行/首尾空白容忍）；多枚共享名称，
-// 以尾4区分。逐枚落密钥存储+建行；中途失败返回已存数量与错误（部分成功明示）。
-func (s Channels) AddKeys(channelID, name, keysText string, allowFallback bool) (int, error) {
+// SetSuggestions 全量替换渠道的模型建议列表（空白/空串/重复项剔除）。
+func (s Channels) SetSuggestions(channelID string, models []string) error {
 	if _, err := s.A.Store().Channels().Get(channelID); err != nil {
-		return 0, fmt.Errorf("渠道不存在: %w", err)
+		return fmt.Errorf("渠道不存在: %w", err)
 	}
-	if name == "" {
-		name = "key"
-	}
-	var lines []string
-	for _, ln := range strings.Split(keysText, "\n") {
-		if ln = strings.TrimSpace(ln); ln != "" {
-			lines = append(lines, ln)
-		}
-	}
-	if len(lines) == 0 {
-		return 0, fmt.Errorf("至少需要一行密钥")
-	}
-	stored := 0
-	for _, apiKey := range lines {
-		backend, err := pickBackendFor(s, allowFallback)
-		if err != nil {
-			return stored, fmt.Errorf("第 %d 枚密钥: %w", stored+1, err)
-		}
-		id := storage.NewID()
-		ref := credential.AccountKey(id)
-		if err := s.creds().Set(ref, []byte(apiKey)); err != nil {
-			return stored, fmt.Errorf("第 %d 枚密钥写入密钥存储失败: %w", stored+1, err)
-		}
-		row := storage.ChannelKey{ID: id, ChannelID: channelID, Name: name,
-			SecretKey: ref, SecretBackend: backend, KeyTail: tail4(apiKey),
-			Priority: 10, Enabled: true}
-		if err := s.A.Store().ChannelKeys().Save(row); err != nil {
-			s.creds().Delete(ref)
-			return stored, fmt.Errorf("第 %d 枚密钥入库失败: %w", stored+1, err)
-		}
-		stored++
-	}
-	s.A.Log().Info("channel keys added", "channel", channelID, "count", stored, "actor", "ui", "result", "ok")
-	return stored, nil
-}
-
-// pickBackendFor 是密钥后端确认闸：系统密钥环优先，降级文件需显式允许（原与 Accounts 服务同源，后者已随渠道化退役）。
-func pickBackendFor(s Channels, allowFallback bool) (string, error) {
-	if s.keychainAvailable() {
-		return "os-keychain", nil
-	}
-	if allowFallback {
-		return "fallback-file", nil
-	}
-	return "", fmt.Errorf("系统密钥存储不可用；需显式允许文件降级（allowFallback）")
-}
-
-func (s Channels) SetKeyEnabled(id string, on bool) error {
-	err := s.A.Store().ChannelKeys().SetEnabled(id, on)
-	if err == nil {
-		s.A.Log().Info("channel key enabled", "id", id, "on", on, "actor", "ui", "result", "ok")
-	}
-	return err
-}
-
-func (s Channels) RemoveKey(id string) error {
-	k, err := s.A.Store().ChannelKeys().Get(id)
-	if err != nil {
+	if err := s.A.Store().ChannelModels().DeleteByChannel(channelID); err != nil {
 		return err
 	}
-	s.creds().Delete(k.SecretKey)
-	if err := s.A.Store().ChannelKeys().Delete(id); err != nil {
-		return err
+	seen := map[string]bool{}
+	for _, m := range models {
+		m = strings.TrimSpace(m)
+		if m == "" || seen[m] {
+			continue
+		}
+		seen[m] = true
+		if _, err := s.A.Store().ChannelModels().Save(storage.ChannelModel{
+			ChannelID: channelID, ModelName: m}); err != nil {
+			return err
+		}
 	}
-	s.A.Log().Info("channel key removed", "id", id, "actor", "ui", "result", "ok")
+	s.A.Log().Info("channel suggestions set", "channel", channelID, "count", len(seen), "actor", "ui", "result", "ok")
 	return nil
 }
 
-func (s Channels) TestKey(id string) provider.ProbeResult {
-	k, err := s.A.Store().ChannelKeys().Get(id)
-	if err != nil {
-		return provider.ProbeResult{Stage: "lookup", Error: err.Error()}
-	}
-	c, err := s.A.Store().Channels().Get(k.ChannelID)
-	if err != nil {
-		return provider.ProbeResult{Stage: "lookup", Error: err.Error()}
-	}
-	key, err := s.creds().Get(k.SecretKey)
-	if err != nil {
-		return provider.ProbeResult{Stage: "credential", Error: err.Error()}
-	}
-	return provider.Probe(context15(), c.Protocol, c.BaseURL, string(key), c.AllowPrivateUpstream)
-}
-
-func (s Channels) AddModel(channelID, public, upstream string) (ChannelModelRow, error) {
-	if public == "" || upstream == "" {
-		return ChannelModelRow{}, fmt.Errorf("公开模型名与上游模型名均不能为空")
-	}
-	if _, err := s.A.Store().Channels().Get(channelID); err != nil {
-		return ChannelModelRow{}, fmt.Errorf("渠道不存在: %w", err)
-	}
-	m := storage.ChannelModel{ID: storage.NewID(), ChannelID: channelID,
-		PublicModel: public, UpstreamModel: upstream, Enabled: true}
-	if err := s.A.Store().ChannelModels().Save(m); err != nil {
-		return ChannelModelRow{}, fmt.Errorf("该渠道已存在公开模型 %s", public)
-	}
-	s.A.Log().Info("channel model added", "channel", channelID, "public", public,
-		"upstream", upstream, "actor", "ui", "result", "ok")
-	return ChannelModelRow{ID: m.ID, ChannelID: channelID, PublicModel: public,
-		UpstreamModel: upstream, Enabled: true}, nil
-}
-
-func (s Channels) UpdateModel(id, public, upstream string) error {
-	if public == "" || upstream == "" {
-		return fmt.Errorf("公开模型名与上游模型名均不能为空")
-	}
-	m, err := s.A.Store().ChannelModels().Get(id)
-	if err != nil {
-		return err
-	}
-	m.PublicModel, m.UpstreamModel = public, upstream
-	if err := s.A.Store().ChannelModels().Save(m); err != nil {
-		return fmt.Errorf("该渠道已存在公开模型 %s", public)
-	}
-	s.A.Log().Info("channel model updated", "id", id, "actor", "ui", "result", "ok")
-	return nil
-}
-
-func (s Channels) SetModelEnabled(id string, on bool) error {
-	err := s.A.Store().ChannelModels().SetEnabled(id, on)
-	if err == nil {
-		s.A.Log().Info("channel model enabled", "id", id, "on", on, "actor", "ui", "result", "ok")
-	}
-	return err
-}
-
-func (s Channels) RemoveModel(id string) error {
-	err := s.A.Store().ChannelModels().Delete(id)
-	if err == nil {
-		s.A.Log().Info("channel model removed", "id", id, "actor", "ui", "result", "ok")
-	}
-	return err
-}
-
-// ---------- Models 聚合（模型页数据源，spec §7） ----------
-
-type ModelAggregateView struct {
-	ID, ChannelID, ChannelName, PublicModel, UpstreamModel string
-	Enabled                                                bool
-}
-
-type ModelsAgg struct{ A *app.App }
-
-func (s ModelsAgg) ListAll() []ModelAggregateView {
-	ms, err := s.A.Store().ChannelModels().List()
+// Suggestions 返回渠道的模型建议名（按名排序）。
+func (s Channels) Suggestions(channelID string) []string {
+	out, err := s.A.Store().ChannelModels().Suggestions(channelID)
 	if err != nil {
 		return nil
-	}
-	out := make([]ModelAggregateView, 0, len(ms))
-	for _, m := range ms {
-		name := m.ChannelID
-		if c, err := s.A.Store().Channels().Get(m.ChannelID); err == nil {
-			name = c.Name
-		}
-		out = append(out, ModelAggregateView{ID: m.ID, ChannelID: m.ChannelID,
-			ChannelName: name, PublicModel: m.PublicModel,
-			UpstreamModel: m.UpstreamModel, Enabled: m.Enabled})
 	}
 	return out
 }
 
-func (s ModelsAgg) SetEnabled(id string, on bool) error {
-	return s.A.Store().ChannelModels().SetEnabled(id, on)
+func validateChannelURL(baseURL string, allowPrivate bool) error {
+	if baseURL == "" {
+		return fmt.Errorf("需要填写 Base URL")
+	}
+	return provider.ValidateBaseURL(baseURL, allowPrivate)
 }
 
-// ---------- Gateway.PoolStatus（概览池状态条，spec §8） ----------
-
-type PoolEntry struct {
-	ChannelID, ChannelName, KeyID, KeyName string
-	CoolingUntilMs                         int64
-	RemainingSec                           int
-	Reason                                 string
-}
-
-// PoolStatus 返回当前冷却中的密钥（附渠道/密钥名）。正常密钥不出现。
-// 简报实现说明的合并形态：一次 keys 遍历同时取全 ChannelID/ChannelName/KeyName，
-// 免去 chanIDOf 的二次全表扫（行为与简报逐字版一致）。
-func (g Gateway) PoolStatus() []PoolEntry {
-	now := time.Now()
-	sn := g.A.Cooldowns().Snapshot(now)
-	if len(sn) == 0 {
-		return nil
+// friendlySaveErr 把 name UNIQUE 冲突译成中文友好错误（repo 约定由 bridge 友好化）。
+func friendlySaveErr(err error) error {
+	if err != nil && strings.Contains(err.Error(), "UNIQUE") {
+		return fmt.Errorf("渠道名已存在")
 	}
-	name := map[string][3]string{} // key id → [渠道ID, 渠道名, 密钥名]
-	cs, _ := g.A.Store().Channels().List()
-	for _, c := range cs {
-		keys, _ := g.A.Store().ChannelKeys().ListByChannel(c.ID)
-		for _, k := range keys {
-			name[k.ID] = [3]string{c.ID, c.Name, k.Name}
-		}
-	}
-	out := make([]PoolEntry, 0, len(sn))
-	for _, e := range sn {
-		p := PoolEntry{KeyID: e.KeyID, CoolingUntilMs: e.Until.UnixMilli(),
-			RemainingSec: int(e.Until.Sub(now).Seconds()) + 1, Reason: e.Reason}
-		if n, ok := name[e.KeyID]; ok {
-			p.ChannelID, p.ChannelName, p.KeyName = n[0], n[1], n[2]
-		}
-		out = append(out, p)
-	}
-	return out
+	return err
 }

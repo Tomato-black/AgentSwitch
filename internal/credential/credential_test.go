@@ -7,9 +7,9 @@ import (
 	"testing"
 )
 
-func TestAccountKey(t *testing.T) {
-	if AccountKey("abc") != "account:abc" {
-		t.Fatal(AccountKey("abc"))
+func TestChannelKey(t *testing.T) {
+	if ChannelKey("abc") != "channel:abc" {
+		t.Fatal(ChannelKey("abc"))
 	}
 }
 

@@ -1,6 +1,6 @@
 // Package bridge 是管理面桥接层：把 app.App 的能力整理为经 mygo.Bind
-// 暴露给 desktop 的三个服务——Gateway（网关控制+池状态）、
-// Channels（渠道聚合根）、ModelsAgg（模型跨渠道聚合）。后者在 channels.go。
+// 暴露给 desktop 的服务——Gateway（网关控制）与 Channels（渠道聚合根，
+// 每渠道单 Key + 模型建议列表）。后者在 channels.go。
 package bridge
 
 import (

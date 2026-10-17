@@ -1,12 +1,12 @@
 package bridge
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"AgentSwitch/internal/credential"
 )
@@ -18,252 +18,173 @@ func channelsSvc(t *testing.T) (Channels, *credential.Manager) {
 		Primary:       credential.NewFallbackFile(filepath.Join(t.TempDir(), "s.json")),
 		AllowFallback: true,
 	}
-	return Channels{A: a, Creds: creds, KeychainAvailable: func() bool { return false }}, creds
+	return Channels{A: a, Creds: creds}, creds
 }
 
-func TestChannelsCreateValidatesPresetAndURL(t *testing.T) {
-	cs, _ := channelsSvc(t)
-	c, err := cs.Create("anthropic-official", "official", "", 10, true, false)
+// TestCreateChannelStoresOneKey：Create 后 HasKey、keychain 可 Get。
+func TestCreateChannelStoresOneKey(t *testing.T) {
+	cs, creds := channelsSvc(t)
+	c, err := cs.Create("", "main", "https://api.example.com", "anthropic", "sk-abc12345", true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Protocol != "anthropic" || c.BaseURL != "https://api.anthropic.com" {
-		t.Fatalf("preset default: %+v", c)
+	if !c.HasKey {
+		t.Fatalf("HasKey after Create: %+v", c)
 	}
-	// 兼容类无默认 URL：空 BaseURL 报中文错
-	if _, err := cs.Create("openai-compatible", "agg", "", 10, true, false); err == nil ||
+	got, err := creds.Get(credential.ChannelKey(c.ID))
+	if err != nil || string(got) != "sk-abc12345" {
+		t.Fatalf("keychain Get: %q %v", got, err)
+	}
+	d, err := cs.Get(c.ID)
+	if err != nil || !d.HasKey || d.SuggestionCount != 0 {
+		t.Fatalf("detail %+v %v", d, err)
+	}
+}
+
+// TestUpdateEmptyKeyKeepsOld：Update(apiKey="") 后旧 Key 仍在。
+func TestUpdateEmptyKeyKeepsOld(t *testing.T) {
+	cs, creds := channelsSvc(t)
+	c, err := cs.Create("", "main", "https://api.example.com", "anthropic", "sk-old12345", true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cs.Update(c.ID, "main2", "https://api2.example.com", "", false, false); err != nil {
+		t.Fatal(err)
+	}
+	got, err := creds.Get(credential.ChannelKey(c.ID))
+	if err != nil || string(got) != "sk-old12345" {
+		t.Fatalf("old key must remain: %q %v", got, err)
+	}
+	d, err := cs.Get(c.ID)
+	if err != nil || !d.HasKey || d.Name != "main2" {
+		t.Fatalf("detail %+v %v", d, err)
+	}
+	// 非空 apiKey 覆盖旧 Key
+	if err := cs.Update(c.ID, "main2", "https://api2.example.com", "sk-new67890", false, false); err != nil {
+		t.Fatal(err)
+	}
+	got, err = creds.Get(credential.ChannelKey(c.ID))
+	if err != nil || string(got) != "sk-new67890" {
+		t.Fatalf("key must be replaced: %q %v", got, err)
+	}
+}
+
+// TestRemoveDeletesKeyAndSuggestions：Remove 后 keychain Delete 被调（fallback
+// file store 断言）且建议列表清空。
+func TestRemoveDeletesKeyAndSuggestions(t *testing.T) {
+	cs, creds := channelsSvc(t)
+	c, err := cs.Create("", "main", "https://api.example.com", "anthropic", "sk-rm123456", true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cs.SetSuggestions(c.ID, []string{"m-a", "m-b"}); err != nil {
+		t.Fatal(err)
+	}
+	cs.Remove(c.ID)
+	if _, err := creds.Get(credential.ChannelKey(c.ID)); !errors.Is(err, credential.ErrNotFound) {
+		t.Fatalf("key must be deleted from fallback file store: %v", err)
+	}
+	if got := cs.Suggestions(c.ID); len(got) != 0 {
+		t.Fatalf("suggestions must be gone: %v", got)
+	}
+	if _, err := cs.Get(c.ID); err == nil {
+		t.Fatal("channel must be gone")
+	}
+}
+
+// TestSetSuggestionsReplaces：两次 SetSuggestions 以第二次为准。
+func TestSetSuggestionsReplaces(t *testing.T) {
+	cs, _ := channelsSvc(t)
+	c, err := cs.Create("", "main", "https://api.example.com", "anthropic", "sk-abc12345", true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cs.SetSuggestions(c.ID, []string{"m-a", "m-b"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cs.SetSuggestions(c.ID, []string{"m-c"}); err != nil {
+		t.Fatal(err)
+	}
+	got := cs.Suggestions(c.ID)
+	if len(got) != 1 || got[0] != "m-c" {
+		t.Fatalf("suggestions: %v", got)
+	}
+	d, err := cs.Get(c.ID)
+	if err != nil || d.SuggestionCount != 1 || len(d.Suggestions) != 1 || d.Suggestions[0] != "m-c" {
+		t.Fatalf("detail %+v %v", d, err)
+	}
+}
+
+func TestChannelsCreateValidatesURLAndProtocol(t *testing.T) {
+	cs, _ := channelsSvc(t)
+	if _, err := cs.Create("", "x", "", "anthropic", "sk-a", true, false); err == nil ||
 		!strings.Contains(err.Error(), "Base URL") {
 		t.Fatalf("empty baseURL: %v", err)
 	}
-	// 未知类型
-	if _, err := cs.Create("nope", "x", "https://x.example.com", 10, true, false); err == nil {
-		t.Fatal("unknown type must error")
+	if _, err := cs.Create("", "x", "https://x.example.com", "gopher", "sk-a", true, false); err == nil {
+		t.Fatal("unknown protocol must error")
 	}
-	// 非回环 http 拒绝（ValidateBaseURL 沿用）
-	if _, err := cs.Create("anthropic-compatible", "x", "http://relay.example.com", 10, true, false); err == nil {
+	if _, err := cs.Create("", "x", "http://relay.example.com", "anthropic", "sk-a", true, false); err == nil {
 		t.Fatal("non-loopback http must be rejected")
 	}
-}
-
-func TestChannelsUpdateListRemove(t *testing.T) {
-	cs, _ := channelsSvc(t)
-	c, _ := cs.Create("anthropic-compatible", "main", "https://r.example.com", 10, true, false)
-	if _, err := cs.AddKeys(c.ID, "k", "sk-abc12345\n", true); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := cs.AddModel(c.ID, "pub-1", "up-1"); err != nil {
-		t.Fatal(err)
-	}
-	if err := cs.Update(c.ID, "main2", "https://r2.example.com", 5, false, false); err != nil {
-		t.Fatal(err)
-	}
-	list := cs.List()
-	if len(list) != 1 || list[0].Name != "main2" || list[0].Priority != 5 || list[0].Enabled {
-		t.Fatalf("list %+v", list)
-	}
-	if list[0].KeyCount != 1 || list[0].ModelCount != 1 {
-		t.Fatalf("counts: %+v", list[0])
-	}
-	d, err := cs.Get(c.ID)
-	if err != nil || len(d.Keys) != 1 || len(d.Models) != 1 {
-		t.Fatalf("detail %+v %v", d, err)
-	}
-	// Remove 级联清密钥本体
-	if err := cs.Remove(c.ID); err != nil {
-		t.Fatal(err)
-	}
-	if len(cs.List()) != 0 {
-		t.Fatal("remove failed")
+	c, err := cs.Create("anthropic-official", "ok", "https://api.anthropic.com", "anthropic", "sk-a", true, false)
+	if err != nil || c.PresetID != "anthropic-official" {
+		t.Fatalf("create: %+v %v", c, err)
 	}
 }
 
-func TestChannelsAddKeysBatchAndBlankLines(t *testing.T) {
-	cs, _ := channelsSvc(t)
-	c, _ := cs.Create("anthropic-compatible", "m", "https://r.example.com", 10, true, false)
-	// Review Focus 4：空行与首尾空白容忍
-	n, err := cs.AddKeys(c.ID, "pool", "  sk-aaa11111  \n\nsk-bbb22222\n\n", true)
-	if err != nil || n != 2 {
-		t.Fatalf("n=%d err=%v", n, err)
-	}
-	// 密钥本体存在性由 Remove/RemoveKey 的级联清密钥路径覆盖
-	d, _ := cs.Get(c.ID)
-	// ListByChannel 同优先级按随机 id 排序——按尾4索引断言（值与简报一致，不依赖行序）。
-	if len(d.Keys) != 2 {
-		t.Fatalf("keys %+v", d.Keys)
-	}
-	tails := map[string]string{}
-	for _, k := range d.Keys {
-		tails[k.KeyTail] = k.SecretBackend
-	}
-	if tails["1111"] != "fallback-file" || tails["2222"] != "fallback-file" {
-		t.Fatalf("keys %+v", d.Keys)
-	}
-}
-
-func TestChannelsRemoveKeyDeletesSecretAndCascade(t *testing.T) {
-	cs, _ := channelsSvc(t)
-	c, _ := cs.Create("anthropic-compatible", "m", "https://r.example.com", 10, true, false)
-	if _, err := cs.AddKeys(c.ID, "k", "sk-abc12345", true); err != nil {
-		t.Fatal(err)
-	}
-	d, _ := cs.Get(c.ID)
-	if err := cs.RemoveKey(d.Keys[0].ID); err != nil {
-		t.Fatal(err)
-	}
-	d, _ = cs.Get(c.ID)
-	if len(d.Keys) != 0 {
-		t.Fatal("key not removed")
-	}
-	// 删渠道级联删 key 行；密钥本体清理在 Remove 内逐个 Delete（不报错即过）
-	if _, err := cs.AddKeys(c.ID, "k", "sk-def67890", true); err != nil {
-		t.Fatal(err)
-	}
-	if err := cs.Remove(c.ID); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// Review Focus 2：重复公开模型 → 中文友好错误。
-func TestChannelsAddModelDuplicateFriendlyError(t *testing.T) {
-	cs, _ := channelsSvc(t)
-	c, _ := cs.Create("anthropic-compatible", "m", "https://r.example.com", 10, true, false)
-	if _, err := cs.AddModel(c.ID, "pub", "up"); err != nil {
-		t.Fatal(err)
-	}
-	_, err := cs.AddModel(c.ID, "pub", "up2")
-	if err == nil || !strings.Contains(err.Error(), "已存在") {
-		t.Fatalf("want friendly duplicate error, got %v", err)
-	}
-	// 跨渠道同公开名允许
-	c2, _ := cs.Create("openai-compatible", "o", "https://o.example.com", 20, true, false)
-	if _, err := cs.AddModel(c2.ID, "pub", "up-openai"); err != nil {
-		t.Fatalf("cross-channel duplicate must be allowed: %v", err)
-	}
-}
-
-func TestChannelsTestAndTestKey(t *testing.T) {
+func TestChannelsTestAndFetchModels(t *testing.T) {
+	var gotOpenAIBearer bool
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/messages" {
-			t.Errorf("probe path %q", r.URL.Path)
+		switch r.URL.Path {
+		case "/v1/models":
+			if r.Header.Get("Authorization") == "" && r.Header.Get("X-Api-Key") == "" {
+				t.Error("no auth header")
+			}
+			if strings.HasPrefix(r.Header.Get("Authorization"), "Bearer sk-") {
+				gotOpenAIBearer = true
+			}
+			w.Write([]byte(`{"data":[{"id":"m-a"},{"id":"m-b"}]}`))
+		default: // probe（anthropic→/v1/messages，openai→/v1/chat/completions）
+			w.Write([]byte(`{}`))
 		}
-		w.Write([]byte(`{}`))
 	}))
 	defer up.Close()
 	cs, _ := channelsSvc(t)
-	c, err := cs.Create("anthropic-compatible", "m", up.URL, 10, true, false)
+	c, err := cs.Create("anthropic-compatible", "m", up.URL, "anthropic", "sk-abc12345", true, true)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := cs.AddKeys(c.ID, "k", "sk-abc12345", true); err != nil {
 		t.Fatal(err)
 	}
 	if res := cs.Test(c.ID); !res.OK {
 		t.Fatalf("channel test: %+v", res)
 	}
-	d, _ := cs.Get(c.ID)
-	if res := cs.TestKey(d.Keys[0].ID); !res.OK {
-		t.Fatalf("key test: %+v", res)
-	}
-}
-
-func TestChannelsFetchModelsBothProtocols(t *testing.T) {
-	var gotOpenAIBearer bool
-	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/models" {
-			t.Errorf("path %q", r.URL.Path)
-		}
-		if r.Header.Get("Authorization") == "" && r.Header.Get("X-Api-Key") == "" {
-			t.Error("no auth header")
-		}
-		if strings.HasPrefix(r.Header.Get("Authorization"), "Bearer sk-") {
-			gotOpenAIBearer = true
-		}
-		w.Write([]byte(`{"data":[{"id":"m-a"},{"id":"m-b"}]}`))
-	}))
-	defer up.Close()
-	cs, _ := channelsSvc(t)
-	c, _ := cs.Create("anthropic-compatible", "m", up.URL, 10, true, false)
-	if _, err := cs.AddKeys(c.ID, "k", "sk-abc12345", true); err != nil {
-		t.Fatal(err)
-	}
 	ids, err := cs.FetchModels(c.ID)
 	if err != nil || len(ids) != 2 || ids[1] != "m-b" {
 		t.Fatalf("fetch: %v %v", ids, err)
 	}
-	// openai 渠道真实请求：断言上游收到 Authorization: Bearer
-	c2, _ := cs.Create("openai-compatible", "o", up.URL, 20, true, false)
-	if _, err := cs.AddKeys(c2.ID, "k2", "sk-openai6789", true); err != nil {
+	// openai 渠道：断言上游收到 Authorization: Bearer
+	c2, err := cs.Create("openai-compatible", "o", up.URL, "openai", "sk-openai6789", true, true)
+	if err != nil {
 		t.Fatal(err)
 	}
-	ids2, err := cs.FetchModels(c2.ID)
-	if err != nil || len(ids2) != 2 {
-		t.Fatalf("openai fetch: %v %v", ids2, err)
+	if _, err := cs.FetchModels(c2.ID); err != nil {
+		t.Fatal(err)
 	}
 	if !gotOpenAIBearer {
 		t.Fatal("openai fetch must send Authorization: Bearer")
 	}
 	// 无密钥渠道报错
-	c3, _ := cs.Create("openai-compatible", "o3", up.URL, 30, true, false)
+	c3, err := cs.Create("openai-compatible", "o3", up.URL, "openai", "", true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c3.HasKey {
+		t.Fatal("empty apiKey must leave HasKey false")
+	}
 	if _, err := cs.FetchModels(c3.ID); err == nil {
 		t.Fatal("fetch without key must error")
 	}
-}
-
-func TestChannelsPoolStatusAndCooldownKeyView(t *testing.T) {
-	cs, _ := channelsSvc(t)
-	c, _ := cs.Create("anthropic-compatible", "m", "https://r.example.com", 10, true, false)
-	if _, err := cs.AddKeys(c.ID, "k", "sk-abc12345", true); err != nil {
-		t.Fatal(err)
-	}
-	// 直接冷却 k1
-	d, _ := cs.Get(c.ID)
-	cs.A.Cooldowns().MarkClassified(d.Keys[0].ID, "rate_limited", 30, time.Now())
-	d, _ = cs.Get(c.ID)
-	if !d.Keys[0].Cooling || d.Keys[0].CoolingRemainSec <= 0 || d.Keys[0].CoolingRemainSec > 30 {
-		t.Fatalf("key cooling view: %+v", d.Keys[0])
-	}
-	if d.Channel.CoolingCount != 1 {
-		t.Fatalf("channel cooling count: %+v", d.Channel)
-	}
-	ps := Gateway{A: cs.A}.PoolStatus()
-	if len(ps) != 1 || ps[0].KeyName != "k" || ps[0].RemainingSec <= 0 {
-		t.Fatalf("pool: %+v", ps)
-	}
-	// Review Focus 5：剩余秒恒为正（coolingMap +1 钳制），过期条目由 Snapshot 过滤
-	for _, e := range ps {
-		if e.RemainingSec < 0 {
-			t.Fatalf("negative remaining: %+v", e)
-		}
-	}
-}
-
-func TestModelsAggJoinAndToggle(t *testing.T) {
-	cs, _ := channelsSvc(t)
-	c1, _ := cs.Create("anthropic-compatible", "a", "https://a.example.com", 10, true, false)
-	c2, _ := cs.Create("openai-compatible", "b", "https://b.example.com", 20, true, false)
-	cs.AddModel(c1.ID, "pub", "up-a")
-	cs.AddModel(c2.ID, "pub", "up-b")
-	agg := ModelsAgg{A: cs.A}
-	rows := agg.ListAll()
-	if len(rows) != 2 {
-		t.Fatalf("agg rows %+v", rows)
-	}
-	// List 按 (channel_id, public_model) 序，channel_id 随机——按渠道名索引断言
-	// （值与简报一致，不依赖行序）。
-	byName := map[string]ModelAggregateView{}
-	for _, r := range rows {
-		byName[r.ChannelName] = r
-	}
-	if byName["a"].PublicModel != "pub" || byName["a"].UpstreamModel != "up-a" ||
-		byName["b"].UpstreamModel != "up-b" {
-		t.Fatalf("agg rows %+v", rows)
-	}
-	if err := agg.SetEnabled(rows[0].ID, false); err != nil {
-		t.Fatal(err)
-	}
-	for _, r := range agg.ListAll() {
-		if r.ID == rows[0].ID && r.Enabled {
-			t.Fatal("toggle failed")
-		}
+	if res := cs.Test(c3.ID); res.OK {
+		t.Fatalf("test without key must fail: %+v", res)
 	}
 }

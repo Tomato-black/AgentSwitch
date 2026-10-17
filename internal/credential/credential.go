@@ -19,8 +19,9 @@ type Store interface {
 	Delete(key string) error
 }
 
-// AccountKey returns the store key for an account's credential.
-func AccountKey(accountID string) string { return "account:" + accountID }
+// ChannelKey returns the store key for a channel's credential (single key per
+// channel; ref kept in channels.credential_ref).
+func ChannelKey(channelID string) string { return "channel:" + channelID }
 
 // Manager stores secrets in Primary, falling back to Fallback when Primary
 // reports ErrUnavailable and AllowFallback is true.

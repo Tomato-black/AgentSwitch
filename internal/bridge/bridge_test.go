@@ -30,43 +30,18 @@ func tempApp(t *testing.T) *app.App {
 func TestAuditLinesCarryActorAndResult(t *testing.T) {
 	cs, _ := channelsSvc(t)
 	a := cs.A
-	c, err := cs.Create("anthropic-compatible", "main", "https://api.example.com", 10, true, false)
+	c, err := cs.Create("anthropic-compatible", "main", "https://api.example.com", "anthropic", "sk-ant-1234", true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cs.Update(c.ID, "main2", "https://api2.example.com", 10, true, false); err != nil {
+	if err := cs.Update(c.ID, "main2", "https://api2.example.com", "", true, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := cs.SetEnabled(c.ID, false); err != nil {
+	cs.SetEnabled(c.ID, false)
+	if err := cs.Update(c.ID, "main2", "https://api2.example.com", "sk-ant-5678", true, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cs.AddKeys(c.ID, "pool", "sk-ant-1234", true); err != nil {
-		t.Fatal(err)
-	}
-	d, err := cs.Get(c.ID)
-	if err != nil || len(d.Keys) != 1 {
-		t.Fatalf("keys %+v err %v", d.Keys, err)
-	}
-	if err := cs.SetKeyEnabled(d.Keys[0].ID, false); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := cs.AddModel(c.ID, "claude-opus", "up-opus"); err != nil {
-		t.Fatal(err)
-	}
-	mods, _ := cs.A.Store().ChannelModels().ListByChannel(c.ID)
-	if len(mods) != 1 {
-		t.Fatalf("models %+v", mods)
-	}
-	if err := cs.UpdateModel(mods[0].ID, "claude-opus-2", "up-opus"); err != nil {
-		t.Fatal(err)
-	}
-	if err := cs.SetModelEnabled(mods[0].ID, false); err != nil {
-		t.Fatal(err)
-	}
-	if err := cs.RemoveModel(mods[0].ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := cs.RemoveKey(d.Keys[0].ID); err != nil {
+	if err := cs.SetSuggestions(c.ID, []string{"claude-opus", "claude-sonnet"}); err != nil {
 		t.Fatal(err)
 	}
 	g := Gateway{A: a}
@@ -76,9 +51,7 @@ func TestAuditLinesCarryActorAndResult(t *testing.T) {
 	if _, err := g.SaveSettings(17891, 60); err != nil {
 		t.Fatal(err)
 	}
-	if err := cs.Remove(c.ID); err != nil {
-		t.Fatal(err)
-	}
+	cs.Remove(c.ID)
 	data, err := os.ReadFile(a.LogPath())
 	if err != nil {
 		t.Fatal(err)
@@ -86,9 +59,7 @@ func TestAuditLinesCarryActorAndResult(t *testing.T) {
 	want := map[string]bool{
 		"token regenerated": false, "settings saved": false,
 		"channel created": false, "channel updated": false, "channel enabled": false,
-		"channel keys added": false, "channel key enabled": false, "channel key removed": false,
-		"channel model added": false, "channel model updated": false,
-		"channel model enabled": false, "channel model removed": false,
+		"channel key set": false, "channel suggestions set": false,
 		"channel removed": false,
 	}
 	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
