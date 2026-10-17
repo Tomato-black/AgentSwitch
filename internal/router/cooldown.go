@@ -18,15 +18,16 @@ const (
 	CooldownAuth             = time.Hour
 )
 
-// CooldownEntry 是一枚密钥的冷却快照。
+// CooldownEntry 是一枚渠道的冷却快照。
 type CooldownEntry struct {
-	KeyID  string
-	Until  time.Time
-	Reason string // 冷却原因（错误分类原文）
+	ChannelID string
+	Until     time.Time
+	Reason    string // 冷却原因（错误分类原文）
 }
 
-// Cooldowns 是内存冷却存储：键 = channel_keys.id。原子性由 mu 保证（docx §6.3
-// 冷却并发更新必须原子）；重启即清（spec §3.2 不落库）。零值不可用，用 NewCooldowns。
+// Cooldowns 是内存冷却存储：键 = 渠道 ID（渠道是执行单元，冷却跨逻辑模型共享）。
+// 原子性由 mu 保证（docx §6.3 冷却并发更新必须原子）；重启即清（spec §3.2 不落库）。
+// 零值不可用，用 NewCooldowns。
 type Cooldowns struct {
 	mu sync.Mutex
 	m  map[string]CooldownEntry
@@ -59,28 +60,28 @@ func cooldownFor(class provider.ErrorClass, retryAfterSec int) (time.Duration, s
 	}
 }
 
-// MarkClassified 按错误分类写冷却；不可冷却分类为 no-op。同钥重复冷却只
+// MarkClassified 按错误分类写冷却；不可冷却分类为 no-op。同渠道重复冷却只
 // prolong（取更晚到期），并发 429 不互相回退。
-func (c *Cooldowns) MarkClassified(keyID string, class provider.ErrorClass, retryAfterSec int, now time.Time) {
+func (c *Cooldowns) MarkClassified(channelID string, class provider.ErrorClass, retryAfterSec int, now time.Time) {
 	d, reason := cooldownFor(class, retryAfterSec)
-	if d <= 0 || keyID == "" {
+	if d <= 0 || channelID == "" {
 		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	e := CooldownEntry{KeyID: keyID, Until: now.Add(d), Reason: reason}
-	if old, ok := c.m[keyID]; ok && old.Until.After(e.Until) {
+	e := CooldownEntry{ChannelID: channelID, Until: now.Add(d), Reason: reason}
+	if old, ok := c.m[channelID]; ok && old.Until.After(e.Until) {
 		e.Until = old.Until
 	}
-	c.m[keyID] = e
+	c.m[channelID] = e
 }
 
 // TryAcquire 二次校验（docx §7：路由器真正发请求前二次校验账号状态）：
 // 未冷却返回 (零值,true)；冷却中返回 (条目,false)。本方法不写状态——写入只在 MarkClassified。
-func (c *Cooldowns) TryAcquire(keyID string, now time.Time) (CooldownEntry, bool) {
+func (c *Cooldowns) TryAcquire(channelID string, now time.Time) (CooldownEntry, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	e, ok := c.m[keyID]
+	e, ok := c.m[channelID]
 	if !ok || !now.Before(e.Until) {
 		return CooldownEntry{}, true
 	}

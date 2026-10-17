@@ -7,17 +7,17 @@ import (
 	"time"
 )
 
-// Candidate 是一个可尝试的「渠道×密钥×模型」三元组（gateway/app 从 storage
-// join 装配；CoolingUntil/Reason 来自冷却快照）。
+// Candidate 是逻辑模型目标链上的一个可尝试目标（渠道×上游模型；gateway/app 从
+// storage 装配；CoolingUntil/Reason 来自冷却快照）。
 type Candidate struct {
+	TargetID               string // 目标条目 ID（logical_model_targets.id）
+	LogicalModel           string // 逻辑模型名（路由键）
 	ChannelID, ChannelName string
-	KeyID, KeyName         string
-	SecretKey              string // 凭据引用（本体在 SecretStore）
 	Protocol, BaseURL      string
+	SecretKey              string // 凭据引用（本体在 SecretStore）
 	AllowPrivate           bool
 	UpstreamModel          string
-	ChannelPriority        int
-	KeyPriority            int
+	Priority               int       // 目标链顺序（order），升序尝试
 	CoolingUntil           time.Time // 零值=未冷却
 	CoolingReason          string
 }
@@ -42,7 +42,7 @@ type Router interface {
 
 type PriorityRouter struct{}
 
-// Resolve 剔除冷却中候选（记原因），其余按 渠道优先级→密钥优先级→KeyID 稳定全序。
+// Resolve 剔除冷却中候选（记原因），其余按 Priority 升序、ChannelID 稳定排序。
 func (PriorityRouter) Resolve(model string, cands []Candidate) Decision {
 	d := Decision{Model: model}
 	now := time.Now()
@@ -53,15 +53,12 @@ func (PriorityRouter) Resolve(model string, cands []Candidate) Decision {
 		}
 		d.Ordered = append(d.Ordered, c)
 	}
-	sort.Slice(d.Ordered, func(i, j int) bool {
+	sort.SliceStable(d.Ordered, func(i, j int) bool {
 		a, b := d.Ordered[i], d.Ordered[j]
-		if a.ChannelPriority != b.ChannelPriority {
-			return a.ChannelPriority < b.ChannelPriority
+		if a.Priority != b.Priority {
+			return a.Priority < b.Priority
 		}
-		if a.KeyPriority != b.KeyPriority {
-			return a.KeyPriority < b.KeyPriority
-		}
-		return a.KeyID < b.KeyID
+		return a.ChannelID < b.ChannelID
 	})
 	return d
 }

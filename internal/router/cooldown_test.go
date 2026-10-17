@@ -26,10 +26,13 @@ func TestCooldownsClassifiedDurations(t *testing.T) {
 	}
 	for i, tc := range cases {
 		c := NewCooldowns()
-		c.MarkClassified("k", tc.class, tc.ra, now)
+		c.MarkClassified("ch", tc.class, tc.ra, now)
 		sn := c.Snapshot(now)
 		if len(sn) != 1 {
 			t.Fatalf("case %d (%s): snapshot %v", i, tc.class, sn)
+		}
+		if sn[0].ChannelID != "ch" {
+			t.Fatalf("case %d channelID %q", i, sn[0].ChannelID)
 		}
 		d := sn[0].Until.Sub(now)
 		if d < tc.wantMin || d > tc.wantMax {
@@ -44,8 +47,8 @@ func TestCooldownsClassifiedDurations(t *testing.T) {
 func TestCooldownsParamAndUnknownNotCooled(t *testing.T) {
 	c := NewCooldowns()
 	now := time.Now()
-	c.MarkClassified("k", provider.ClassParam, 0, now)
-	c.MarkClassified("k", provider.ClassUnknown, 0, now)
+	c.MarkClassified("ch", provider.ClassParam, 0, now)
+	c.MarkClassified("ch", provider.ClassUnknown, 0, now)
 	if sn := c.Snapshot(now); len(sn) != 0 {
 		t.Fatalf("param/unknown must not cool: %v", sn)
 	}
@@ -54,11 +57,11 @@ func TestCooldownsParamAndUnknownNotCooled(t *testing.T) {
 func TestCooldownsTryAcquireAndExpiry(t *testing.T) {
 	c := NewCooldowns()
 	now := time.Now()
-	c.MarkClassified("k", provider.ClassServer, 0, now)
-	if _, ok := c.TryAcquire("k", now.Add(time.Second)); ok {
+	c.MarkClassified("ch", provider.ClassServer, 0, now)
+	if _, ok := c.TryAcquire("ch", now.Add(time.Second)); ok {
 		t.Fatal("within cooldown TryAcquire must fail")
 	}
-	if _, ok := c.TryAcquire("k", now.Add(CooldownServer)); !ok {
+	if _, ok := c.TryAcquire("ch", now.Add(CooldownServer)); !ok {
 		t.Fatal("after expiry TryAcquire must pass")
 	}
 	// Review Focus 5：过期条目被快照过滤，不留残留
@@ -75,8 +78,8 @@ func TestCooldownsConcurrent429SingleEntryAndProlong(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			c.MarkClassified("k", provider.ClassRateLimit, i%7, now.Add(time.Duration(i)*time.Second))
-			c.TryAcquire("k", now)
+			c.MarkClassified("ch", provider.ClassRateLimit, i%7, now.Add(time.Duration(i)*time.Second))
+			c.TryAcquire("ch", now)
 		}(i)
 	}
 	wg.Wait()
@@ -90,5 +93,18 @@ func TestCooldownsConcurrent429SingleEntryAndProlong(t *testing.T) {
 	// 走默认 30s，故最大值 = now+49s+30s = now+79s（prolong 取更晚，与顺序无关）。
 	if want := now.Add(49 * time.Second).Add(CooldownRateLimitDefault); !sn[0].Until.Equal(want) {
 		t.Fatalf("until %v want %v", sn[0].Until, want)
+	}
+}
+
+// TestCooldownSharedAcrossModels：同一 ChannelID 被 MarkClassified 后 TryAcquire 失败。
+// 冷却键=ChannelID（语义不变仅键名变），跨逻辑模型共享冷却——同一渠道在任一逻辑模型
+// 下失败进入冷却后，其它逻辑模型复用该渠道时二次校验同样被拒。
+func TestCooldownSharedAcrossModels(t *testing.T) {
+	c := NewCooldowns()
+	now := time.Now()
+	const ch = "ch-shared"
+	c.MarkClassified(ch, provider.ClassQuota, 0, now) // 逻辑模型 m1 的请求把渠道打入冷却
+	if _, ok := c.TryAcquire(ch, now.Add(time.Second)); ok {
+		t.Fatal("same ChannelID must stay cooled (shared across logical models)")
 	}
 }
