@@ -1,4 +1,4 @@
-// theme.go 是「交换机面板」设计系统的 token 表与状态视觉词汇（cc-switch
+// theme.go 是桌面 UI 设计系统的 token 表与状态视觉词汇（cc-switch
 // 风格：中性灰底 + 橙主操作 + 卡片流）。
 // spec：docs/superpowers/specs/2026-10-17-desktop-ui-ccswitch-redesign-design.md §3.2/§3.3。
 // 已知偏离旧档（2026-10-17-desktop-ui-mygo-native-design.md）§2.3 的「一个
