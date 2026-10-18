@@ -485,14 +485,49 @@ func (s AccessConfigs) Update(id, name, logicalModelID string, overrides map[str
 	return nil
 }
 
-// Remove 直接删行（不触碰任何文件——那是后续任务语义）；is_current 行删除后
-// current 自然消失（部分唯一索引允许）。
+// Remove 直接删行，**不触碰任何 live 文件**（删除使用中配置时 live 保持原样，
+// 由用户自行决定后续处理）；is_current 行删除后 current 自然消失（部分唯一
+// 索引允许）。
 func (s AccessConfigs) Remove(id string) {
 	if err := s.A.Store().AccessConfigs().Delete(id); err != nil {
 		s.A.Log().Error("access config remove failed", "id", id, "err", err)
 		return
 	}
 	s.A.Log().Info("access config removed", "id", id, "actor", "ui", "result", "ok")
+}
+
+// Apply 把配置合成后投影到 Agent live 文件并置为 current：Get(id) →
+// composeFor → backupLive(appType) → 按 appType 写 live（claude→
+// writeClaudeLive(env)；codex→writeCodexLive(env, model)）→ SetCurrent
+// (appType, id)。任一步失败即停——含备份失败（不写 live、不置 current），
+// 失败路径不产生半状态；composeFor 的逻辑模型缺失错误直接透传。
+// 审计行绝不记录 env/overrides 值或 token（spec §9 脱敏）。
+func (s AccessConfigs) Apply(id string) error {
+	c, err := s.A.Store().AccessConfigs().Get(id)
+	if err != nil {
+		return err
+	}
+	env, model, err := s.composeFor(c)
+	if err != nil {
+		return err
+	}
+	if err := s.backupLive(c.AppType); err != nil {
+		return err
+	}
+	switch c.AppType {
+	case "claude":
+		err = s.writeClaudeLive(env)
+	case "codex":
+		err = s.writeCodexLive(env, model)
+	}
+	if err != nil {
+		return err
+	}
+	if err := s.A.Store().AccessConfigs().SetCurrent(c.AppType, id); err != nil {
+		return err
+	}
+	s.A.Log().Info("access config applied", "id", id, "app", c.AppType, "actor", "ui", "result", "ok")
+	return nil
 }
 
 // GlobalConfig 读全局 env（settings 键 access.global.<app_type>）；缺失视为

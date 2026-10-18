@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -248,4 +249,48 @@ func TestAccessConfigsGlobalConfig(t *testing.T) {
 	if err := acc.SaveGlobalConfig("gemini", nil); err == nil {
 		t.Fatal("白名单外 appType 应报错")
 	}
+}
+
+func TestApplyWritesLiveAndSetsCurrent(t *testing.T) {
+	a := tempApp(t)
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil { t.Fatal(err) }
+	v, err := acc.Create("claude", "工作", "lm1", nil)
+	if err != nil { t.Fatal(err) }
+	// 控制器裁定：Apply 前先预置旧 settings.json——空 Home 上无源文件不建
+	// 备份目录（Task 8 契约），预置后「应用前应有备份」断言才有意义。
+	if err := os.MkdirAll(filepath.Join(acc.Home, ".claude"), 0o755); err != nil { t.Fatal(err) }
+	if err := os.WriteFile(filepath.Join(acc.Home, ".claude", "settings.json"), []byte(`{"old":1}`), 0o600); err != nil { t.Fatal(err) }
+	if err := acc.Apply(v.ID); err != nil { t.Fatal(err) }
+	b, err := os.ReadFile(filepath.Join(acc.Home, ".claude", "settings.json"))
+	if err != nil { t.Fatal(err) }
+	if !strings.Contains(string(b), "ANTHROPIC_MODEL") || !strings.Contains(string(b), "my-code") { t.Fatal(string(b)) }
+	cur, err := a.Store().AccessConfigs().Current("claude")
+	if err != nil || cur.ID != v.ID { t.Fatalf("%v %v", cur, err) }
+	if _, err := os.Stat(filepath.Join(acc.Home, ".agentswitch", "backups", "claude")); err != nil { t.Fatal("应用前应有备份") }
+}
+
+func TestRemoveCurrentKeepsLiveUntouched(t *testing.T) {
+	a := tempApp(t)
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "m", Enabled: true}); err != nil { t.Fatal(err) }
+	v, _ := acc.Create("claude", "工作", "lm1", nil)
+	if err := acc.Apply(v.ID); err != nil { t.Fatal(err) }
+	before, _ := os.ReadFile(filepath.Join(acc.Home, ".claude", "settings.json"))
+	acc.Remove(v.ID)
+	after, _ := os.ReadFile(filepath.Join(acc.Home, ".claude", "settings.json"))
+	if string(before) != string(after) { t.Fatal("删除使用中配置不得改动 live 文件") }
+}
+
+// 失败路径不产生半状态：绑定逻辑模型缺失时 Apply 即停——不写 live、不置 current。
+func TestApplyMissingLogicalModelLeavesNoHalfState(t *testing.T) {
+	a := tempApp(t)
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil { t.Fatal(err) }
+	v, err := acc.Create("claude", "工作", "lm1", nil)
+	if err != nil { t.Fatal(err) }
+	if err := a.Store().LogicalModels().Delete("lm1"); err != nil { t.Fatal(err) }
+	if err := acc.Apply(v.ID); err == nil { t.Fatal("绑定逻辑模型缺失应报错") }
+	if _, err := os.Stat(filepath.Join(acc.Home, ".claude", "settings.json")); !os.IsNotExist(err) { t.Fatal("失败不得写 live") }
+	if _, err := a.Store().AccessConfigs().Current("claude"); err == nil { t.Fatal("失败不得置 current") }
 }
