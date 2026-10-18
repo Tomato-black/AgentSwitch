@@ -270,14 +270,3 @@ func (s *dbStore) AccessConfigs() AccessConfigRepo { return &accessConfigRepo{s.
 func (s *dbStore) Secrets() SecretRepo             { return &secretStore{db: s.db, key: s.key} }
 func (s *dbStore) Settings() SettingsRepo          { return &settingsRepo{s.db} }
 func (s *dbStore) Close() error                    { return s.db.Close() }
-
-// accessConfigRepo 是仓储桩（Task 2 补全实现）：仅满足接口使编译通过，
-// 方法体一律 panic。
-type accessConfigRepo struct{ db *sql.DB }
-
-func (r *accessConfigRepo) ListByApp(appType string) ([]AccessConfig, error) { panic("TODO") }
-func (r *accessConfigRepo) Get(id string) (AccessConfig, error)              { panic("TODO") }
-func (r *accessConfigRepo) Save(c AccessConfig) (AccessConfig, error)        { panic("TODO") }
-func (r *accessConfigRepo) Delete(id string) error                           { panic("TODO") }
-func (r *accessConfigRepo) SetCurrent(appType, id string) error              { panic("TODO") }
-func (r *accessConfigRepo) Current(appType string) (AccessConfig, error)     { panic("TODO") }

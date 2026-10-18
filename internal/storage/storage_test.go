@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -544,5 +545,39 @@ func TestTargetListOrdered(t *testing.T) {
 		if ts[i].Priority != p {
 			t.Fatalf("ListByModel priorities = %+v, want %v", ts, want)
 		}
+	}
+}
+
+func TestAccessConfigRepoSaveGetListDelete(t *testing.T) {
+	s, _ := Open(filepath.Join(t.TempDir(), "a.db"))
+	defer s.Close()
+	r := s.AccessConfigs()
+	saved, err := r.Save(AccessConfig{AppType: "claude", Name: "工作", LogicalModelID: "lm1",
+		Overrides: map[string]string{"HTTPS_PROXY": "http://127.0.0.1:7890"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.ID == "" || saved.CreatedAt == 0 {
+		t.Fatal("ID/CreatedAt 未填充")
+	}
+	got, err := r.Get(saved.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Overrides["HTTPS_PROXY"] != "http://127.0.0.1:7890" {
+		t.Fatalf("overrides 未回读: %#v", got.Overrides)
+	}
+	if _, err := r.Save(AccessConfig{AppType: "claude", Name: "工作", LogicalModelID: "lm2"}); err == nil {
+		t.Fatal("同 app 同名应 UNIQUE 冲突")
+	}
+	list, err := r.ListByApp("claude")
+	if err != nil || len(list) != 1 {
+		t.Fatalf("ListByApp = %v, %v", list, err)
+	}
+	if err := r.Delete(saved.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Get(saved.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get after delete = %v", err)
 	}
 }
