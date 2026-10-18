@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pelletier/go-toml/v2"
+
 	"AgentSwitch/internal/storage"
 )
 
@@ -44,6 +46,75 @@ func TestClaudeLiveProjectionInvalidJSONAborts(t *testing.T) {
 	b, _ := os.ReadFile(filepath.Join(dir, "settings.json"))
 	if string(b) != "{broken" {
 		t.Fatal("失败后不得改动原文件")
+	}
+}
+
+func TestCodexLiveProjectionPreservesAndMerges(t *testing.T) {
+	acc := AccessConfigs{A: tempApp(t), Home: t.TempDir()}
+	dir := filepath.Join(acc.Home, ".codex")
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, "config.toml"), []byte("preferred_auth_method = \"apikey\"\n\n[mcp_servers.foo]\ncommand = \"mcp\"\n"), 0o600)
+	if err := acc.writeCodexLive(map[string]string{
+		"OPENAI_BASE_URL": "http://127.0.0.1:17890/v1", "OPENAI_API_KEY": "tok"}, "my-code"); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "config.toml"))
+	var got map[string]any
+	if err := toml.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["model"] != "my-code" || got["model_provider"] != "agentswitch" {
+		t.Fatal(string(b))
+	}
+	if got["mcp_servers"] == nil {
+		t.Fatal("非受管段丢失")
+	}
+	mp := got["model_providers"].(map[string]any)["agentswitch"].(map[string]any)
+	if mp["wire_api"] != "chat" || mp["requires_openai_auth"] != false {
+		t.Fatal(mp)
+	}
+	if mp["base_url"] != "http://127.0.0.1:17890/v1" {
+		t.Fatal(mp)
+	}
+	ab, _ := os.ReadFile(filepath.Join(dir, "auth.json"))
+	var auth map[string]any
+	json.Unmarshal(ab, &auth)
+	if auth["OPENAI_API_KEY"] != "tok" {
+		t.Fatal(string(ab))
+	}
+}
+
+func TestCodexLiveProjectionInvalidTOMLAborts(t *testing.T) {
+	acc := AccessConfigs{A: tempApp(t), Home: t.TempDir()}
+	dir := filepath.Join(acc.Home, ".codex")
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, "config.toml"), []byte("model = "), 0o600)
+	if err := acc.writeCodexLive(map[string]string{"OPENAI_API_KEY": "x"}, "m"); err == nil {
+		t.Fatal("非法 TOML 应中止")
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "config.toml"))
+	if string(b) != "model = " {
+		t.Fatal("失败后不得改动")
+	}
+}
+
+// 双文件一致性：auth.json 非法时 config.toml 也绝不落盘（一败俱不写）。
+func TestCodexLiveProjectionInvalidAuthJSONAbortsBoth(t *testing.T) {
+	acc := AccessConfigs{A: tempApp(t), Home: t.TempDir()}
+	dir := filepath.Join(acc.Home, ".codex")
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, "config.toml"), []byte("model = \"keep\"\n"), 0o600)
+	os.WriteFile(filepath.Join(dir, "auth.json"), []byte("{broken"), 0o600)
+	if err := acc.writeCodexLive(map[string]string{"OPENAI_API_KEY": "x"}, "m"); err == nil {
+		t.Fatal("非法 auth.json 应中止")
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "config.toml"))
+	if string(b) != "model = \"keep\"\n" {
+		t.Fatal("config.toml 失败后不得改动")
+	}
+	ab, _ := os.ReadFile(filepath.Join(dir, "auth.json"))
+	if string(ab) != "{broken" {
+		t.Fatal("auth.json 失败后不得改动")
 	}
 }
 

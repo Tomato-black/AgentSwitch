@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pelletier/go-toml/v2"
+
 	"AgentSwitch/internal/app"
 	"AgentSwitch/internal/storage"
 )
@@ -170,6 +172,102 @@ func (s AccessConfigs) writeClaudeLive(env map[string]string) error {
 		return err
 	}
 	return atomicWriteFile0600(path, b)
+}
+
+// writeCodexLive 把合成 env 与逻辑模型名投影到 <home>/.codex/ 的两个 live
+// 文件（config.toml + auth.json）。语义：两个文件都各自「读-解析-合并」成功
+// 后才开始落盘——**任一解析失败则两个文件都不写**（一败俱不写），解析失败
+// 绝不改动原文件（先读后写，不猜测修复）：
+//   - config.toml：不存在建空；解析为 map[string]any（go-toml/v2：TOML 表
+//     对应嵌套 map[string]any）；受管键 model=<model>、
+//     model_provider="agentswitch"、model_providers.agentswitch 子表
+//     {base_url: env["OPENAI_BASE_URL"], wire_api: "chat",
+//     requires_openai_auth: false}（同键替换，子表内非受管键保留）；其余
+//     顶层键/表语义保留（TOML 注释允许丢失）；0600 原子写。
+//   - auth.json：不存在建空对象；JSON 解析失败中止；受管键 OPENAI_API_KEY
+//     = env["OPENAI_API_KEY"]；其余键保留；0600 原子写。
+// 落盘顺序：任一写失败即中止、不写第二个。本方法不写任何日志——写入值
+// 含网关令牌（spec §9 脱敏）。
+func (s AccessConfigs) writeCodexLive(env map[string]string, model string) error {
+	home := s.Home
+	if home == "" {
+		var err error
+		if home, err = os.UserHomeDir(); err != nil {
+			return err
+		}
+	}
+	dir := filepath.Join(home, ".codex")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	cfgPath := filepath.Join(dir, "config.toml")
+	authPath := filepath.Join(dir, "auth.json")
+
+	// —— 1. config.toml 读-解析-合并（失败即返回，尚未写任何文件）——
+	cfg := map[string]any{}
+	if b, err := os.ReadFile(cfgPath); err == nil {
+		// 解析失败必须在任何写动作前返回，原文件保持不动。
+		if err := toml.Unmarshal(b, &cfg); err != nil {
+			return err
+		}
+		if cfg == nil { // 空文档 → 视为空表
+			cfg = map[string]any{}
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	cfg["model"] = model
+	cfg["model_provider"] = "agentswitch"
+	// model_providers 子表：已存在但非表则报错（不猜测修复）。
+	providers := map[string]any{}
+	if v, ok := cfg["model_providers"]; ok && v != nil {
+		m, ok := v.(map[string]any)
+		if !ok {
+			return fmt.Errorf("config.toml 的 model_providers 不是表")
+		}
+		providers = m
+	}
+	agent := map[string]any{}
+	if v, ok := providers["agentswitch"]; ok && v != nil {
+		m, ok := v.(map[string]any)
+		if !ok {
+			return fmt.Errorf("config.toml 的 model_providers.agentswitch 不是表")
+		}
+		agent = m
+	}
+	agent["base_url"] = env["OPENAI_BASE_URL"]
+	agent["wire_api"] = "chat"
+	agent["requires_openai_auth"] = false
+	providers["agentswitch"] = agent
+	cfg["model_providers"] = providers
+	cfgBytes, err := toml.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+
+	// —— 2. auth.json 读-解析-合并（失败即返回，两个文件都还没写）——
+	auth := map[string]any{}
+	if b, err := os.ReadFile(authPath); err == nil {
+		if err := json.Unmarshal(b, &auth); err != nil {
+			return err
+		}
+		if auth == nil { // 合法 JSON null → 视为空对象
+			auth = map[string]any{}
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	auth["OPENAI_API_KEY"] = env["OPENAI_API_KEY"]
+	authBytes, err := json.MarshalIndent(auth, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	// —— 3. 两个文件都解析成功后才落盘；任一写失败即中止、不写第二个 ——
+	if err := atomicWriteFile0600(cfgPath, cfgBytes); err != nil {
+		return err
+	}
+	return atomicWriteFile0600(authPath, authBytes)
 }
 
 // liveBackupFiles 返回 appType 对应的 live 文件相对路径列表（简报钉死）：
