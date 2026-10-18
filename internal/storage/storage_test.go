@@ -18,6 +18,17 @@ func tempStore(t *testing.T) Store {
 	return s
 }
 
+func TestMigrationV3CreatesAccessConfigs(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "v3.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if s.AccessConfigs() == nil {
+		t.Fatal("AccessConfigs() = nil")
+	}
+}
+
 func TestMigrationIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "m.db")
 	s1, err := Open(path)
@@ -30,7 +41,7 @@ func TestMigrationIdempotent(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	t.Cleanup(func() { s2.Close() })
-	// 重开时已记录版本按序跳过，不得重放报错，schema_migrations 必须恰为 [1 2]。
+	// 重开时已记录版本按序跳过，不得重放报错，schema_migrations 必须恰为 [1 2 3]。
 	ds, ok := s2.(*dbStore)
 	if !ok {
 		t.Fatalf("Store = %T", s2)
@@ -48,8 +59,8 @@ func TestMigrationIdempotent(t *testing.T) {
 		}
 		got = append(got, v)
 	}
-	if rows.Err() != nil || len(got) != 2 || got[0] != 1 || got[1] != 2 {
-		t.Fatalf("schema_migrations = %v, want [1 2]", got)
+	if rows.Err() != nil || len(got) != 3 || got[0] != 1 || got[1] != 2 || got[2] != 3 {
+		t.Fatalf("schema_migrations = %v, want [1 2 3]", got)
 	}
 }
 

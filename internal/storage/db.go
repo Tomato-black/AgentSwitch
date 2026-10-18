@@ -65,6 +65,25 @@ CREATE TABLE channel_secrets (
 );
 `
 
+// migrationV3（2026-10-18 Agent 接入配置管理）：access_configs 表——每 app
+// 一份接入配置（env/base URL 覆盖 + 指向逻辑模型），同 app 名唯一、至多一个
+// is_current。加表不动旧表，既有 v1/v2 库自动升级。
+const migrationV3 = `
+CREATE TABLE access_configs (
+  id TEXT PRIMARY KEY,
+  app_type TEXT NOT NULL,
+  name TEXT NOT NULL,
+  logical_model_id TEXT NOT NULL,
+  overrides TEXT NOT NULL DEFAULT '{}',
+  is_current INTEGER NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX idx_access_configs_app_name ON access_configs(app_type, name);
+CREATE UNIQUE INDEX idx_access_configs_app_current ON access_configs(app_type) WHERE is_current = 1;
+`
+
 // migrations 是按版本序执行的迁移表；migrate 只跑 schema_migrations 里
 // 未记录的版本（幂等）。追加新版本 = 追加一行，勿改已发布语句。
 var migrations = []struct {
@@ -73,6 +92,7 @@ var migrations = []struct {
 }{
 	{1, migrationV1},
 	{2, migrationV2},
+	{3, migrationV3},
 }
 
 type dbStore struct {
@@ -246,6 +266,18 @@ func (s *dbStore) LogicalModels() LogicalModelRepo { return &logicalModelRepo{s.
 func (s *dbStore) LogicalModelTargets() LogicalModelTargetRepo {
 	return &logicalModelTargetRepo{s.db}
 }
-func (s *dbStore) Secrets() SecretRepo     { return &secretStore{db: s.db, key: s.key} }
-func (s *dbStore) Settings() SettingsRepo { return &settingsRepo{s.db} }
-func (s *dbStore) Close() error           { return s.db.Close() }
+func (s *dbStore) AccessConfigs() AccessConfigRepo { return &accessConfigRepo{s.db} }
+func (s *dbStore) Secrets() SecretRepo             { return &secretStore{db: s.db, key: s.key} }
+func (s *dbStore) Settings() SettingsRepo          { return &settingsRepo{s.db} }
+func (s *dbStore) Close() error                    { return s.db.Close() }
+
+// accessConfigRepo 是仓储桩（Task 2 补全实现）：仅满足接口使编译通过，
+// 方法体一律 panic。
+type accessConfigRepo struct{ db *sql.DB }
+
+func (r *accessConfigRepo) ListByApp(appType string) ([]AccessConfig, error) { panic("TODO") }
+func (r *accessConfigRepo) Get(id string) (AccessConfig, error)              { panic("TODO") }
+func (r *accessConfigRepo) Save(c AccessConfig) (AccessConfig, error)        { panic("TODO") }
+func (r *accessConfigRepo) Delete(id string) error                           { panic("TODO") }
+func (r *accessConfigRepo) SetCurrent(appType, id string) error              { panic("TODO") }
+func (r *accessConfigRepo) Current(appType string) (AccessConfig, error)     { panic("TODO") }
