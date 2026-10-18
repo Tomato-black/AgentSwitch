@@ -95,10 +95,13 @@ func newUIState(svc Services, a *app.App) *uiState {
 func (u *uiState) view(c *ui.Context) {
 	c.SetTheme(buildTheme(c.Theme().Dark, c.Preferences().TextScale))
 	t := c.Theme()
-	ui.Row(c).Gap(0).Grow(1).Children(func() {
+	// 根 Row 必须 Fill()（宽高 100%）：仅 Grow(1) 只撑主轴（宽），高度仍是
+	// 内容自然高——整窗内容居中悬空、上下留白。侧栏固定宽 + FillHeight 撑满
+	// 高，内容列 Grow(1) 吃掉剩余宽（cc-switch 全高侧栏布局）。
+	ui.Row(c).Gap(0).Fill().Children(func() {
 		// 左列：自绘侧栏（spec §6.1）——品牌行、导航、底条网关状态
 		// （状态是主角：任何页可见）；spacer 把底条钉在栏底。
-		ui.Column(c).Gap(0).Width(180).Grow(1).Background(sidebarColor(t)).Children(func() {
+		ui.Column(c).Gap(0).Width(200).FillHeight().Background(sidebarColor(t)).Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Padding(t.Space(3), t.Space(2.5)).
 				Children(func() { ui.Text(c, "AgentSwitch").Bold().FontSize(14) })
 			ui.Column(c).Gap(2).Padding(t.Space(1), t.Space(2)).Children(func() {
@@ -110,7 +113,7 @@ func (u *uiState) view(c *ui.Context) {
 			gatewayStatusBar(c, u)
 		})
 		// 右列：首关横条（全页可见，I4）+ 当前页
-		ui.Column(c).Gap(12).Padding(16).Grow(1).Children(func() {
+		ui.Column(c).Gap(12).Padding(16).Grow(1).FillHeight().Children(func() {
 			if u.closeNotice && !u.closeConfirmed {
 				card(c, t, func() {
 					ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
