@@ -1,9 +1,12 @@
 package bridge
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 
 	"AgentSwitch/internal/app"
+	"AgentSwitch/internal/storage"
 )
 
 // AccessConfigs 是接入配置管理面（agent-access-config spec）：把
@@ -67,4 +70,33 @@ func composeAccessEnv(appType string, st Status, modelName string, global, overr
 		env[k] = v
 	}
 	return env, nil
+}
+
+// composeFor 解析 c 绑定的逻辑模型名与全局配置，合成应写入 Agent 的 env。
+// 返回 model 为逻辑模型对外名（codex 写 config.toml 的 model 键与启动命令用；
+// claude 的模型名已在 env 内）。绑定的逻辑模型不存在时报中文错误提示改绑；
+// 全局配置读取失败/JSON 非法直接返回错误。本方法不写任何含 env/令牌的日志。
+func (s AccessConfigs) composeFor(c storage.AccessConfig) (map[string]string, string, error) {
+	lm, err := s.A.Store().LogicalModels().Get(c.LogicalModelID)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, "", fmt.Errorf("绑定的逻辑模型不存在，请改绑")
+		}
+		return nil, "", err
+	}
+	raw, err := s.A.Store().Settings().Get("access.global." + c.AppType)
+	if err != nil {
+		return nil, "", err
+	}
+	var global map[string]string
+	if raw != "" { // Settings Get 缺失返回 ("", nil) → 视为无全局配置
+		if err := json.Unmarshal([]byte(raw), &global); err != nil {
+			return nil, "", err
+		}
+	}
+	env, err := composeAccessEnv(c.AppType, Gateway{A: s.A}.Status(), lm.Name, global, c.Overrides)
+	if err != nil {
+		return nil, "", err
+	}
+	return env, lm.Name, nil
 }

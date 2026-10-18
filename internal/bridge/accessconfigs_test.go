@@ -1,6 +1,10 @@
 package bridge
 
-import "testing"
+import (
+	"testing"
+
+	"AgentSwitch/internal/storage"
+)
 
 func TestComposeAccessEnvClaudeMergePrecedence(t *testing.T) {
 	st := Status{Port: 17890, Token: "tok123"}
@@ -43,5 +47,28 @@ func TestComposeAccessEnvBaseKeysImmutable(t *testing.T) {
 func TestComposeAccessEnvRejectsUnknownAppType(t *testing.T) {
 	if _, err := composeAccessEnv("gemini", Status{}, "m", nil, nil); err == nil {
 		t.Fatal("白名单外 appType 应报错")
+	}
+}
+
+func TestComposeForCodexResolvesModelAndErrorsOnMissing(t *testing.T) {
+	a := tempApp(t)
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	// 建一个逻辑模型（经 storage 直插，避开 bridge 依赖环）
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	_ = a.Store().Settings().Set("access.global.codex", `{"HTTPS_PROXY":"http://p:1"}`)
+	env, model, err := acc.composeFor(storage.AccessConfig{AppType: "codex", LogicalModelID: "lm1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model != "my-code" {
+		t.Fatal(model)
+	}
+	if env["OPENAI_BASE_URL"] == "" || env["OPENAI_API_KEY"] == "" || env["HTTPS_PROXY"] != "http://p:1" {
+		t.Fatal(env)
+	}
+	if _, _, err := acc.composeFor(storage.AccessConfig{AppType: "codex", LogicalModelID: "missing"}); err == nil {
+		t.Fatal("缺失逻辑模型应报错")
 	}
 }
