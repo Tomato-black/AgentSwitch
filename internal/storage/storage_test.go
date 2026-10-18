@@ -581,3 +581,26 @@ func TestAccessConfigRepoSaveGetListDelete(t *testing.T) {
 		t.Fatalf("Get after delete = %v", err)
 	}
 }
+
+func TestAccessConfigRepoSetCurrentExclusive(t *testing.T) {
+	s, _ := Open(filepath.Join(t.TempDir(), "a.db"))
+	defer s.Close()
+	r := s.AccessConfigs()
+	a, _ := r.Save(AccessConfig{AppType: "claude", Name: "A", LogicalModelID: "lm1"})
+	b, _ := r.Save(AccessConfig{AppType: "claude", Name: "B", LogicalModelID: "lm1"})
+	c, _ := r.Save(AccessConfig{AppType: "codex", Name: "C", LogicalModelID: "lm1"})
+	// codex 需有 current 才能验证「不被 claude 操作波及」（is_current 由 SetCurrent 置位，Save 不自动置）。
+	if err := r.SetCurrent("codex", c.ID); err != nil { t.Fatal(err) }
+	if err := r.SetCurrent("claude", a.ID); err != nil { t.Fatal(err) }
+	if err := r.SetCurrent("claude", b.ID); err != nil { t.Fatal(err) }
+	cur, err := r.Current("claude")
+	if err != nil || cur.ID != b.ID { t.Fatalf("Current = %v, %v", cur, err) }
+	all, _ := r.ListByApp("claude")
+	n := 0
+	for _, x := range all { if x.IsCurrent { n++ } }
+	if n != 1 { t.Fatalf("is_current 行数 = %d，应为 1", n) }
+	if cur, _ := r.Current("codex"); cur.ID != c.ID { t.Fatal("codex current 不应被 claude 操作波及") }
+	if err := r.SetCurrent("claude", ""); err != nil { t.Fatal(err) }
+	if _, err := r.Current("claude"); !errors.Is(err, ErrNotFound) { t.Fatal("清空后 Current 应 ErrNotFound") }
+	if err := r.SetCurrent("claude", "nonexistent"); err == nil { t.Fatal("不存在的 id 应报错") }
+}

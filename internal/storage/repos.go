@@ -447,6 +447,39 @@ func (r *accessConfigRepo) Delete(id string) error {
 	return err
 }
 
-// SetCurrent/Current 留待 Task 3 补全实现，当前为桩。
-func (r *accessConfigRepo) SetCurrent(appType, id string) error          { panic("TODO") }
-func (r *accessConfigRepo) Current(appType string) (AccessConfig, error) { panic("TODO") }
+// SetCurrent 在事务内原子切换该 app_type 的 current：先清同 app 全部
+// is_current，再置目标 id（id 必须已存在，否则回滚报错）；id=="" 仅清空。
+func (r *accessConfigRepo) SetCurrent(appType, id string) error {
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE access_configs SET is_current=0 WHERE app_type=?`, appType); err != nil {
+		tx.Rollback()
+		return err
+	}
+	if id != "" {
+		var n int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM access_configs WHERE id=?`, id).Scan(&n); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if n == 0 {
+			tx.Rollback()
+			return ErrNotFound
+		}
+		if _, err := tx.Exec(`UPDATE access_configs SET is_current=1 WHERE id=?`, id); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (r *accessConfigRepo) Current(appType string) (AccessConfig, error) {
+	c, err := scanAccessConfig(r.db.QueryRow(`SELECT `+accessConfigCols+` FROM access_configs WHERE app_type=? AND is_current=1`, appType).Scan)
+	if err != nil {
+		return AccessConfig{}, mapNotFound(err)
+	}
+	return c, nil
+}
