@@ -600,6 +600,9 @@ func TestAccessConfigRepoSetCurrentExclusive(t *testing.T) {
 	for _, x := range all { if x.IsCurrent { n++ } }
 	if n != 1 { t.Fatalf("is_current 行数 = %d，应为 1", n) }
 	if cur, _ := r.Current("codex"); cur.ID != c.ID { t.Fatal("codex current 不应被 claude 操作波及") }
+	if err := r.SetCurrent("claude", b.ID); err != nil { t.Fatal(err) }
+	if err := r.SetCurrent("claude", "nonexistent"); err == nil { t.Fatal("不存在的 id 应报错") }
+	if cur, _ := r.Current("claude"); cur.ID != b.ID { t.Fatal("失败应回滚，既有 current 应保持 b") }
 	if err := r.SetCurrent("claude", ""); err != nil { t.Fatal(err) }
 	if _, err := r.Current("claude"); !errors.Is(err, ErrNotFound) { t.Fatal("清空后 Current 应 ErrNotFound") }
 	if err := r.SetCurrent("claude", "nonexistent"); err == nil { t.Fatal("不存在的 id 应报错") }
