@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"AgentSwitch/internal/app"
 	"AgentSwitch/internal/storage"
@@ -27,6 +28,9 @@ type AccessConfigs struct {
 func composeAccessEnv(appType string, st Status, modelName string, global, overrides map[string]string) (map[string]string, error) {
 	if modelName == "" {
 		return nil, fmt.Errorf("请先选择逻辑模型")
+	}
+	if err := validateAccessAppType(appType); err != nil {
+		return nil, err
 	}
 	var base, locked map[string]string
 	switch appType {
@@ -53,8 +57,6 @@ func composeAccessEnv(appType string, st Status, modelName string, global, overr
 			"OPENAI_BASE_URL": baseURL,
 			"OPENAI_API_KEY":  st.Token,
 		}
-	default:
-		return nil, fmt.Errorf("不支持的接入类型: %q（仅支持 claude、codex）", appType)
 	}
 	env := make(map[string]string, len(base)+len(global)+len(overrides))
 	for k, v := range base { // 1. 网关派生基础键
@@ -99,4 +101,161 @@ func (s AccessConfigs) composeFor(c storage.AccessConfig) (map[string]string, st
 		return nil, "", err
 	}
 	return env, lm.Name, nil
+}
+
+// validateAccessAppType 校验接入类型白名单 {claude, codex}。
+func validateAccessAppType(appType string) error {
+	if appType != "claude" && appType != "codex" {
+		return fmt.Errorf("不支持的接入类型: %q（仅支持 claude、codex）", appType)
+	}
+	return nil
+}
+
+// friendlyAccessSaveErr 把 UNIQUE(app_type, name) 冲突译成中文友好错误
+// （repo 约定由 bridge 友好化）。
+func friendlyAccessSaveErr(err error) error {
+	if err != nil && strings.Contains(err.Error(), "UNIQUE") {
+		return fmt.Errorf("配置名已存在")
+	}
+	return err
+}
+
+// AccessConfigView 是接入配置卡片视图（UI 接线契约，字段名勿改）；
+// LogicalModelName 为绑定逻辑模型的对外名（解析失败留空串）。
+type AccessConfigView struct {
+	ID, Name, AppType, LogicalModelID, LogicalModelName string
+	Overrides                                           map[string]string
+	IsCurrent                                           bool
+}
+
+func (s AccessConfigs) view(c storage.AccessConfig) AccessConfigView {
+	v := AccessConfigView{ID: c.ID, Name: c.Name, AppType: c.AppType,
+		LogicalModelID: c.LogicalModelID, Overrides: c.Overrides, IsCurrent: c.IsCurrent}
+	// 逐条解析逻辑模型名；Get 失败（如已删模型）留空串即可。
+	if lm, err := s.A.Store().LogicalModels().Get(c.LogicalModelID); err == nil {
+		v.LogicalModelName = lm.Name
+	}
+	return v
+}
+
+// List 返回该 app 的接入配置列表（含 LogicalModelName 解析与 IsCurrent 标记）。
+func (s AccessConfigs) List(appType string) []AccessConfigView {
+	if validateAccessAppType(appType) != nil {
+		return nil
+	}
+	cs, err := s.A.Store().AccessConfigs().ListByApp(appType)
+	if err != nil {
+		return nil
+	}
+	out := make([]AccessConfigView, 0, len(cs))
+	for _, c := range cs {
+		out = append(out, s.view(c))
+	}
+	return out
+}
+
+// Create 建接入配置：appType 白名单、name 非空（TrimSpace）、logicalModelID
+// 必须存在；同 app 重名译「配置名已存在」。审计行绝不记录 env/overrides 值
+// 或 token（spec §9 脱敏）。
+func (s AccessConfigs) Create(appType, name, logicalModelID string, overrides map[string]string) (AccessConfigView, error) {
+	if err := validateAccessAppType(appType); err != nil {
+		return AccessConfigView{}, err
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return AccessConfigView{}, fmt.Errorf("配置名不能为空")
+	}
+	if _, err := s.A.Store().LogicalModels().Get(logicalModelID); err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return AccessConfigView{}, fmt.Errorf("逻辑模型不存在")
+		}
+		return AccessConfigView{}, err
+	}
+	id := storage.NewID()
+	saved, err := s.A.Store().AccessConfigs().Save(storage.AccessConfig{
+		ID: id, AppType: appType, Name: name, LogicalModelID: logicalModelID, Overrides: overrides,
+	})
+	if err != nil {
+		return AccessConfigView{}, friendlyAccessSaveErr(err)
+	}
+	s.A.Log().Info("access config created", "id", id, "app", appType, "actor", "ui", "result", "ok")
+	return s.view(saved), nil
+}
+
+// Update 改配置字段并保 ID（非 Remove+Create）：直接 repo.Save 覆盖，
+// 保留原 app_type / is_current / sort_order。
+func (s AccessConfigs) Update(id, name, logicalModelID string, overrides map[string]string) error {
+	c, err := s.A.Store().AccessConfigs().Get(id)
+	if err != nil {
+		return err
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("配置名不能为空")
+	}
+	if _, err := s.A.Store().LogicalModels().Get(logicalModelID); err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return fmt.Errorf("逻辑模型不存在")
+		}
+		return err
+	}
+	c.Name, c.LogicalModelID, c.Overrides = name, logicalModelID, overrides
+	if _, err := s.A.Store().AccessConfigs().Save(c); err != nil {
+		return friendlyAccessSaveErr(err)
+	}
+	s.A.Log().Info("access config updated", "id", id, "app", c.AppType, "actor", "ui", "result", "ok")
+	return nil
+}
+
+// Remove 直接删行（不触碰任何文件——那是后续任务语义）；is_current 行删除后
+// current 自然消失（部分唯一索引允许）。
+func (s AccessConfigs) Remove(id string) {
+	if err := s.A.Store().AccessConfigs().Delete(id); err != nil {
+		s.A.Log().Error("access config remove failed", "id", id, "err", err)
+		return
+	}
+	s.A.Log().Info("access config removed", "id", id, "actor", "ui", "result", "ok")
+}
+
+// GlobalConfig 读全局 env（settings 键 access.global.<app_type>）；缺失视为
+// 空 map。审计/返回不涉及 token。
+func (s AccessConfigs) GlobalConfig(appType string) (map[string]string, error) {
+	if err := validateAccessAppType(appType); err != nil {
+		return nil, err
+	}
+	raw, err := s.A.Store().Settings().Get("access.global." + appType)
+	if err != nil {
+		return nil, err
+	}
+	if raw == "" { // Settings Get 缺失返回 ("", nil) → 无全局配置
+		return map[string]string{}, nil
+	}
+	var env map[string]string
+	if err := json.Unmarshal([]byte(raw), &env); err != nil {
+		return nil, err
+	}
+	if env == nil {
+		env = map[string]string{}
+	}
+	return env, nil
+}
+
+// SaveGlobalConfig 写全局 env（JSON 编码存 settings 键 access.global.<app_type>）。
+// 审计行绝不记录 env 值或 token。
+func (s AccessConfigs) SaveGlobalConfig(appType string, env map[string]string) error {
+	if err := validateAccessAppType(appType); err != nil {
+		return err
+	}
+	if env == nil {
+		env = map[string]string{}
+	}
+	raw, err := json.Marshal(env)
+	if err != nil {
+		return err
+	}
+	if err := s.A.Store().Settings().Set("access.global."+appType, string(raw)); err != nil {
+		return err
+	}
+	s.A.Log().Info("access global config saved", "app", appType, "actor", "ui", "result", "ok")
+	return nil
 }

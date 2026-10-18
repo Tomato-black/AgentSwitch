@@ -72,3 +72,46 @@ func TestComposeForCodexResolvesModelAndErrorsOnMissing(t *testing.T) {
 		t.Fatal("缺失逻辑模型应报错")
 	}
 }
+
+func TestAccessConfigsCRUDAndView(t *testing.T) {
+	a := tempApp(t)
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	v, err := acc.Create("claude", "工作", "lm1", map[string]string{"A": "1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.LogicalModelName != "my-code" {
+		t.Fatal(v.LogicalModelName)
+	}
+	if _, err := acc.Create("claude", "工作", "lm1", nil); err == nil {
+		t.Fatal("重名应报中文错误")
+	}
+	if err := acc.Update(v.ID, "个人", "lm1", nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(acc.List("claude")) != 1 || acc.List("claude")[0].Name != "个人" {
+		t.Fatal(acc.List("claude"))
+	}
+	acc.Remove(v.ID)
+	if len(acc.List("claude")) != 0 {
+		t.Fatal("删除未生效")
+	}
+}
+
+func TestAccessConfigsGlobalConfig(t *testing.T) {
+	a := tempApp(t)
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	if err := acc.SaveGlobalConfig("claude", map[string]string{"K": "V"}); err != nil {
+		t.Fatal(err)
+	}
+	g, err := acc.GlobalConfig("claude")
+	if err != nil || g["K"] != "V" {
+		t.Fatalf("%v %v", g, err)
+	}
+	if err := acc.SaveGlobalConfig("gemini", nil); err == nil {
+		t.Fatal("白名单外 appType 应报错")
+	}
+}
