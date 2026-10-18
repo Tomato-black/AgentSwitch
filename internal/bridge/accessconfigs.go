@@ -7,7 +7,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"AgentSwitch/internal/app"
 	"AgentSwitch/internal/storage"
@@ -167,6 +170,100 @@ func (s AccessConfigs) writeClaudeLive(env map[string]string) error {
 		return err
 	}
 	return atomicWriteFile0600(path, b)
+}
+
+// liveBackupFiles 返回 appType 对应的 live 文件相对路径列表（简报钉死）：
+// claude 仅 settings.json；codex 为 config.toml 与 auth.json。
+func liveBackupFiles(appType string) []string {
+	switch appType {
+	case "claude":
+		return []string{filepath.Join(".claude", "settings.json")}
+	case "codex":
+		return []string{filepath.Join(".codex", "config.toml"), filepath.Join(".codex", "auth.json")}
+	}
+	return nil
+}
+
+// backupLive 在写入前把 Agent 的 live 文件备份到
+// <home>/.agentswitch/backups/<appType>/<UnixMilli毫秒时间戳>-<原文件名>：
+// 源文件不存在则跳过该文件（全部跳过时不建备份目录、返回 nil）；复制保留
+// 原权限；同毫秒撞名时加 -1/-2 递增后缀去重（不覆盖丢份）；每 appType
+// 目录只保留最新 10 份（文件名时间戳前缀等长，字典序即时序，从旧到新删到
+// 剩 10）。任何备份失败返回 error（调用方中止后续写入）。本方法不写任何
+// 日志——备份内容可能含令牌（spec §9 脱敏）。
+func (s AccessConfigs) backupLive(appType string) error {
+	home := s.Home
+	if home == "" {
+		var err error
+		if home, err = os.UserHomeDir(); err != nil {
+			return err
+		}
+	}
+	// 先收集全部存在的源文件；全部不存在则直接返回（不建备份目录）。
+	type srcFile struct {
+		name string
+		data []byte
+		mode os.FileMode
+	}
+	var srcs []srcFile
+	for _, rel := range liveBackupFiles(appType) {
+		path := filepath.Join(home, rel)
+		b, err := os.ReadFile(path)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return err
+		}
+		fi, err := os.Stat(path)
+		if err != nil {
+			return err
+		}
+		srcs = append(srcs, srcFile{name: filepath.Base(path), data: b, mode: fi.Mode().Perm()})
+	}
+	if len(srcs) == 0 {
+		return nil
+	}
+	bdir := filepath.Join(home, ".agentswitch", "backups", appType)
+	if err := os.MkdirAll(bdir, 0o755); err != nil {
+		return err
+	}
+	ts := strconv.FormatInt(time.Now().UnixMilli(), 10)
+	for _, src := range srcs {
+		dst := filepath.Join(bdir, ts+"-"+src.name)
+		// 同毫秒撞名去重：目标已存在则加 -1/-2 递增后缀，绝不覆盖丢份。
+		for i := 1; ; i++ {
+			if _, err := os.Stat(dst); errors.Is(err, fs.ErrNotExist) {
+				break
+			} else if err != nil {
+				return err
+			}
+			dst = filepath.Join(bdir, fmt.Sprintf("%s-%d-%s", ts, i, src.name))
+		}
+		if err := os.WriteFile(dst, src.data, src.mode); err != nil {
+			return err
+		}
+	}
+	// 滚动清理：按文件名排序（时间戳前缀等长 → 字典序即时序）从旧到新删到剩 10。
+	ents, err := os.ReadDir(bdir)
+	if err != nil {
+		return err
+	}
+	names := make([]string, 0, len(ents))
+	for _, e := range ents {
+		if !e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+	if excess := len(names) - 10; excess > 0 { // 不足 10 份时无需删除
+		for _, n := range names[:excess] {
+			if err := os.Remove(filepath.Join(bdir, n)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // atomicWriteFile0600 以 0600 原子写回文件：同目录 CreateTemp → chmod 0600

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"AgentSwitch/internal/storage"
 )
@@ -44,6 +45,28 @@ func TestClaudeLiveProjectionInvalidJSONAborts(t *testing.T) {
 	if string(b) != "{broken" {
 		t.Fatal("失败后不得改动原文件")
 	}
+}
+
+func TestBackupLiveCopiesAndRotates(t *testing.T) {
+	acc := AccessConfigs{A: tempApp(t), Home: t.TempDir()}
+	dir := filepath.Join(acc.Home, ".claude")
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"a":1}`), 0o600)
+	for i := 0; i < 12; i++ {
+		if err := acc.backupLive("claude"); err != nil { t.Fatal(err) }
+		time.Sleep(2 * time.Millisecond) // 时间戳文件名去重
+	}
+	bdir := filepath.Join(acc.Home, ".agentswitch", "backups", "claude")
+	ents, _ := os.ReadDir(bdir)
+	if len(ents) != 10 { t.Fatalf("备份份数 = %d，应为 10", len(ents)) }
+	b, err := os.ReadFile(filepath.Join(bdir, ents[0].Name()))
+	if err != nil || string(b) != `{"a":1}` { t.Fatalf("%v %s", err, b) }
+}
+
+func TestBackupLiveSkipsMissingSource(t *testing.T) {
+	acc := AccessConfigs{A: tempApp(t), Home: t.TempDir()}
+	if err := acc.backupLive("claude"); err != nil { t.Fatal(err) } // 无源文件不报错、不建目录
+	if _, err := os.Stat(filepath.Join(acc.Home, ".agentswitch", "backups", "claude")); !os.IsNotExist(err) { t.Fatal("不应创建备份目录") }
 }
 
 func TestComposeAccessEnvClaudeMergePrecedence(t *testing.T) {
