@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -36,9 +37,41 @@ func fakeUpstream(t *testing.T, status int, body string, calls *int) *httptest.S
 }
 
 // newGW 组装最小 Deps：一个 anthropic 渠道 + 一枚密钥；tweak 里加更多候选。
+// mapStore 是测试用内存凭据后端（生产为库内 AES-256-GCM 存储，见 storage.SecretRepo）。
+type mapStore struct {
+	mu sync.Mutex
+	m  map[string][]byte
+}
+
+func newMapStore() *mapStore { return &mapStore{m: map[string][]byte{}} }
+
+func (s *mapStore) Set(k string, v []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.m[k] = v
+	return nil
+}
+
+func (s *mapStore) Get(k string) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := s.m[k]
+	if !ok {
+		return nil, credential.ErrNotFound
+	}
+	return v, nil
+}
+
+func (s *mapStore) Delete(k string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.m, k)
+	return nil
+}
+
 func newGW(t *testing.T, baseURL string, tweak func(d *Deps)) *Server {
 	t.Helper()
-	creds := credential.NewFallbackFile(t.TempDir() + "/s.json")
+	creds := newMapStore()
 	_ = creds.Set("account:k1", []byte("sk-test"))
 	cand := router.Candidate{TargetID: "t1", LogicalModel: "pub-1",
 		ChannelID: "c1", ChannelName: "main", SecretKey: "account:k1",
@@ -111,7 +144,7 @@ func TestMessagesHappyPathRewritesModel(t *testing.T) {
 
 func TestUnknownModelListsPublic(t *testing.T) {
 	s := newGW(t, "http://127.0.0.1:1", nil)
-	resp := post(t, s, `{"model":"nope","messages":[]}`, "tok")
+	resp := post(t, s, `{"model":"nope","messages":[{"role":"user","content":"hi"}]}`, "tok")
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 404 || !strings.Contains(string(b), "pub-1") {
@@ -126,7 +159,7 @@ func TestMessagesAuthRequired(t *testing.T) {
 	}))
 	defer up.Close()
 	s := newGW(t, up.URL, nil)
-	resp := post(t, s, `{"model":"pub-1","messages":[]}`, "wrong")
+	resp := post(t, s, `{"model":"pub-1","messages":[{"role":"user","content":"hi"}]}`, "wrong")
 	defer resp.Body.Close()
 	if resp.StatusCode != 401 {
 		t.Fatalf("status %d", resp.StatusCode)
@@ -263,7 +296,7 @@ func TestConcurrencyLimitRejectsOverflow(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			post(t, s, `{"model":"pub-1","messages":[]}`, "tok").Body.Close()
+			post(t, s, `{"model":"pub-1","messages":[{"role":"user","content":"hi"}]}`, "tok").Body.Close()
 		}()
 	}
 	deadline := time.Now().Add(5 * time.Second)
@@ -273,7 +306,7 @@ func TestConcurrencyLimitRejectsOverflow(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	resp := post(t, s, `{"model":"pub-1","messages":[]}`, "tok")
+	resp := post(t, s, `{"model":"pub-1","messages":[{"role":"user","content":"hi"}]}`, "tok")
 	defer resp.Body.Close()
 	if resp.StatusCode != 503 {
 		t.Fatalf("overflow code=%d want 503", resp.StatusCode)
@@ -325,7 +358,7 @@ func TestStreamPassThroughFlushesPerChunk(t *testing.T) {
 	}))
 	defer up.Close()
 	s := newGW(t, up.URL, nil)
-	req, _ := http.NewRequest("POST", "/v1/messages", strings.NewReader(`{"model":"pub-1","stream":true,"messages":[]}`))
+	req, _ := http.NewRequest("POST", "/v1/messages", strings.NewReader(`{"model":"pub-1","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
 	req.Header.Set("Authorization", "Bearer tok")
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)
@@ -359,7 +392,7 @@ func TestClientCancelPropagatesUpstream(t *testing.T) {
 	s := newGW(t, up.URL, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	req, _ := http.NewRequest("POST", "/v1/messages", strings.NewReader(`{"model":"pub-1","messages":[]}`))
+	req, _ := http.NewRequest("POST", "/v1/messages", strings.NewReader(`{"model":"pub-1","messages":[{"role":"user","content":"hi"}]}`))
 	req.Header.Set("Authorization", "Bearer tok")
 	req = req.WithContext(ctx)
 	done := make(chan struct{})
@@ -394,7 +427,7 @@ func TestUpstreamErrorEnvelopeWrapped(t *testing.T) {
 	s := newGW(t, up.URL, func(d *Deps) {
 		d.Cooldowns = router.NewCooldowns()
 	})
-	resp := post(t, s, `{"model":"pub-1","messages":[]}`, "tok")
+	resp := post(t, s, `{"model":"pub-1","messages":[{"role":"user","content":"hi"}]}`, "tok")
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 400 || calls != 1 {
@@ -422,7 +455,7 @@ func TestUpstreamErrorEnvelopePreserved(t *testing.T) {
 	}))
 	defer up.Close()
 	s := newGW(t, up.URL, nil)
-	resp := post(t, s, `{"model":"pub-1","messages":[]}`, "tok")
+	resp := post(t, s, `{"model":"pub-1","messages":[{"role":"user","content":"hi"}]}`, "tok")
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 400 || string(b) != upstreamBody {
@@ -440,7 +473,7 @@ func TestAllCandidatesExhaustedReturns502(t *testing.T) {
 	}))
 	defer up.Close()
 	s := newGW(t, up.URL, nil)
-	resp := post(t, s, `{"model":"pub-1","messages":[]}`, "tok")
+	resp := post(t, s, `{"model":"pub-1","messages":[{"role":"user","content":"hi"}]}`, "tok")
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 502 {
@@ -488,7 +521,7 @@ func TestCredentialFailureCoolsAndFailsOver(t *testing.T) {
 			return []router.Candidate{dead, live}, nil
 		}
 	})
-	resp := post(t, s, `{"model":"pub-1","messages":[]}`, "tok")
+	resp := post(t, s, `{"model":"pub-1","messages":[{"role":"user","content":"hi"}]}`, "tok")
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 || calls != 1 {
 		b, _ := io.ReadAll(resp.Body)
@@ -499,7 +532,7 @@ func TestCredentialFailureCoolsAndFailsOver(t *testing.T) {
 		t.Fatalf("dead channel must be cooled as auth: %+v", snap)
 	}
 	// 第二请求：c-dead 已冷却被过滤，仅 live 命中——死钥不每请求重试。
-	resp2 := post(t, s, `{"model":"pub-1","messages":[]}`, "tok")
+	resp2 := post(t, s, `{"model":"pub-1","messages":[{"role":"user","content":"hi"}]}`, "tok")
 	defer resp2.Body.Close()
 	if resp2.StatusCode != 200 || calls != 2 {
 		t.Fatalf("second request must hit live only: code=%d calls=%d", resp2.StatusCode, calls)
@@ -535,7 +568,7 @@ func TestAdapterFailureFailsOverWithoutCooldown(t *testing.T) {
 			return []router.Candidate{badProto, good}, nil
 		}
 	})
-	resp := post(t, s, `{"model":"pub-1","messages":[]}`, "tok")
+	resp := post(t, s, `{"model":"pub-1","messages":[{"role":"user","content":"hi"}]}`, "tok")
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 || calls != 1 {
 		b, _ := io.ReadAll(resp.Body)
@@ -555,7 +588,7 @@ func TestUnknownModelRejected(t *testing.T) {
 	up := fakeUpstream(t, 200, `{"id":"ok"}`, &calls)
 	defer up.Close()
 	s := newGW(t, up.URL, nil) // Candidates 对非 pub-1 返回空
-	resp := post(t, s, `{"model":"nope","max_tokens":8,"messages":[]}`, "tok")
+	resp := post(t, s, `{"model":"nope","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`, "tok")
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 404 {
@@ -585,7 +618,7 @@ func TestPassthroughReservedStill404(t *testing.T) {
 	s := newGW(t, up.URL, func(d *Deps) {
 		d.Passthrough = func() bool { return true }
 	})
-	resp := post(t, s, `{"model":"nope","max_tokens":8,"messages":[]}`, "tok")
+	resp := post(t, s, `{"model":"nope","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`, "tok")
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 404 || calls != 0 {
@@ -610,7 +643,7 @@ func TestAllCooling503(t *testing.T) {
 			return []router.Candidate{cool}, nil
 		}
 	})
-	resp := post(t, s, `{"model":"pub-1","max_tokens":8,"messages":[]}`, "tok")
+	resp := post(t, s, `{"model":"pub-1","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`, "tok")
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 503 {
@@ -648,7 +681,7 @@ func TestSecondCheckAllCooling503(t *testing.T) {
 			return []router.Candidate{cand}, nil
 		}
 	})
-	resp := post(t, s, `{"model":"pub-1","max_tokens":8,"messages":[]}`, "tok")
+	resp := post(t, s, `{"model":"pub-1","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`, "tok")
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 503 || !strings.Contains(string(b), "all targets cooling") {
@@ -666,7 +699,7 @@ func TestSecondCheckAllCooling503(t *testing.T) {
 // 返回 (Deps tweak, 共享 Cooldowns)——冷却断言用同一实例。
 func twoCands(t *testing.T, up1, up2 string) (func(d *Deps), *router.Cooldowns) {
 	t.Helper()
-	creds := credential.NewFallbackFile(t.TempDir() + "/s.json")
+	creds := newMapStore()
 	_ = creds.Set("account:k1", []byte("sk-1"))
 	_ = creds.Set("account:k2", []byte("sk-2"))
 	cds := router.NewCooldowns()
@@ -693,7 +726,7 @@ func TestFailoverSkipsBadChannel(t *testing.T) {
 	dead := "http://127.0.0.1:1" // 必然连接失败
 	tw, _ := twoCands(t, dead, good.URL)
 	s := newGW(t, dead, tw)
-	resp := post(t, s, `{"model":"pub-1","max_tokens":8,"messages":[]}`, "tok")
+	resp := post(t, s, `{"model":"pub-1","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`, "tok")
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 || calls2 != 1 {
 		t.Fatalf("failover: status %d calls2 %d", resp.StatusCode, calls2)
@@ -709,7 +742,7 @@ func Test429SwitchesAndMarksCooldown(t *testing.T) {
 	defer busy.Close()
 	tw, cds := twoCands(t, busy.URL, good.URL)
 	s := newGW(t, busy.URL, tw)
-	resp := post(t, s, `{"model":"pub-1","max_tokens":8,"messages":[]}`, "tok")
+	resp := post(t, s, `{"model":"pub-1","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`, "tok")
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		b, _ := io.ReadAll(resp.Body)
@@ -735,7 +768,7 @@ func Test400NoSwitchNoCooldown(t *testing.T) {
 	defer bad.Close()
 	tw, cds := twoCands(t, bad.URL, good.URL)
 	s := newGW(t, bad.URL, tw)
-	resp := post(t, s, `{"model":"pub-1","max_tokens":8,"messages":[]}`, "tok")
+	resp := post(t, s, `{"model":"pub-1","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`, "tok")
 	defer resp.Body.Close()
 	if _, ok := cds.TryAcquire("c1", time.Now()); !ok {
 		t.Fatal("400 must not cool the channel")
@@ -767,7 +800,7 @@ func TestFirstByteThenUpstreamErrorNoReplay(t *testing.T) {
 	defer flaky.Close()
 	tw, _ := twoCands(t, flaky.URL, good.URL)
 	s := newGW(t, flaky.URL, tw)
-	resp := post(t, s, `{"model":"pub-1","max_tokens":8,"messages":[]}`, "tok")
+	resp := post(t, s, `{"model":"pub-1","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`, "tok")
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Fatalf("status %d", resp.StatusCode)
@@ -799,7 +832,7 @@ func TestClientCancelNoSwitch(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, "POST", "/v1/messages",
-		strings.NewReader(`{"model":"pub-1","max_tokens":8,"messages":[]}`))
+		strings.NewReader(`{"model":"pub-1","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`))
 	req.Header.Set("Authorization", "Bearer tok")
 	go func() {
 		time.Sleep(100 * time.Millisecond)
@@ -845,7 +878,7 @@ func TestConcurrent429CooldownAtomic(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			resp := post(t, s, `{"model":"pub-1","max_tokens":8,"messages":[]}`, "tok")
+			resp := post(t, s, `{"model":"pub-1","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`, "tok")
 			resp.Body.Close()
 		}()
 	}
@@ -875,7 +908,7 @@ func TestOpenAIProtocolCandidateEndToEnd(t *testing.T) {
 		w.Write([]byte(`{"id":"cmpl-1","model":"u-oai","choices":[{"message":{"content":"hello from openai"},"finish_reason":"stop"}],"usage":{"prompt_tokens":4,"completion_tokens":3}}`))
 	}))
 	defer up.Close()
-	creds := credential.NewFallbackFile(t.TempDir() + "/s.json")
+	creds := newMapStore()
 	_ = creds.Set("account:ko", []byte("sk-oai"))
 	cand := router.Candidate{TargetID: "to", LogicalModel: "pub-1",
 		ChannelID: "co", ChannelName: "oai", SecretKey: "account:ko",
@@ -924,7 +957,7 @@ func TestAllCredentialsDeadReturns502CredentialClass(t *testing.T) {
 			AllowPrivate: true, UpstreamModel: "u2", Priority: 20}
 		d.Candidates = func(string) ([]router.Candidate, error) { return []router.Candidate{dead1, dead2}, nil }
 	})
-	resp := post(t, s, `{"model":"pub-1","messages":[]}`, "tok")
+	resp := post(t, s, `{"model":"pub-1","messages":[{"role":"user","content":"hi"}]}`, "tok")
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 502 {
@@ -955,7 +988,7 @@ func TestUpstreamSeesAPIKeyNotLocalToken(t *testing.T) {
 	}))
 	defer up.Close()
 	s := newGW(t, up.URL, nil)
-	resp := post(t, s, `{"model":"pub-1","messages":[]}`, "tok")
+	resp := post(t, s, `{"model":"pub-1","messages":[{"role":"user","content":"hi"}]}`, "tok")
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Fatalf("status %d", resp.StatusCode)
@@ -976,7 +1009,7 @@ func TestRetryAfterPassthroughOnSuccess(t *testing.T) {
 	}))
 	defer up.Close()
 	s := newGW(t, up.URL, nil)
-	resp := post(t, s, `{"model":"pub-1","messages":[]}`, "tok")
+	resp := post(t, s, `{"model":"pub-1","messages":[{"role":"user","content":"hi"}]}`, "tok")
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 || resp.Header.Get("Retry-After") != "5" {
 		t.Fatalf("Retry-After must pass through on 2xx: status=%d ra=%q",
@@ -993,7 +1026,7 @@ func TestRetryAfterPassthroughOnParamError(t *testing.T) {
 	}))
 	defer up.Close()
 	s := newGW(t, up.URL, nil)
-	resp := post(t, s, `{"model":"pub-1","messages":[]}`, "tok")
+	resp := post(t, s, `{"model":"pub-1","messages":[{"role":"user","content":"hi"}]}`, "tok")
 	defer resp.Body.Close()
 	if resp.StatusCode != 400 || resp.Header.Get("Retry-After") != "9" {
 		t.Fatalf("Retry-After must pass through on 400: status=%d ra=%q",
@@ -1122,7 +1155,7 @@ func TestOpenAIInboundOpenAIProtocolPassthrough(t *testing.T) {
 		w.Write([]byte(`{"id":"cmpl-1","object":"chat.completion","model":"u-oai","choices":[{"message":{"role":"assistant","content":"raw"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`))
 	}))
 	defer up.Close()
-	creds := credential.NewFallbackFile(t.TempDir() + "/s.json")
+	creds := newMapStore()
 	_ = creds.Set("account:ko", []byte("sk-oai"))
 	cand := router.Candidate{TargetID: "to", LogicalModel: "pub-1",
 		ChannelID: "co", ChannelName: "oai", SecretKey: "account:ko",
@@ -1171,5 +1204,89 @@ func TestOpenAIInboundUpstreamErrorOpenAIShape(t *testing.T) {
 	if err := json.Unmarshal(b, &env); err != nil || env.Type != "" ||
 		env.Error.Message != "bad param" || env.Error.Type != "invalid_request_error" {
 		t.Fatalf("must be OpenAI error shape: %s", b)
+	}
+}
+
+// —— 破坏性测试回归（2026-10-18）：畸形 messages 不得出网关 ——
+
+func TestMessagesMissingRejectedBeforeUpstream(t *testing.T) {
+	var calls int
+	up := fakeUpstream(t, 200, `{"content":[{"type":"text","text":"x"}]}`, &calls)
+	defer up.Close()
+	s := newGW(t, up.URL, nil)
+	resp := post(t, s, `{"model":"pub-1","max_tokens":16}`, "tok")
+	defer resp.Body.Close()
+	if resp.StatusCode != 400 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("missing messages must 400 at gateway, got %d: %s", resp.StatusCode, b)
+	}
+	if calls != 0 {
+		t.Fatalf("gateway must not forward missing-messages body to upstream, calls=%d", calls)
+	}
+}
+
+func TestMessagesEmptyArrayRejectedBeforeUpstream(t *testing.T) {
+	var calls int
+	up := fakeUpstream(t, 200, `{"content":[{"type":"text","text":"x"}]}`, &calls)
+	defer up.Close()
+	s := newGW(t, up.URL, nil)
+	resp := post(t, s, `{"model":"pub-1","max_tokens":16,"messages":[]}`, "tok")
+	defer resp.Body.Close()
+	if resp.StatusCode != 400 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("empty messages must 400 at gateway, got %d: %s", resp.StatusCode, b)
+	}
+	if calls != 0 {
+		t.Fatalf("gateway must not forward empty-messages body to upstream, calls=%d", calls)
+	}
+}
+
+func TestSlowBodyUploadTimesOut(t *testing.T) {
+	var calls int
+	up := fakeUpstream(t, 200, `{"content":[]}`, &calls)
+	defer up.Close()
+	s := newGW(t, up.URL, func(d *Deps) {
+		orig := d.Limits
+		d.Limits = func() Limits {
+			lim := orig()
+			lim.ReadTimeout = 300 * time.Millisecond
+			return lim
+		}
+	})
+	addr, err := s.Start("127.0.0.1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Shutdown(context.Background())
+
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	// 声明 1MB body 但一个字节不发：读体阶段无 deadline 时会无限挂起。
+	fmt.Fprintf(conn, "POST /v1/messages HTTP/1.1\r\nHost: %s\r\nAuthorization: Bearer tok\r\nContent-Type: application/json\r\nContent-Length: 1048576\r\n\r\n", addr)
+	// 客户端 deadline 远大于服务端 ReadTimeout(300ms)：服务端必须先主动结束
+	// （408 后关闭 / 直接 EOF），而不是客户端等到自己的 deadline 才放弃。
+	start := time.Now()
+	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	var got strings.Builder
+	buf := make([]byte, 256)
+	for {
+		n, rerr := conn.Read(buf)
+		got.Write(buf[:n])
+		if rerr != nil {
+			if nerr, ok := rerr.(net.Error); ok && nerr.Timeout() {
+				t.Fatalf("server must close slow-body connection at ReadTimeout, client waited full deadline (%v), got: %q", time.Since(start), got.String())
+			}
+			break // EOF / connection reset：服务端已关闭
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("slow body must never reach upstream, calls=%d", calls)
+	}
+	// 若服务端先回了响应，只允许 4xx（如 408），绝不能是成功状态。
+	if s := got.String(); s != "" && !strings.HasPrefix(s, "HTTP/1.1 4") {
+		t.Fatalf("only 4xx allowed for slow body, got: %q", s)
 	}
 }

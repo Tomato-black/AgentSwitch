@@ -50,7 +50,7 @@ type Options struct {
 	DBPath, LogPath, Version, Host string
 }
 
-// App 是单实例应用核心：库、日志、环形缓冲、凭据管理器与网关句柄。
+// App 是单实例应用核心：库、日志、环形缓冲、凭据存储与网关句柄。
 type App struct {
 	mu sync.Mutex
 	// settingsMu 串行化 settings 的 load→mutate→save 临界区（config.Save 写全部键，
@@ -65,7 +65,7 @@ type App struct {
 	logClose    io.Closer
 	log         *slog.Logger
 	ring        *telemetry.Ring
-	creds       credential.Manager
+	creds       credential.Store
 	gw          *gateway.Server
 	cooldowns   *router.Cooldowns
 	adapters    map[string]provider.Adapter
@@ -74,7 +74,7 @@ type App struct {
 	onRecord    []func(telemetry.RequestRecord)
 }
 
-// Open 开库、迁移、建日志与凭据管理器，确保网关令牌存在（空则生成并持久化）。
+// Open 开库、迁移、建日志与加密凭据存储，确保网关令牌存在（空则生成并持久化）。
 func Open(opts Options) (*App, error) {
 	if opts.Host == "" {
 		opts.Host = "127.0.0.1"
@@ -97,16 +97,16 @@ func Open(opts Options) (*App, error) {
 		st.Close()
 		return nil, err
 	}
-	fb := credential.NewFallbackFile(filepath.Join(filepath.Dir(opts.DBPath), "secrets-fallback.json"))
+	// 旧明文降级文件清场（2026-10-18 存储改造）：凭据已 AES-256-GCM 加密落库，
+	// 磁盘上不得残留 secrets-fallback.json 明文。尽力而为，删不掉不阻塞启动。
+	_ = os.Remove(filepath.Join(filepath.Dir(opts.DBPath), "secrets-fallback.json"))
 	a := &App{
 		opts:     opts,
 		store:    st,
 		log:      logger,
 		logClose: closer,
 		ring:     telemetry.NewRing(100),
-		// AllowFallback：显式确认闸在 bridge 的 pickBackendFor(allowFallback)——无密钥环且
-		// 用户未确认时在 Set 之前就报错；Manager 层放行是其配套，否则确认后仍失败。
-		creds: credential.Manager{Primary: credential.OSKeychain{}, Fallback: fb, AllowFallback: true},
+		creds:    st.Secrets(),
 	}
 	a.cooldowns = router.NewCooldowns()
 	a.adapters = map[string]provider.Adapter{
@@ -142,8 +142,8 @@ func (a *App) Log() *slog.Logger     { return a.log }
 // 降级/失败时的日志位置提示（spec §17 可诊断性）。
 func (a *App) LogPath() string { return a.opts.LogPath }
 
-// Creds 暴露凭据管理器（Task 11 bridge 直接使用）。
-func (a *App) Creds() credential.Store { return &a.creds }
+// Creds 暴露凭据存储（库内 AES-256-GCM 加密；bridge 直接使用）。
+func (a *App) Creds() credential.Store { return a.creds }
 
 // CurrentSettings 返回当前生效设置（Task 12 desktop 直接使用）。
 func (a *App) CurrentSettings() (config.Settings, error) { return a.settings() }
@@ -313,6 +313,7 @@ func (a *App) StartGateway() error {
 			return gateway.Limits{
 				MaxBodyBytes: s.MaxBodyBytes, MaxConcurrent: s.MaxConcurrent,
 				RequestTimeout: time.Duration(s.RequestTimeoutSeconds) * time.Second,
+				ReadTimeout:    30 * time.Second, // 读请求（含 body）上限；LLM 请求体在本机回环毫秒级到达，30s 足够
 			}
 		},
 		Candidates: a.candidates,
@@ -321,7 +322,7 @@ func (a *App) StartGateway() error {
 			return err == nil && s.PassthroughUnregistered
 		},
 		Cooldowns: a.cooldowns,
-		Cred:      &a.creds,
+		Cred:      a.creds,
 		Router:    router.PriorityRouter{},
 		AdapterFor: func(protocol string) (provider.Adapter, error) {
 			ad, ok := a.adapters[protocol]

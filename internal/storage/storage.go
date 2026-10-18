@@ -8,7 +8,8 @@ import (
 var ErrNotFound = errors.New("not found")
 
 // Channel 是渠道聚合根（spec 2026-10-17-logical-models §5）：上游入口定义，
-// 每渠道恰好一个凭据（CredentialRef 指向 OS 密钥存储）。时间戳为 Unix 毫秒。
+// 每渠道恰好一个凭据（CredentialRef 为 identity；密文在 channel_secrets，
+// 主密钥 master.key 分离存放）。时间戳为 Unix 毫秒。
 type Channel struct {
 	ID                   string
 	Name                 string
@@ -57,6 +58,7 @@ type Store interface {
 	ChannelModels() ChannelModelRepo
 	LogicalModels() LogicalModelRepo
 	LogicalModelTargets() LogicalModelTargetRepo
+	Secrets() SecretRepo
 	Settings() SettingsRepo
 	Close() error
 }

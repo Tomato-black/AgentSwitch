@@ -90,6 +90,9 @@ func ParseOpenAIChatRequest(body []byte) (OpenAIChatRequest, error) {
 	if req.Model == "" {
 		return OpenAIChatRequest{}, errors.New(ErrTypeInvalidRequest + ": model is required")
 	}
+	if len(req.Messages) == 0 {
+		return OpenAIChatRequest{}, errors.New(ErrTypeInvalidRequest + ": messages is required")
+	}
 	return req, nil
 }
 

@@ -4,21 +4,17 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"AgentSwitch/internal/credential"
 )
 
-func channelsSvc(t *testing.T) (Channels, *credential.Manager) {
+func channelsSvc(t *testing.T) (Channels, credential.Store) {
 	t.Helper()
 	a := tempApp(t)
-	creds := &credential.Manager{
-		Primary:       credential.NewFallbackFile(filepath.Join(t.TempDir(), "s.json")),
-		AllowFallback: true,
-	}
-	return Channels{A: a, Creds: creds}, creds
+	// 凭据走 app 的加密存储（库内 AES-256-GCM），不注入外部后端。
+	return Channels{A: a}, a.Creds()
 }
 
 // TestCreateChannelStoresOneKey：Create 后 HasKey、keychain 可 Get。

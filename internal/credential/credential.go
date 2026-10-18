@@ -1,18 +1,20 @@
-// Package credential abstracts where the gateway keeps provider API keys
-// and account secrets: the OS credential store first, a 0600 file second,
-// chosen per call by Manager.
+// Package credential defines where the gateway keeps provider API keys:
+// the interface plus the AES-256-GCM master key used by the SQLite-backed
+// store (internal/storage). 2026-10-18 存储改造：OS 钥匙串与明文降级文件
+// 已退役，密文落库由 storage.SecretRepo 承载。
 package credential
 
 import "errors"
 
 // Sentinel errors of the package. Callers match them with errors.Is.
 var (
-	ErrNotFound    = errors.New("secret not found")
-	ErrUnavailable = errors.New("credential store unavailable")
+	ErrNotFound = errors.New("secret not found")
+	// ErrDecrypt：密文存在但无法用当前主密钥解开（master.key 丢失后重新生成等）。
+	ErrDecrypt = errors.New("secret cannot be decrypted (master key mismatch)")
 )
 
-// Store is a place secrets live in: the OS keychain, the fallback file,
-// or Manager over both.
+// Store is a place secrets live in — production impl is storage's encrypted
+// SQLite store; tests use an in-memory map fake.
 type Store interface {
 	Set(key string, secret []byte) error
 	Get(key string) ([]byte, error)
@@ -22,57 +24,3 @@ type Store interface {
 // ChannelKey returns the store key for a channel's credential (single key per
 // channel; ref kept in channels.credential_ref).
 func ChannelKey(channelID string) string { return "channel:" + channelID }
-
-// Manager stores secrets in Primary, falling back to Fallback when Primary
-// reports ErrUnavailable and AllowFallback is true.
-type Manager struct {
-	Primary       Store
-	Fallback      Store
-	AllowFallback bool
-}
-
-var _ Store = (*Manager)(nil)
-
-// useFallback reports whether err from Primary diverts the call to Fallback.
-func (m *Manager) useFallback(err error) bool {
-	return errors.Is(err, ErrUnavailable) && m.AllowFallback && m.Fallback != nil
-}
-
-func (m *Manager) Set(key string, secret []byte) error {
-	if err := m.Primary.Set(key, secret); err != nil {
-		if m.useFallback(err) {
-			return m.Fallback.Set(key, secret)
-		}
-		return err
-	}
-	return nil
-}
-
-func (m *Manager) Get(key string) ([]byte, error) {
-	v, err := m.Primary.Get(key)
-	if err != nil {
-		if m.useFallback(err) {
-			return m.Fallback.Get(key)
-		}
-		return nil, err
-	}
-	return v, nil
-}
-
-// Delete removes the key from both stores, tolerating a miss in either:
-// a secret that only ever lived in the fallback file must still delete cleanly.
-// An unavailable Primary follows the same rule as Set/Get: with fallback
-// allowed its ErrUnavailable is swallowed and the Fallback's result governs;
-// otherwise the error propagates unchanged.
-func (m *Manager) Delete(key string) error {
-	err := m.Primary.Delete(key)
-	if errors.Is(err, ErrNotFound) || m.useFallback(err) {
-		err = nil
-	}
-	if m.Fallback != nil {
-		if ferr := m.Fallback.Delete(key); ferr != nil && !errors.Is(ferr, ErrNotFound) && err == nil {
-			err = ferr
-		}
-	}
-	return err
-}

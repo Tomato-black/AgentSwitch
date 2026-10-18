@@ -6,7 +6,6 @@ import (
 
 	"AgentSwitch/internal/app"
 	"AgentSwitch/internal/bridge"
-	"AgentSwitch/internal/credential"
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 )
@@ -22,14 +21,9 @@ func testUI(t *testing.T) (*uiState, *app.App) {
 	t.Cleanup(func() { a.Close() })
 	svc := Services{
 		Gateway: bridge.Gateway{A: a},
-		// 渠道页测试不得探测/写真实钥匙环（裁定 2）：密钥落临时文件，
-		// KeychainAvailable 恒 true —— allowFallback=false 的导入路径可离线
-		// 确定地走 "os-keychain" 分支（生产 Run() 仍注入 a.Creds()）。
-		Channels: bridge.Channels{A: a, Creds: &credential.Manager{
-			Primary:       credential.NewFallbackFile(filepath.Join(t.TempDir(), "ch-keys.json")),
-			AllowFallback: true,
-		}},
-		Logical: &bridge.LogicalModels{A: a},
+		// 凭据走 app 的加密存储（库内 AES-256-GCM），Channels.Creds 留空走 a.Creds() 兜底。
+		Channels: bridge.Channels{A: a},
+		Logical:  &bridge.LogicalModels{A: a},
 	}
 	return newUIState(svc, a), a
 }

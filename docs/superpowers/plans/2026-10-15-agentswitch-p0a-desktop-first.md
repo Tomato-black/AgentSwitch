@@ -5,7 +5,10 @@
 **Goal:** 交付单二进制 AgentSwitch 桌面应用：MyGo 原生 UI 壳 + SQLite 配置（供应商/账号/模型别名）+ Anthropic 协议本地模型网关，agent 指向 127.0.0.1 即可无感切换配置。
 
 **Architecture:** 单进程：`App.Run()` 事件循环占主线程，网关 HTTP listener 为进程内 goroutine；管理面是 `mygo.Bind` 桥接服务（无管理端口）；配置存 SQLite 且网关每请求实时读取（改配置即时生效）；凭据主存 OS 密钥存储（`mygo.Secrets`），无密钥环环境显式降级到 0600 文件。关主窗口经 `OnWindowAllClosed` 拦截驻留托盘；显式退出经 `OnBeforeQuit` 钩子优雅停止网关。
-
+ANTHROPIC_BASE_URL=http://127.0.0.1:17890
+ANTHROPIC_AUTH_TOKEN=c66487c337858e611756bc818e52f151c3fcf5847e54db4fff67eb8b128e6e5f
+ANTHROPIC_MODEL=my-code
+ANTHROPIC_SMALL_FAST_MODEL=my-code
 **Tech Stack:** Go 1.27.2 · mygo v0.5.1（原生 UI）· modernc.org/sqlite（纯 Go 驱动，无 cgo）· log/slog
 
 **Spec:** `docs/superpowers/specs/2026-10-15-agentswitch-p0a-desktop-first-design.md`（执行者须同时阅读；本计划的每个论据来自该 spec）

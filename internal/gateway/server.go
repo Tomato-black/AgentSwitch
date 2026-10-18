@@ -21,6 +21,8 @@ type Limits struct {
 	MaxBodyBytes   int64
 	MaxConcurrent  int
 	RequestTimeout time.Duration
+	// ReadTimeout 是 http.Server 读请求（含 body）的上限；零值不设。
+	ReadTimeout time.Duration
 }
 
 // Deps 是 Server 的全部外部依赖（渠道化后的 P0-B 形态，spec §6）。
@@ -86,8 +88,10 @@ func (s *Server) Start(host string, port int) (string, error) {
 	}
 	s.mu.Lock()
 	s.addr = ln.Addr().String()
-	s.srv = &http.Server{Handler: s.mux}
 	lim := s.deps.Limits()
+	// ReadTimeout 兜住读请求阶段（含 body）：伪造 Content-Length 后不发 body 的
+	// 连接在超时后被服务端关闭，不长期占用槽位（RequestTimeout 只覆盖读体之后）。
+	s.srv = &http.Server{Handler: s.mux, ReadTimeout: lim.ReadTimeout}
 	// ② 此处（Start）是第二次初始化（重设）：发生在下一行 go s.Serve(ln) 之前，
 	// 对随后到达的请求构成 happens-before——读者不会见到初始化中的半成品 sem。
 	// 新建/重设只在 New 与 Start（持 s.mu）里，handleMessages 对 sem 是只读复用。

@@ -30,7 +30,7 @@ func TestConfigChangeTakesEffectWithoutRestart(t *testing.T) {
 	}
 	call := func() string {
 		req, _ := http.NewRequest("POST", "http://"+a.State().Addr+"/v1/messages",
-			strings.NewReader(`{"model":"alias","messages":[]}`))
+			strings.NewReader(`{"model":"alias","messages":[{"role":"user","content":"hi"}]}`))
 		req.Header.Set("Authorization", "Bearer "+a.currentToken())
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {

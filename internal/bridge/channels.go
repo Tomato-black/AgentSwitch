@@ -14,7 +14,7 @@ import (
 )
 
 // Channels 是渠道聚合根管理面（logical-models spec §5）：每渠道单 Key
-// （credential_ref → OS 密钥存储，写在 credential.ChannelKey(id)）+
+// （credential_ref → 库内 AES-256-GCM 密文，键为 credential.ChannelKey(id)）+
 // 模型建议列表（SetSuggestions 全量替换，目标编辑下拉数据源）。
 type Channels struct {
 	A     *app.App
@@ -89,7 +89,7 @@ func (s Channels) Create(presetID, name, baseURL, protocol, apiKey string, enabl
 	if apiKey != "" {
 		ref := credential.ChannelKey(id)
 		if err := s.creds().Set(ref, []byte(apiKey)); err != nil {
-			return ChannelView{}, fmt.Errorf("密钥写入密钥存储失败: %w", err)
+			return ChannelView{}, fmt.Errorf("密钥写入加密存储失败: %w", err)
 		}
 		c.CredentialRef = ref
 	}
@@ -121,7 +121,7 @@ func (s Channels) Update(id, name, baseURL, apiKey string, enabled, allowPrivate
 	if apiKey != "" {
 		ref := credential.ChannelKey(id)
 		if err := s.creds().Set(ref, []byte(apiKey)); err != nil {
-			return fmt.Errorf("密钥写入密钥存储失败: %w", err)
+			return fmt.Errorf("密钥写入加密存储失败: %w", err)
 		}
 		c.CredentialRef = ref
 		keySet = true

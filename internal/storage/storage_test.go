@@ -30,8 +30,7 @@ func TestMigrationIdempotent(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	t.Cleanup(func() { s2.Close() })
-	// 渠道化重构后 schema 只剩单一 v1（删库重建，spec 决策 5）；重开时已记录
-	// 版本按序跳过，不得重放报错，schema_migrations 也必须恰有一条 v1。
+	// 重开时已记录版本按序跳过，不得重放报错，schema_migrations 必须恰为 [1 2]。
 	ds, ok := s2.(*dbStore)
 	if !ok {
 		t.Fatalf("Store = %T", s2)
@@ -49,8 +48,51 @@ func TestMigrationIdempotent(t *testing.T) {
 		}
 		got = append(got, v)
 	}
-	if rows.Err() != nil || len(got) != 1 || got[0] != 1 {
-		t.Fatalf("schema_migrations = %v, want [1]", got)
+	if rows.Err() != nil || len(got) != 2 || got[0] != 1 || got[1] != 2 {
+		t.Fatalf("schema_migrations = %v, want [1 2]", got)
+	}
+}
+
+// TestMigrateV1ToV2：既有 v1 库（渠道化重构产物）经 Open 自动升级到 v2
+// （channel_secrets 加密凭据表），免删库重建。
+func TestMigrateV1ToV2(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v1.db")
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(migrationV1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`INSERT INTO schema_migrations(version) VALUES (1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`INSERT INTO channels(id,name,protocol,base_url,credential_ref,enabled,created_at,updated_at)
+		VALUES ('c1','旧渠道','anthropic','http://x','channel:c1',1,1,1)`); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("v1->v2 open: %v", err)
+	}
+	defer s.Close()
+	ds, ok := s.(*dbStore)
+	if !ok {
+		t.Fatalf("Store = %T", s)
+	}
+	var n int
+	if err := ds.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='channel_secrets'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("channel_secrets missing after migrate (n=%d err=%v)", n, err)
+	}
+	// 旧渠道数据必须原样保留。
+	ch, err := s.Channels().Get("c1")
+	if err != nil || ch.Name != "旧渠道" || ch.CredentialRef != "channel:c1" {
+		t.Fatalf("v1 row lost: %+v err=%v", ch, err)
 	}
 }
 
@@ -80,7 +122,7 @@ func TestMigrationFinalSchema(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"channels", "channel_models", "logical_models", "logical_model_targets", "settings"} {
+	for _, want := range []string{"channels", "channel_models", "logical_models", "logical_model_targets", "settings", "channel_secrets"} {
 		if !tables[want] {
 			t.Fatalf("missing table %s (have %v)", want, tables)
 		}

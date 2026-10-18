@@ -7,7 +7,7 @@ import (
 )
 
 func TestParseChatRequest(t *testing.T) {
-	cr, err := ParseChatRequest([]byte(`{"model":"claude-opus","stream":true,"messages":[]}`))
+	cr, err := ParseChatRequest([]byte(`{"model":"claude-opus","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
 	if err != nil || cr.Model != "claude-opus" || !cr.Stream {
 		t.Fatalf("%+v %v", cr, err)
 	}
@@ -16,6 +16,13 @@ func TestParseChatRequest(t *testing.T) {
 	}
 	if _, err := ParseChatRequest([]byte(`not-json`)); err == nil {
 		t.Fatal("bad json must fail")
+	}
+	// 畸形 messages 不得出网关（2026-10-18 破坏性测试回归）。
+	if _, err := ParseChatRequest([]byte(`{"model":"claude-opus"}`)); err == nil {
+		t.Fatal("missing messages must fail")
+	}
+	if _, err := ParseChatRequest([]byte(`{"model":"claude-opus","messages":[]}`)); err == nil {
+		t.Fatal("empty messages must fail")
 	}
 }
 

@@ -14,8 +14,9 @@ const (
 )
 
 type ChatRequest struct {
-	Model  string `json:"model"`
-	Stream bool   `json:"stream"`
+	Model    string            `json:"model"`
+	Stream   bool              `json:"stream"`
+	Messages []json.RawMessage `json:"messages"`
 }
 
 func ParseChatRequest(body []byte) (ChatRequest, error) {
@@ -25,6 +26,9 @@ func ParseChatRequest(body []byte) (ChatRequest, error) {
 	}
 	if cr.Model == "" {
 		return ChatRequest{}, errors.New(ErrTypeInvalidRequest + ": model is required")
+	}
+	if len(cr.Messages) == 0 {
+		return ChatRequest{}, errors.New(ErrTypeInvalidRequest + ": messages is required")
 	}
 	return cr, nil
 }

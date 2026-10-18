@@ -6,7 +6,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"os"
+	"path/filepath"
 
+	"AgentSwitch/internal/credential"
 	_ "modernc.org/sqlite"
 )
 
@@ -52,6 +54,17 @@ CREATE TABLE logical_model_targets (
 CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 `
 
+// migrationV2（2026-10-18 用户决策）：渠道 API Key 改为 AES-256-GCM 加密
+// 落库——channel_secrets 存 credential_ref→密文；channels.credential_ref
+// 保留为 identity/有钥标志。取代 OS 钥匙串 + 明文降级文件（对 docx §8 的
+// 明示偏离）。加表不动旧表，既有 v1 库自动升级，免删库重建。
+const migrationV2 = `
+CREATE TABLE channel_secrets (
+  credential_ref TEXT PRIMARY KEY,
+  ciphertext BLOB NOT NULL
+);
+`
+
 // migrations 是按版本序执行的迁移表；migrate 只跑 schema_migrations 里
 // 未记录的版本（幂等）。追加新版本 = 追加一行，勿改已发布语句。
 var migrations = []struct {
@@ -59,9 +72,13 @@ var migrations = []struct {
 	sql     string
 }{
 	{1, migrationV1},
+	{2, migrationV2},
 }
 
-type dbStore struct{ db *sql.DB }
+type dbStore struct {
+	db  *sql.DB
+	key *credential.MasterKey
+}
 
 func Open(path string) (Store, error) {
 	// PRAGMA 经 DSN 下发，modernc 驱动对每条新建连接都会执行
@@ -88,7 +105,13 @@ func Open(path string) (Store, error) {
 		db.Close()
 		return nil, err
 	}
-	return &dbStore{db: db}, nil
+	// 主密钥与库同目录（与旧 secrets-fallback.json 同位置约定）；缺失即生成。
+	mk, err := credential.LoadMasterKey(filepath.Join(filepath.Dir(path), "master.key"))
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	return &dbStore{db: db, key: mk}, nil
 }
 
 // errLegacyDB 是删库重建守卫的统一文案：提示用户删除一次库文件。
@@ -223,5 +246,6 @@ func (s *dbStore) LogicalModels() LogicalModelRepo { return &logicalModelRepo{s.
 func (s *dbStore) LogicalModelTargets() LogicalModelTargetRepo {
 	return &logicalModelTargetRepo{s.db}
 }
+func (s *dbStore) Secrets() SecretRepo     { return &secretStore{db: s.db, key: s.key} }
 func (s *dbStore) Settings() SettingsRepo { return &settingsRepo{s.db} }
 func (s *dbStore) Close() error           { return s.db.Close() }

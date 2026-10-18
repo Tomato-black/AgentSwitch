@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 AgentSwitch：面向本地 AI Agent 的**模型 API 网关**——为 Claude Code / Codex CLI 等工具提供统一的本地模型入口，集中管理多供应商/多账号，支持手动指定账号与有限、安全的自动故障转移。
 
-技术选型（v2.0 设计稿确定）：Go 实现网关核心，**MyGo**（https://github.com/egoist/mygo，桌面框架）做桌面壳与前后端桥接，前端 TypeScript + HTML/CSS，数据用 SQLite，凭据存 OS 密钥存储。
+技术选型（v2.0 设计稿确定）：Go 实现网关核心，**MyGo**（https://github.com/egoist/mygo，桌面框架）做桌面壳与前后端桥接，前端 TypeScript + HTML/CSS，数据用 SQLite。**凭据存储（2026-10-18 用户决策，对 docx §8/§10「OS Keychain」的明示偏离）**：渠道 API Key 以 AES-256-GCM 加密存 SQLite（`channel_secrets` 表，migration v2），主密钥为库同目录 `master.key`（32 字节、0600、缺失自动生成）；OS 钥匙串与明文降级文件已退役。
 
 当前仓库已完成 P0-A′ 桌面优先 MVP（实现计划：`docs/superpowers/plans/2026-10-15-agentswitch-p0a-desktop-first.md`）：单二进制桌面应用，入口 `cmd/agentswitch`，Go 1.27.2，依赖 mygo v0.5.1 与 modernc.org/sqlite；核心包在 `internal/{app,bridge,config,credential,desktop,gateway,protocol,provider,router,storage,telemetry}`，测试全部离线（httptest Fake Provider），`README.md` 含首次使用流程。相对 v2.0 目标结构（§12）的落地差异：管理面以进程内 `bridge`（`mygo.Bind` 桌面桥接、无独立管理端口）替代 `controlapi`；migrations 内嵌在 `internal/storage`（当前单一 v1）。**UI 决策（2026-10-17）**：后续全部使用 MyGo 原生视图（`internal/desktop`），`frontend/` TS 工程方案**废弃**——这是对 docx §12 前端规划的明示偏离（docx 不改，以 `docs/superpowers/specs/2026-10-17-desktop-ui-mygo-native-design.md` 为凭证）；桌面 UI 设计系统见 `docs/superpowers/specs/2026-10-17-desktop-ui-ccswitch-redesign-design.md` 与 `internal/desktop/theme.go`——视觉系统由该 spec 取代旧「交换机面板」（橙主操作/绿橙分离/卡片流/列表+详情 IA）。P0-B 已随上述 spec 落地，后续项留档见该计划文档末尾。2026-10-17 起渠道模型为 new-api 式 **channels 聚合根**（`channels`/`channel_keys`/`channel_models` 三表，渠道级模型清单与重定向；providers/accounts/models 旧表已退役）——设计见 `docs/superpowers/specs/2026-10-17-channels-models-p0b-design.md`，实现计划见 `docs/superpowers/plans/2026-10-17-channels-models-p0b.md`。P0-B（优先级故障转移、冷却、二次校验）随该 spec 落地。**当前形态（2026-10-17 逻辑模型重构）**：路由主体是用户自定义的**逻辑模型**（`logical_models` + `logical_model_targets` 有序目标链），渠道为**单 Key** 执行单元（`channels` + `channel_models` 模型建议列表，`channel_keys` 多密钥表及其代码路径已删除）；桌面 UI 为 cc-switch 式侧栏（逻辑模型/渠道/接入/设置 + 底条网关状态）；网关**双入站**（Anthropic `POST /v1/messages` + OpenAI `POST /v1/chat/completions`，共用同一套逻辑模型/冷却/故障转移核心）——设计见 `docs/superpowers/specs/2026-10-17-logical-models-ccswitch-ui-design.md`，实现计划见 `docs/superpowers/plans/2026-10-17-logical-models-ccswitch-ui.md`。旧「按渠道优先级故障转移」路由入口已删除，由逻辑模型目标链取代。**重构均为删库重建**：schema 合并为单一 migration v1；旧库含 `channel_keys` 表时启动报错，老用户需删除一次 `~/Library/Application Support/AgentSwitch/agentswitch.db`（不静默清库、不就地迁移）。
 
@@ -61,13 +61,13 @@ go tool mygo build    # 打包（产物在 build/）
 ### 安全默认（文档 §8、§10）
 
 - 模型 API 与管理 API 默认只监听 127.0.0.1，且使用**相互独立**的访问令牌。
-- API Key 存 OS Keychain/Credential Manager，SQLite 只存 `credential_ref`；平台不支持时须显式安全降级，禁止默默明文落库。
+- API Key 以 AES-256-GCM 加密存 SQLite `channel_secrets`（密文 BLOB），主密钥 `master.key`（0600）与库分离存放，`channels.credential_ref` 只作引用/有钥标志；明文永不落库落日志（2026-10-18 用户决策替代 OS Keychain 方案，docx §8 偏离已记录）。
 - 日志、错误、UI、诊断包中禁止出现密钥、Authorization、Cookie、完整 Prompt（事件只记脱敏元数据）。
 - 用户配置的 `base_url` 要做 SSRF/重定向/私网地址校验；配置导出默认脱敏。
 
 ### 存储与测试（文档 §8、§13）
 
-- SQLite 存非秘密配置与状态：`channels`（**单 Key**，`credential_ref` 进 OS 钥匙串；`channel_keys` 已删除）+ `channel_models`（仅模型建议列表，非路由主体）+ `logical_models`/`logical_model_targets`（路由主体目标链）。docx §8/§13 转述保留 Provider/Account/ModelMapping/RoutePolicy 原文名。事件遥测沿用内存环 + 文件日志，**不落 SQLite**。经 Repository + `migrations/`。
+- SQLite 存非秘密配置与状态：`channels`（**单 Key**，`credential_ref` 仅作引用；密文在 `channel_secrets`，主密钥 `master.key` 分离；`channel_keys` 已删除）+ `channel_models`（仅模型建议列表，非路由主体）+ `logical_models`/`logical_model_targets`（路由主体目标链）。docx §8/§13 转述保留 Provider/Account/ModelMapping/RoutePolicy 原文名。事件遥测沿用内存环 + 文件日志，**不落 SQLite**。经 Repository + `migrations/`。
 - 测试以 **Fake Provider** 为主（稳定复现额度耗尽、429/Retry-After、5xx、流式中断），不依赖真实供应商；真实 Agent 兼容性验证只作受控测试，常规 CI 不打真实上游。
 - 必测边界：首字节前可切换、首字节后不重放、客户端取消、并发 429 冷却原子性（`-race`，冷却键 ChannelID）、停止期间请求收尾；多逻辑模型并存互不串扰、目标顺序生效。
 
@@ -79,3 +79,22 @@ P0-A 核心网关（单协议端到端）→ P0-B 账号池与故障转移 → P
 
 - 网关单进程 vs 独立子进程**未定**——先做生命周期抽象，验证 MyGo 运行模型后再决定。
 - MyGo 具体 API、托盘/开机启动等能力未经验证，以选定版本官方文档与仓库实现为准。
+  ANTHROPIC_BASE_URL=http://127.0.0.1:17890
+  ANTHROPIC_AUTH_TOKEN=c66487c337858e611756bc818e52f151c3fcf5847e54db4fff67eb8b128e6e5f
+  ANTHROPIC_MODEL=my-code
+  ANTHROPIC_SMALL_FAST_MODEL=my-code
+
+### 更严格的任务粒度约束
+
+生成实施计划时，必须遵守以下规则：
+
+1. 每个任务只包含一个可独立验证的主要变更。
+2. 默认每个任务只需要 2–5 分钟的实际编码工作；复杂任务允许适当延长，但必须说明原因。
+3. 每个任务必须明确列出具体文件、修改内容和验证命令。
+4. 如果任务同时涉及多个独立业务行为，必须继续拆分。
+5. 如果一个任务需要同时实现多个 API、多个业务场景或多个模块，必须继续拆分。
+6. 不得将整个模块的实现、完整功能开发或所有测试编写作为单个任务。
+7. 拆分必须保持 TDD 流程完整：每个任务有对应的失败测试、最小实现和通过验证。
+8. 任务拆分完成后，检查任务之间的依赖关系，确保每个任务可以依据前序任务的明确产物独立执行。
+
+特别注意：任务拆分应减少每个执行者需要阅读的代码和理解的业务范围，而不仅仅是把一个大任务改写成多个标题。

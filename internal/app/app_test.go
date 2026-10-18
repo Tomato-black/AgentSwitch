@@ -10,12 +10,11 @@ import (
 	"sync"
 	"testing"
 
-	"AgentSwitch/internal/credential"
 	"AgentSwitch/internal/storage"
 )
 
-// openApp 开空库应用（无渠道/模型夹具）；测试不得写真实 OS 钥匙环——
-// Primary 换本地 0600 文件（AllowFallback 本已 true）。
+// openApp 开空库应用（无渠道/模型夹具）；凭据走库内 AES-256-GCM 加密存储，
+// 主密钥在临时库目录，无外部依赖。
 func openApp(t *testing.T) *App {
 	t.Helper()
 	a, err := Open(Options{
@@ -28,7 +27,20 @@ func openApp(t *testing.T) *App {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { a.Close() })
-	a.creds.Primary = credential.NewFallbackFile(filepath.Join(t.TempDir(), "secrets.json"))
+	// 探测空闲端口注入：测试不与本机任何在跑实例（dev/正式版）抢 17890。
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+	cur, err := a.CurrentSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.SaveSettings(port, cur.RequestTimeoutSeconds); err != nil {
+		t.Fatal(err)
+	}
 	return a
 }
 
