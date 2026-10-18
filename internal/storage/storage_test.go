@@ -138,6 +138,65 @@ func TestOpenRejectsLegacySchema(t *testing.T) {
 	}
 }
 
+// TestOpenRejectsPreChannelsV1 覆盖 providers 时代旧库：schema_migrations 已记
+// v1 且无 channel_keys，但也没有最终形态的 channels——migrate 会跳过 v1，
+// 守卫必须拒绝，否则启动后保存渠道报「no such table: channels」。
+func TestOpenRejectsPreChannelsV1(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pre-channels.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 复刻 8a7228a 时代：migration001（providers/accounts）+ 已记 v1。
+	if _, err := db.Exec(`
+		CREATE TABLE providers (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+		CREATE TABLE accounts (id TEXT PRIMARY KEY, provider_id TEXT NOT NULL);
+		CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY);
+		INSERT INTO schema_migrations(version) VALUES (1);
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(path)
+	if err == nil {
+		s.Close()
+		t.Fatal("Open must reject pre-channels DB with schema_migrations v1 already recorded")
+	}
+	if !strings.Contains(err.Error(), "删除") {
+		t.Fatalf("error must mention 删除: %v", err)
+	}
+}
+
+// TestOpenRejectsV1WithoutCredentialRef 覆盖「v1 已记 + 有 channels 但缺
+// credential_ref」的残缺形态：不得静默当新库用。
+func TestOpenRejectsV1WithoutCredentialRef(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "stale-v1.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		CREATE TABLE channels (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+		CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY);
+		INSERT INTO schema_migrations(version) VALUES (1);
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(path)
+	if err == nil {
+		s.Close()
+		t.Fatal("Open must reject v1 DB whose channels lack credential_ref")
+	}
+	if !strings.Contains(err.Error(), "删除") {
+		t.Fatalf("error must mention 删除: %v", err)
+	}
+}
+
 func TestSettingsGetSet(t *testing.T) {
 	s := tempStore(t)
 	if err := s.Settings().Set("k", "v"); err != nil {

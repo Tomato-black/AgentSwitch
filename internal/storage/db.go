@@ -91,18 +91,90 @@ func Open(path string) (Store, error) {
 	return &dbStore{db: db}, nil
 }
 
-// rejectLegacySchema 是删库重建的旧库守卫：库中存在 channel_keys（多 Key 旧
-// schema）时明确拒绝并提示删除文件，不静默清库也不就地迁移——旧库的
-// schema_migrations 可能已记 v1，直接走 migrate 会把旧表原样留下。
+// errLegacyDB 是删库重建守卫的统一文案：提示用户删除一次库文件。
+var errLegacyDB = errors.New("检测到旧版数据库（schema_migrations 与最终 schema 不一致或含旧表）：本次为删库重建，不提供就地迁移；请删除数据库文件（agentswitch.db）后重启，配置将重建")
+
+// rejectLegacySchema 是删库重建的旧库守卫：凡不能确认已是「最终 schema」的库
+// 一律拒绝并提示删除文件，不静默清库也不就地迁移。
+//
+// 关键失败模式（用户实报「保存渠道没有 channels 表」）：providers 时代旧库
+// schema_migrations 已记 v1，但无 channel_keys——旧守卫放行后 migrate 见 v1
+// 已记录直接跳过，新表建不出来。因此除旧表名外，还须校验：已记 v1 时
+// channels 存在且含 credential_ref。
 func rejectLegacySchema(db *sql.DB) error {
-	var n int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='channel_keys'`).Scan(&n); err != nil {
+	for _, legacyTable := range []string{"channel_keys", "providers", "accounts"} {
+		ok, err := tableExists(db, legacyTable)
+		if err != nil {
+			return err
+		}
+		if ok {
+			return errLegacyDB
+		}
+	}
+	v1, err := hasRecordedVersion(db, 1)
+	if err != nil {
 		return err
 	}
-	if n > 0 {
-		return errors.New("检测到旧版多 Key 数据库（存在 channel_keys 表）：本次为删库重建，不提供就地迁移；请删除数据库文件（agentswitch.db）后重启，配置将重建")
+	if !v1 {
+		// 空库或无版本记录：交给 migrate 建最终 schema。
+		return nil
+	}
+	hasChannels, err := tableExists(db, "channels")
+	if err != nil {
+		return err
+	}
+	if !hasChannels {
+		return errLegacyDB
+	}
+	hasCredRef, err := columnExists(db, "channels", "credential_ref")
+	if err != nil {
+		return err
+	}
+	if !hasCredRef {
+		return errLegacyDB
 	}
 	return nil
+}
+
+func tableExists(db *sql.DB, name string) (bool, error) {
+	var n int
+	err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, name).Scan(&n)
+	return n > 0, err
+}
+
+func hasRecordedVersion(db *sql.DB, version int64) (bool, error) {
+	ok, err := tableExists(db, "schema_migrations")
+	if err != nil || !ok {
+		return false, err
+	}
+	var n int
+	err = db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version=?`, version).Scan(&n)
+	return n > 0, err
+}
+
+func columnExists(db *sql.DB, table, column string) (bool, error) {
+	// PRAGMA 表名不能参数化；表名来自本包白名单/调用方固定字符串。
+	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			cid       int
+			name, typ string
+			notNull   int
+			dflt      sql.NullString
+			pk        int
+		)
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &dflt, &pk); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 // migrate 按 migrations 版本序补齐未执行的版本：每版本独立事务（DDL 与版本
