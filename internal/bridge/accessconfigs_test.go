@@ -1,10 +1,47 @@
 package bridge
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"AgentSwitch/internal/storage"
 )
+
+func TestClaudeLiveProjectionPreservesAndMerges(t *testing.T) {
+	acc := AccessConfigs{A: tempApp(t), Home: t.TempDir()}
+	dir := filepath.Join(acc.Home, ".claude")
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"permissions":{"allow":["Bash"]},"env":{"FOO":"bar","ANTHROPIC_MODEL":"old"}}`), 0o600)
+	if err := acc.writeClaudeLive(map[string]string{"ANTHROPIC_BASE_URL": "http://127.0.0.1:17890", "ANTHROPIC_MODEL": "new"}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "settings.json"))
+	var got map[string]any
+	json.Unmarshal(b, &got)
+	env := got["env"].(map[string]any)
+	if env["ANTHROPIC_MODEL"] != "new" || env["FOO"] != "bar" {
+		t.Fatal(string(b))
+	}
+	if got["permissions"] == nil {
+		t.Fatal("非受管键丢失")
+	}
+}
+
+func TestClaudeLiveProjectionInvalidJSONAborts(t *testing.T) {
+	acc := AccessConfigs{A: tempApp(t), Home: t.TempDir()}
+	dir := filepath.Join(acc.Home, ".claude")
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{broken`), 0o600)
+	if err := acc.writeClaudeLive(map[string]string{"ANTHROPIC_MODEL": "x"}); err == nil {
+		t.Fatal("非法 JSON 应中止")
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "settings.json"))
+	if string(b) != "{broken" {
+		t.Fatal("失败后不得改动原文件")
+	}
+}
 
 func TestComposeAccessEnvClaudeMergePrecedence(t *testing.T) {
 	st := Status{Port: 17890, Token: "tok123"}

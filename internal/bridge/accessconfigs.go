@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"AgentSwitch/internal/app"
@@ -109,6 +112,95 @@ func validateAccessAppType(appType string) error {
 		return fmt.Errorf("不支持的接入类型: %q（仅支持 claude、codex）", appType)
 	}
 	return nil
+}
+
+// claudeManagedEnvKeys 是 ~/.claude/settings.json 的四个受管 env 键
+// （spec「接管写入」受管键表）：投影时只按 key 替换传入 env 中存在的这些键，
+// 文件里其余键值（用户其他 env、permissions、model 等）原样保留。
+var claudeManagedEnvKeys = []string{
+	"ANTHROPIC_BASE_URL",
+	"ANTHROPIC_AUTH_TOKEN",
+	"ANTHROPIC_MODEL",
+	"ANTHROPIC_SMALL_FAST_MODEL",
+}
+
+// writeClaudeLive 把 env 的受管键投影进 <home>/.claude/settings.json：
+// 目录不存在则 MkdirAll 0o755；文件不存在建空对象，存在则整体解析为
+// map[string]any，**解析失败直接返回错误且绝不改动原文件**（先读后写，
+// 不猜测修复）；确保 env 子对象存在，只替换 claudeManagedEnvKeys 中
+// 按 key 存在于 env 的键，其余键值原样保留；0600 原子写回
+// （同目录 CreateTemp → chmod → write → close → rename）。
+// 本方法不写任何日志——写入值含网关令牌（spec §9 脱敏）。
+func (s AccessConfigs) writeClaudeLive(env map[string]string) error {
+	home := s.Home
+	if home == "" {
+		var err error
+		if home, err = os.UserHomeDir(); err != nil {
+			return err
+		}
+	}
+	dir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	path := filepath.Join(dir, "settings.json")
+	root := map[string]any{}
+	if b, err := os.ReadFile(path); err == nil {
+		// 解析失败必须在任何写动作前返回，原文件保持不动。
+		if err := json.Unmarshal(b, &root); err != nil {
+			return err
+		}
+		if root == nil { // 合法 JSON null → 视为空对象
+			root = map[string]any{}
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	// 确保 env 子对象存在；已有但非对象则报错（不猜测修复）。
+	envObj := map[string]any{}
+	if v, ok := root["env"]; ok && v != nil {
+		m, ok := v.(map[string]any)
+		if !ok {
+			return fmt.Errorf("settings.json 的 env 不是对象")
+		}
+		envObj = m
+	}
+	for _, k := range claudeManagedEnvKeys { // 只替换受管键（按 key 存在即写）
+		if val, ok := env[k]; ok {
+			envObj[k] = val
+		}
+	}
+	root["env"] = envObj
+	b, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return err
+	}
+	return atomicWriteFile0600(path, b)
+}
+
+// atomicWriteFile0600 以 0600 原子写回文件：同目录 CreateTemp → chmod 0600
+// → write → close → rename；任一步失败清理临时文件（rename 成功后清理为
+// 无操作），目标文件要么保持旧内容要么被完整替换。
+func atomicWriteFile0600(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 // friendlyAccessSaveErr 把 UNIQUE(app_type, name) 冲突译成中文友好错误
