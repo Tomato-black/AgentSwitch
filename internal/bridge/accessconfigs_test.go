@@ -14,7 +14,7 @@ func TestClaudeLiveProjectionPreservesAndMerges(t *testing.T) {
 	dir := filepath.Join(acc.Home, ".claude")
 	os.MkdirAll(dir, 0o755)
 	os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"permissions":{"allow":["Bash"]},"env":{"FOO":"bar","ANTHROPIC_MODEL":"old"}}`), 0o600)
-	if err := acc.writeClaudeLive(map[string]string{"ANTHROPIC_BASE_URL": "http://127.0.0.1:17890", "ANTHROPIC_MODEL": "new"}); err != nil {
+	if err := acc.writeClaudeLive(map[string]string{"ANTHROPIC_BASE_URL": "http://127.0.0.1:17890", "ANTHROPIC_MODEL": "new", "HTTPS_PROXY": "http://p:1"}); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(filepath.Join(dir, "settings.json"))
@@ -23,6 +23,9 @@ func TestClaudeLiveProjectionPreservesAndMerges(t *testing.T) {
 	env := got["env"].(map[string]any)
 	if env["ANTHROPIC_MODEL"] != "new" || env["FOO"] != "bar" {
 		t.Fatal(string(b))
+	}
+	if env["HTTPS_PROXY"] != "http://p:1" {
+		t.Fatal("合成 env 非基础键（全局配置）应写入 live 文件: " + string(b))
 	}
 	if got["permissions"] == nil {
 		t.Fatal("非受管键丢失")

@@ -114,22 +114,15 @@ func validateAccessAppType(appType string) error {
 	return nil
 }
 
-// claudeManagedEnvKeys 是 ~/.claude/settings.json 的四个受管 env 键
-// （spec「接管写入」受管键表）：投影时只按 key 替换传入 env 中存在的这些键，
-// 文件里其余键值（用户其他 env、permissions、model 等）原样保留。
-var claudeManagedEnvKeys = []string{
-	"ANTHROPIC_BASE_URL",
-	"ANTHROPIC_AUTH_TOKEN",
-	"ANTHROPIC_MODEL",
-	"ANTHROPIC_SMALL_FAST_MODEL",
-}
-
-// writeClaudeLive 把 env 的受管键投影进 <home>/.claude/settings.json：
+// writeClaudeLive 把传入**合成 env 的全部键**写进 <home>/.claude/settings.json
+// 的 env 子对象（受管集=合成 env 全部键——2026-10-18 裁定：Apply 传入的是
+// 合成 env（基础键+全局配置+覆盖项），spec 验收场景④要求全局 env 如
+// HTTPS_PROXY 可达 live 文件；原简报「只四个受管键」表述过窄，以设计为准）：
 // 目录不存在则 MkdirAll 0o755；文件不存在建空对象，存在则整体解析为
 // map[string]any，**解析失败直接返回错误且绝不改动原文件**（先读后写，
-// 不猜测修复）；确保 env 子对象存在，只替换 claudeManagedEnvKeys 中
-// 按 key 存在于 env 的键，其余键值原样保留；0600 原子写回
-// （同目录 CreateTemp → chmod → write → close → rename）。
+// 不猜测修复）；确保 env 子对象存在，同键替换写入合成 env 全部键；文件里
+// 不在本次合成 env 中的键（用户其他 env）与非 env 顶层键原样保留；
+// 0600 原子写回（同目录 CreateTemp → chmod → write → close → rename）。
 // 本方法不写任何日志——写入值含网关令牌（spec §9 脱敏）。
 func (s AccessConfigs) writeClaudeLive(env map[string]string) error {
 	home := s.Home
@@ -165,10 +158,8 @@ func (s AccessConfigs) writeClaudeLive(env map[string]string) error {
 		}
 		envObj = m
 	}
-	for _, k := range claudeManagedEnvKeys { // 只替换受管键（按 key 存在即写）
-		if val, ok := env[k]; ok {
-			envObj[k] = val
-		}
+	for k, v := range env { // 合成 env 全部键写入（同键替换）
+		envObj[k] = v
 	}
 	root["env"] = envObj
 	b, err := json.MarshalIndent(root, "", "  ")
