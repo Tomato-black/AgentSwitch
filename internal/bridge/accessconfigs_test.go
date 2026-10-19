@@ -439,3 +439,43 @@ func TestOpenTerminalAssemblesScript(t *testing.T) {
 		t.Fatal("不存在的配置应报错")
 	}
 }
+
+// TestLaunchCommandEscapesShellMetachars 覆盖 Task 11 评审 Important：
+// 模型名含 ' $ ` " \ 时启动命令必须已 shell 转义（贴给用户执行的命令，
+// 不得破损或注入）。
+func TestLaunchCommandEscapesShellMetachars(t *testing.T) {
+	a := tempApp(t)
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "a'b$(id)", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	xv, _ := acc.Create("codex", "x", "lm1", nil)
+	cmd, err := acc.LaunchCommand(xv.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 外层单引号内 ' 转义为 '\''，$ 转义为 \$——完整转义片段必须在场。
+	if !strings.Contains(cmd, `a'\''b\$(id)`) {
+		t.Fatalf("模型名未正确 shell 转义: %s", cmd)
+	}
+}
+
+// TestWritePersistRejectsNewlineValue 覆盖 .env 值含换行的中止分支
+// （行格式无法安全表达；Task 11 评审 Minor 补测）。
+func TestWritePersistRejectsNewlineValue(t *testing.T) {
+	a := tempApp(t)
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "m", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Store().Settings().Set("access.global.codex", `{"K":"a\nb"}`); err != nil {
+		t.Fatal(err)
+	}
+	xv, _ := acc.Create("codex", "x", "lm1", nil)
+	if _, err := acc.LaunchCommand(xv.ID); err == nil {
+		t.Fatal("换行值应报错中止")
+	}
+	if _, err := os.Stat(filepath.Join(acc.Home, ".agentswitch", "access", "codex", xv.ID+".env")); !os.IsNotExist(err) {
+		t.Fatal("报错后不得落盘")
+	}
+}

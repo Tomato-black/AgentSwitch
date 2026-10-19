@@ -644,11 +644,29 @@ func (s AccessConfigs) writePersist(c storage.AccessConfig) (string, string, err
 	return s.writePersistEnv(c, env)
 }
 
+// shellDQ 转义值用于双引号 shell 片段内（\ " $ ` 五个有语义字符）；
+// 模型名/路径均为用户可控输入，拼进贴给用户执行的命令必须转义
+// （Task 11 评审 Important：Go %q 是字面量引用不是 shell 引用）。
+func shellDQ(v string) string {
+	return strings.NewReplacer(
+		`\`, `\\`,
+		`"`, `\"`,
+		`$`, `\$`,
+		"`", "\\`",
+	).Replace(v)
+}
+
+// shellSQ 转义字符串用于外层单引号 shell 片段内（' → '\”）。
+func shellSQ(v string) string {
+	return strings.ReplaceAll(v, `'`, `'\''`)
+}
+
 // LaunchCommand 返回展示/复制用的启动命令：每次调用都重写持久文件
 // （保证令牌与模型最新——令牌轮换联动的单配置版）。命令拼装：
 // claude：`claude --settings "<json>"`（--settings 未给的键回落
 // ~/.claude/settings.json）；codex：`sh -c 'set -a; . "<env>"; set +a;
 // exec codex -m "<model>"'`（env 文件内容保持命令跨令牌轮换有效）。
+// 嵌入值经 shellDQ/shellSQ 转义——模型名含 ' $ ` " \ 时命令仍安全可执行。
 func (s AccessConfigs) LaunchCommand(id string) (string, error) {
 	c, err := s.A.Store().AccessConfigs().Get(id)
 	if err != nil {
@@ -664,9 +682,10 @@ func (s AccessConfigs) LaunchCommand(id string) (string, error) {
 	}
 	switch c.AppType {
 	case "claude":
-		return fmt.Sprintf("claude --settings %q", claudePath), nil
+		return `claude --settings "` + shellDQ(claudePath) + `"`, nil
 	case "codex":
-		return fmt.Sprintf("sh -c 'set -a; . %q; set +a; exec codex -m %q'", codexPath, model), nil
+		inner := `set -a; . "` + shellDQ(codexPath) + `"; set +a; exec codex -m "` + shellDQ(model) + `"`
+		return `sh -c '` + shellSQ(inner) + `'`, nil
 	default:
 		return "", fmt.Errorf("不支持的接入类型: %q", c.AppType)
 	}
