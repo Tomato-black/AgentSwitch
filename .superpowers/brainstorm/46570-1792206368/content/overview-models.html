@@ -1,0 +1,127 @@
+<h2>概览页 + 模型页 重排稿</h2>
+<p class="subtitle">沿用方案 A（橙操作色）。这次顺带定了一个 token 规则：<b>状态健康用绿、主操作用橙，两者分离</b>——现在代码里 Success=Accent 是一个色，换橙后运行 LED 不能跟主按钮同色，否则「运行中」看着像警告。</p>
+
+<style>
+  .as-win { --bg:#ffffff; --side:#f5f5f7; --subtle:#efeff2; --selected:#e4e4ea; --line:#e5e5ea; --cardline:#ececf0;
+            --t1:#18181b; --t2:#52525b; --t3:#7b7b85; --link:#0a6cd6;
+            --okbg:#e8f7ee; --oktx:#007634; --ok:#16a34a; --ambbg:#fef3c7; --ambtx:#a64a00; --amb:#d97706; --off:#d9d9de; --danger:#dc2626; --dangbg:#fee2e2;
+            --act:#f97316; --actsoft:#fff1e6; --acttx:#c2410c;
+            font-family:-apple-system,"SF Pro Text","PingFang SC",system-ui,sans-serif;
+            background:var(--bg); border:1px solid var(--line); border-radius:14px; overflow:hidden;
+            box-shadow:0 10px 30px rgba(0,0,0,.10); color:var(--t1); }
+  .as-titlebar { display:flex; align-items:center; gap:10px; padding:10px 14px 8px; }
+  .as-lights { display:flex; gap:6px; } .as-lights i { width:11px; height:11px; border-radius:50%; display:block; }
+  .as-lights i:nth-child(1){ background:#ff5f57; } .as-lights i:nth-child(2){ background:#febc2e; } .as-lights i:nth-child(3){ background:#28c840; }
+  .as-brand { font-weight:700; font-size:14px; }
+  .as-body { display:flex; min-height:420px; }
+  .as-side { width:150px; flex:none; background:var(--side); padding:10px 8px 12px; display:flex; flex-direction:column; gap:2px; border-right:1px solid var(--cardline); }
+  .as-nav { display:flex; align-items:center; gap:8px; height:30px; padding:0 10px; border-radius:8px; font-size:13px; color:var(--t2); }
+  .as-nav.active { background:var(--selected); color:var(--t1); font-weight:600; }
+  .as-sidefoot { margin-top:auto; border-top:1px solid var(--line); padding:10px 6px 2px; display:flex; gap:8px; align-items:center; }
+  .as-led { width:9px; height:9px; border-radius:50%; flex:none; }
+  .as-main { flex:1; padding:14px 16px 16px; display:flex; flex-direction:column; gap:11px; }
+  .as-card { background:var(--bg); border:1px solid var(--cardline); border-radius:12px; padding:12px 14px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+  .as-h { font-size:12px; font-weight:650; color:var(--t2); margin-bottom:8px; }
+  .as-badge { font-size:10px; font-weight:600; border-radius:999px; padding:2px 8px; white-space:nowrap; display:inline-block; }
+  .as-badge.ok { background:var(--okbg); color:var(--oktx); }
+  .as-badge.amb { background:var(--ambbg); color:var(--ambtx); }
+  .as-badge.gray { background:var(--subtle); color:var(--t2); }
+  .as-badge.cur { background:var(--actsoft); color:var(--acttx); }
+  .as-btn { font-size:12px; padding:6px 13px; border-radius:9px; background:var(--subtle); color:var(--t1); font-weight:500; }
+  .as-btn.pri { background:var(--act); color:#fff; font-weight:600; box-shadow:0 2px 6px color-mix(in srgb, var(--act) 35%, transparent); }
+  .as-btn.dang { background:var(--dangbg); color:var(--danger); font-weight:600; }
+  .as-input { height:30px; border:1px solid var(--line); border-radius:8px; display:flex; align-items:center; padding:0 10px; font-size:12px; }
+  .as-code { background:#fafafa; border:1px solid var(--cardline); border-radius:9px; padding:9px 11px; font-family:ui-monospace,Menlo,monospace; font-size:11.5px; color:var(--t2); line-height:1.7; }
+  .as-code b { color:var(--t1); font-weight:600; }
+  .as-tb { border:1px solid var(--cardline); border-radius:11px; overflow:hidden; font-size:12px; }
+  .as-tr { display:flex; align-items:center; gap:10px; padding:7px 12px; border-top:1px solid var(--cardline); }
+  .as-tr:first-child { border-top:none; background:#fafafa; color:var(--t3); font-size:11px; }
+  .mono { font-family:ui-monospace,Menlo,monospace; }
+  .as-dot { width:7px; height:7px; border-radius:50%; display:inline-block; }
+  .as-switch { width:30px; height:18px; border-radius:999px; background:var(--act); position:relative; flex:none; }
+  .as-switch::after { content:""; position:absolute; top:2px; right:2px; width:14px; height:14px; border-radius:50%; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.25); }
+  .as-switch.offsw { background:var(--off); }
+  .as-switch.offsw::after { right:auto; left:2px; }
+  .as-search { display:flex; align-items:center; gap:6px; background:var(--subtle); border-radius:8px; padding:5px 10px; font-size:12px; color:var(--t3); }
+  .cap { margin-top:10px; font-size:.85rem; color:var(--text-secondary); }
+  .lbl { font-weight:700; font-size:1rem; margin:20px 0 8px; }
+</style>
+
+<div class="lbl">① 概览页 —— 四张卡：状态 / 接入 / 密钥池 / 最近请求（设置收进状态卡）</div>
+<div class="as-win">
+  <div class="as-titlebar"><span class="as-lights"><i></i><i></i><i></i></span><span class="as-brand">AgentSwitch</span></div>
+  <div class="as-body">
+    <aside class="as-side">
+      <div class="as-nav active">概览</div><div class="as-nav">渠道</div><div class="as-nav">模型</div>
+      <div class="as-sidefoot"><span class="as-led" style="background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent);"></span><div><div style="font-size:12px;font-weight:600;">运行中</div><div class="mono" style="font-size:10.5px;color:var(--t3);">127.0.0.1:8787</div></div></div>
+    </aside>
+    <main class="as-main">
+      <div class="as-card" style="display:flex;align-items:center;gap:12px;">
+        <span class="as-led" style="width:12px;height:12px;background:var(--ok);box-shadow:0 0 0 4px color-mix(in srgb, var(--ok) 16%, transparent);"></span>
+        <div><div style="font-size:16px;font-weight:700;">运行中</div><div class="mono" style="font-size:11.5px;color:var(--t3);">http://127.0.0.1:8787 · 超时 600s</div></div>
+        <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+          <span class="as-badge gray">近 100 条 · 3 失败</span>
+          <span class="as-btn" style="border:1px solid var(--line);background:var(--bg);">日志</span>
+          <span class="as-btn dang">停止网关</span>
+        </div>
+      </div>
+      <div class="as-card">
+        <div class="as-h">接入 Claude Code</div>
+        <div class="as-code">export ANTHROPIC_BASE_URL=<b>http://127.0.0.1:8787</b><br>export ANTHROPIC_AUTH_TOKEN=<b>sk-as-••••••••••••</b></div>
+        <div style="display:flex;gap:8px;margin-top:9px;align-items:center;">
+          <span class="mono" style="font-size:11.5px;color:var(--t3);">令牌 sk-as-••••7f2a</span>
+          <span style="margin-left:auto;"></span>
+          <span class="as-btn">显示</span><span class="as-btn">复制片段</span><span class="as-btn">重新生成</span>
+        </div>
+      </div>
+      <div style="display:flex;gap:11px;">
+        <div class="as-card" style="flex:1;">
+          <div class="as-h">密钥池</div>
+          <div style="display:flex;align-items:center;gap:7px;font-size:12.5px;"><span class="as-dot" style="background:var(--ok);"></span>全部就绪 · 8 把可用</div>
+          <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;"><span class="as-badge amb">PC/备用B 冷却 22s</span></div>
+        </div>
+        <div class="as-card" style="flex:1;">
+          <div class="as-h">设置</div>
+          <div style="display:flex;gap:8px;align-items:center;font-size:12px;color:var(--t2);">端口 <span class="as-input" style="width:70px;">17890</span> 超时 <span class="as-input" style="width:56px;">600</span> 秒 <span class="as-btn pri" style="margin-left:auto;">保存</span></div>
+        </div>
+      </div>
+      <div class="as-card" style="flex:1;">
+        <div class="as-h">最近请求</div>
+        <div class="as-tb">
+          <div class="as-tr"><span style="width:70px;">时间</span><span style="flex:1.3;">模型</span><span style="flex:.8;">渠道/密钥</span><span style="width:56px;">状态</span><span style="width:70px;">耗时</span><span style="flex:1;">错误</span></div>
+          <div class="as-tr"><span class="mono" style="width:70px;color:var(--t3);">14:32:08</span><span style="flex:1.3;">claude-sonnet-5</span><span style="flex:.8;">PC/主号</span><span class="mono" style="width:56px;color:var(--oktx);">200</span><span class="mono" style="width:70px;color:var(--t3);">820ms</span><span style="flex:1;color:var(--t3);">—</span></div>
+          <div class="as-tr"><span class="mono" style="width:70px;color:var(--t3);">14:32:01</span><span style="flex:1.3;">claude-sonnet-5</span><span style="flex:.8;">PC/备用B</span><span class="mono" style="width:56px;color:var(--ambtx);">429</span><span class="mono" style="width:70px;color:var(--t3);">312ms</span><span style="flex:1;color:var(--ambtx);">rate_limited → 已切换</span></div>
+          <div class="as-tr"><span class="mono" style="width:70px;color:var(--t3);">14:31:44</span><span style="flex:1.3;">glm-4.7</span><span style="flex:.8;">GLM/默认</span><span class="mono" style="width:56px;color:var(--oktx);">200</span><span class="mono" style="width:70px;color:var(--t3);">1.4s</span><span style="flex:1;color:var(--t3);">—</span></div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+<p class="cap">变化：状态头升级成 hero 卡（LED 绿 + 大字 + 日志/停止右置，近 100 条成败小结）；「接入」独立成卡——配置片段是代码块质感，复制/显示/重新生成收成一行小按钮；设置降半格跟密钥池并排；最近请求表包进卡片、状态码染语义色、账号列改「渠道/密钥」。降级原因（若有）会在 hero 卡下出一条琥珀横幅。</p>
+
+<div class="lbl">② 模型页 —— 搜索 + 聚合表，行内启停（数据不变，只换观感）</div>
+<div class="as-win">
+  <div class="as-titlebar"><span class="as-lights"><i></i><i></i><i></i></span><span class="as-brand">AgentSwitch</span></div>
+  <div class="as-body">
+    <aside class="as-side">
+      <div class="as-nav">概览</div><div class="as-nav">渠道</div><div class="as-nav active">模型</div>
+      <div class="as-sidefoot"><span class="as-led" style="background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent);"></span><div><div style="font-size:12px;font-weight:600;">运行中</div><div class="mono" style="font-size:10.5px;color:var(--t3);">127.0.0.1:8787</div></div></div>
+    </aside>
+    <main class="as-main">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div><b style="font-size:15px;">模型</b><div style="font-size:11.5px;color:var(--t3);margin-top:2px;">18 个模型 · 来自 3 个渠道 · 停用 2</div></div>
+        <div class="as-search" style="margin-left:auto;width:200px;">⌕ 搜索模型…</div>
+      </div>
+      <div class="as-tb">
+        <div class="as-tr"><span style="width:44px;"></span><span style="flex:1.2;">对外模型</span><span style="flex:1;">来源渠道</span><span style="flex:1.2;">上游映射</span></div>
+        <div class="as-tr"><span style="width:44px;"><span class="as-switch"></span></span><span style="flex:1.2;font-weight:600;">claude-sonnet-5</span><span style="flex:1;"><span class="as-badge cur">PC</span> <span class="as-badge gray">GLM</span></span><span class="mono" style="flex:1.2;color:var(--t3);">claude-sonnet-5 · glm-4.7</span></div>
+        <div class="as-tr"><span style="width:44px;"><span class="as-switch"></span></span><span style="flex:1.2;font-weight:600;">claude-haiku-4</span><span style="flex:1;"><span class="as-badge gray">GLM</span></span><span class="mono" style="flex:1.2;color:var(--t3);">glm-4.7-air</span></div>
+        <div class="as-tr"><span style="width:44px;"><span class="as-switch offsw"></span></span><span style="flex:1.2;font-weight:600;color:var(--t3);">kimi-k2-preview</span><span style="flex:1;"><span class="as-badge gray">K2</span></span><span class="mono" style="flex:1.2;color:var(--t3);">kimi-k2-turbo-preview</span></div>
+      </div>
+      <div style="font-size:11px;color:var(--t3);">聚合只读：模型清单在渠道详情页维护；这里只控制对外启停。</div>
+    </main>
+  </div>
+</div>
+<p class="cap">搜索框 + 「N 个 · 来自 M 渠道 · 停用 X」小字头；每行 = 启停开关 + 模型名 + 来源渠道 chips + 上游映射（等宽灰字）。渠道 chips 点了直接跳对应渠道详情页。</p>
+
+<p class="subtitle" style="margin-top:14px;">这两页有没有要改的？没问题的话我就把整套方案写成设计文档（含 token 表、组件映射到 MyGo 控件、每页布局说明）。</p>

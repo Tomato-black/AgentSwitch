@@ -1,0 +1,141 @@
+<h2>渠道的「添加 / 编辑 / 管理」用哪种交互？</h2>
+<p class="subtitle">渠道详情有三块内容（连接配置、密钥池、渠道模型），比 cc-switch 的供应商编辑复杂。两个方案都能落地（MyGo 有 Modal / Segmented），区别是信息架构。</p>
+
+<style>
+  .as-win { --bg:#ffffff; --side:#f5f5f7; --subtle:#efeff2; --selected:#e4e4ea; --line:#e5e5ea; --cardline:#ececf0;
+            --t1:#18181b; --t2:#52525b; --t3:#7b7b85; --link:#0a6cd6;
+            --okbg:#e8f7ee; --oktx:#007634; --ambbg:#fef3c7; --ambtx:#a64a00; --off:#d9d9de; --danger:#dc2626;
+            --act:#f97316; --acth:#ea620a; --actsoft:#fff1e6; --acttx:#c2410c;
+            font-family:-apple-system,"SF Pro Text","PingFang SC",system-ui,sans-serif;
+            background:var(--bg); border:1px solid var(--line); border-radius:14px; overflow:hidden;
+            box-shadow:0 10px 30px rgba(0,0,0,.10); color:var(--t1); }
+  .as-titlebar { display:flex; align-items:center; gap:10px; padding:10px 14px 8px; }
+  .as-lights { display:flex; gap:6px; } .as-lights i { width:11px; height:11px; border-radius:50%; display:block; }
+  .as-lights i:nth-child(1){ background:#ff5f57; } .as-lights i:nth-child(2){ background:#febc2e; } .as-lights i:nth-child(3){ background:#28c840; }
+  .as-brand { font-weight:700; font-size:14px; }
+  .as-body { display:flex; min-height:440px; }
+  .as-side { width:150px; flex:none; background:var(--side); padding:10px 8px 12px; display:flex; flex-direction:column; gap:2px; border-right:1px solid var(--cardline); }
+  .as-nav { display:flex; align-items:center; gap:8px; height:30px; padding:0 10px; border-radius:8px; font-size:13px; color:var(--t2); }
+  .as-nav.active { background:var(--selected); color:var(--t1); font-weight:600; }
+  .as-main { flex:1; padding:14px 16px 16px; display:flex; flex-direction:column; gap:10px; position:relative; }
+  .as-card { display:flex; align-items:center; gap:12px; background:var(--bg); border:1px solid var(--cardline);
+      border-radius:12px; padding:11px 13px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+  .as-card.sel { border-color:var(--act); box-shadow:0 0 0 2px color-mix(in srgb, var(--act) 22%, transparent); }
+  .as-tile { width:36px; height:36px; flex:none; border-radius:9px; display:flex; align-items:center; justify-content:center; font-size:12.5px; font-weight:700; }
+  .as-mid { min-width:0; flex:1; }
+  .as-name { font-size:13.5px; font-weight:650; display:flex; align-items:center; gap:8px; }
+  .as-url { font-size:12px; color:var(--link); margin-top:1px; }
+  .as-meta { font-size:11px; color:var(--t3); margin-top:3px; font-variant-numeric:tabular-nums; }
+  .as-badge { font-size:10px; font-weight:600; border-radius:999px; padding:2px 8px; white-space:nowrap; }
+  .as-badge.cur { background:var(--actsoft); color:var(--acttx); }
+  .as-badge.ok { background:var(--okbg); color:var(--oktx); }
+  .as-badge.amb { background:var(--ambbg); color:var(--ambtx); }
+  .as-badge.gray { background:var(--subtle); color:var(--t2); }
+  .as-right { display:flex; align-items:center; gap:10px; flex:none; }
+  .as-switch { width:32px; height:19px; border-radius:999px; background:var(--act); position:relative; flex:none; }
+  .as-switch::after { content:""; position:absolute; top:2px; right:2px; width:15px; height:15px; border-radius:50%; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.25); }
+  .as-more { width:26px; height:26px; border-radius:7px; display:flex; align-items:center; justify-content:center; color:var(--t3); font-weight:700; }
+  .as-dim { position:absolute; inset:0; background:rgba(9,9,11,.38); border-radius:0; z-index:2; }
+  .as-modal { position:absolute; z-index:3; left:50%; top:46%; transform:translate(-50%,-50%); width:78%;
+      background:var(--bg); border-radius:16px; box-shadow:0 24px 60px rgba(0,0,0,.28); padding:18px 20px 16px; }
+  .as-modal h5 { margin:0 0 12px; font-size:15px; font-weight:700; }
+  .as-chips { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
+  .as-chip { font-size:12px; padding:6px 13px; border-radius:999px; background:var(--subtle); color:var(--t2); font-weight:500; }
+  .as-chip.on { background:var(--act); color:#fff; font-weight:600; }
+  .as-frow { display:flex; gap:12px; margin-bottom:10px; }
+  .as-field { flex:1; } .as-field label { display:block; font-size:11.5px; color:var(--t2); margin-bottom:5px; font-weight:500; }
+  .as-input { height:32px; border:1px solid var(--line); border-radius:9px; display:flex; align-items:center; padding:0 10px; font-size:12.5px; color:var(--t1); background:#fff; }
+  .as-input.area { height:58px; align-items:flex-start; padding-top:7px; color:var(--t3); font-family:ui-monospace,Menlo,monospace; font-size:11.5px; }
+  .as-input .ph { color:var(--t3); }
+  .as-foot { display:flex; justify-content:flex-end; gap:8px; margin-top:14px; }
+  .as-btn { font-size:12.5px; padding:7px 14px; border-radius:9px; background:var(--subtle); color:var(--t1); font-weight:500; }
+  .as-btn.pri { background:var(--act); color:#fff; font-weight:600; box-shadow:0 2px 6px color-mix(in srgb, var(--act) 35%, transparent); }
+  .as-seg { display:inline-flex; background:var(--subtle); border-radius:9px; padding:3px; gap:2px; }
+  .as-seg span { font-size:12px; padding:5px 14px; border-radius:7px; color:var(--t2); }
+  .as-seg span.on { background:#fff; color:var(--t1); font-weight:600; box-shadow:0 1px 2px rgba(0,0,0,.08); }
+  .as-tb { border:1px solid var(--cardline); border-radius:11px; overflow:hidden; font-size:12px; }
+  .as-tr { display:flex; align-items:center; gap:10px; padding:8px 12px; border-top:1px solid var(--cardline); }
+  .as-tr:first-child { border-top:none; background:#fafafa; color:var(--t3); font-size:11px; }
+  .as-tr .mono { font-family:ui-monospace,Menlo,monospace; }
+  .as-dot { width:7px; height:7px; border-radius:50%; display:inline-block; }
+  .as-back { width:30px; height:30px; border-radius:9px; border:1px solid var(--line); display:flex; align-items:center; justify-content:center; color:var(--t2); }
+  .cap { margin-top:10px; font-size:.85rem; color:var(--text-secondary); }
+</style>
+
+<div class="options">
+  <div class="option" data-choice="modal" onclick="toggleSelect(this)">
+    <div class="content">
+      <div class="as-win">
+        <div class="as-titlebar">
+          <span class="as-lights"><i></i><i></i><i></i></span>
+          <span class="as-brand">AgentSwitch</span>
+        </div>
+        <div class="as-body">
+          <aside class="as-side">
+            <div class="as-nav">概览</div><div class="as-nav active">渠道</div><div class="as-nav">模型</div>
+          </aside>
+          <main class="as-main">
+            <div style="display:flex;align-items:center;"><div><b style="font-size:15px;">渠道</b><div style="font-size:11.5px;color:var(--t3);margin-top:2px;">3 个渠道 · 密钥池 8/9 可用</div></div>
+              <button style="margin-left:auto;border:none;background:var(--act);color:#fff;border-radius:999px;padding:7px 14px;font-size:12.5px;font-weight:600;">＋ 添加渠道</button></div>
+            <div class="as-card"><div class="as-tile" style="background:#fff1e6;color:#c2410c;">PC</div><div class="as-mid"><div class="as-name">PackyCode <span class="as-badge cur">首选</span></div><div class="as-url">https://www.packyapi.com</div></div><div class="as-right"><span class="as-switch"></span><span class="as-more">⋯</span></div></div>
+            <div class="as-card"><div class="as-tile" style="background:#eaf3ff;color:#0063c7;">GLM</div><div class="as-mid"><div class="as-name">智谱中转</div><div class="as-url">https://open.bigmodel.cn/api/anthropic</div></div><div class="as-right"><span class="as-switch"></span><span class="as-more">⋯</span></div></div>
+            <div class="as-dim"></div>
+            <div class="as-modal">
+              <h5>添加渠道</h5>
+              <div class="as-chips">
+                <span class="as-chip">自定义</span><span class="as-chip on">Claude 官方</span><span class="as-chip">DeepSeek</span><span class="as-chip">GLM</span><span class="as-chip">Kimi</span><span class="as-chip">PackyCode</span>
+              </div>
+              <div class="as-frow">
+                <div class="as-field"><label>名称</label><div class="as-input"><span class="ph">例如：公司中转</span></div></div>
+                <div class="as-field" style="max-width:110px;"><label>优先级</label><div class="as-input">10</div></div>
+              </div>
+              <div class="as-frow"><div class="as-field"><label>Base URL</label><div class="as-input">https://api.anthropic.com</div></div></div>
+              <div class="as-frow"><div class="as-field"><label>API 密钥（每行一枚，可批量）</label><div class="as-input area">sk-ant-••••••••••<br>sk-ant-••••••••••</div></div></div>
+              <div class="as-foot"><span class="as-btn">取消</span><span class="as-btn pri">保存并测试</span></div>
+            </div>
+          </main>
+        </div>
+      </div>
+      <p class="cap"><b>方案 1 · 弹窗式（cc-switch v7 同款）</b> —— 添加/编辑都是居中弹窗，列表永远在背后。类型预设做成胶囊 chips，选完自动填 Base URL。密钥/模型管理塞进编辑弹窗内的 Segmented。优点：上下文不丢、快；缺点：弹窗里管几十把密钥会比较挤。</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="page" onclick="toggleSelect(this)">
+    <div class="content">
+      <div class="as-win">
+        <div class="as-titlebar">
+          <span class="as-lights"><i></i><i></i><i></i></span>
+          <span class="as-brand">AgentSwitch</span>
+        </div>
+        <div class="as-body">
+          <aside class="as-side">
+            <div class="as-nav">概览</div><div class="as-nav active">渠道</div><div class="as-nav">模型</div>
+          </aside>
+          <main class="as-main">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span class="as-back">←</span>
+              <div class="as-tile" style="background:#fff1e6;color:#c2410c;">PC</div>
+              <div><div class="as-name" style="font-size:15px;">PackyCode <span class="as-badge cur">首选</span><span class="as-badge ok">启用</span></div>
+                <div class="as-url">https://www.packyapi.com</div></div>
+              <button style="margin-left:auto;border:none;background:var(--subtle);color:var(--t1);border-radius:9px;padding:7px 13px;font-size:12px;font-weight:500;">连通测试</button>
+              <button style="border:none;background:var(--act);color:#fff;border-radius:9px;padding:7px 13px;font-size:12px;font-weight:600;">保存</button>
+            </div>
+            <div class="as-seg"><span>连接配置</span><span class="on">密钥池 · 3</span><span>渠道模型 · 12</span></div>
+            <div style="display:flex;align-items:center;"><b style="font-size:12.5px;">密钥</b>
+              <button style="margin-left:auto;border:none;background:var(--actsoft);color:var(--acttx);border-radius:999px;padding:5px 12px;font-size:11.5px;font-weight:600;">＋ 批量导入</button></div>
+            <div class="as-tb">
+              <div class="as-tr"><span style="flex:1;">名称</span><span style="flex:1.4;">密钥</span><span style="width:64px;">状态</span><span style="width:90px;">24h</span><span style="width:40px;"></span></div>
+              <div class="as-tr"><span style="flex:1;">主号</span><span class="mono" style="flex:1.4;color:var(--t3);">sk-pc-••••7f2a</span><span style="width:64px;"><span class="as-dot" style="background:#16a34a;"></span> 可用</span><span style="width:90px;color:var(--t3);">86 ✓ · 1 ✗</span><span style="width:40px;color:var(--t3);">⋯</span></div>
+              <div class="as-tr"><span style="flex:1;">备用 A</span><span class="mono" style="flex:1.4;color:var(--t3);">sk-pc-••••c90d</span><span style="width:64px;"><span class="as-dot" style="background:#16a34a;"></span> 可用</span><span style="width:90px;color:var(--t3);">42 ✓ · 0 ✗</span><span style="width:40px;color:var(--t3);">⋯</span></div>
+              <div class="as-tr"><span style="flex:1;">备用 B</span><span class="mono" style="flex:1.4;color:var(--t3);">sk-pc-••••31e8</span><span style="width:64px;"><span class="as-dot" style="background:#d97706;"></span> 冷却 22:41</span><span style="width:90px;color:var(--t3);">0 ✓ · 3 ✗</span><span style="width:40px;color:var(--t3);">⋯</span></div>
+            </div>
+            <div style="font-size:11px;color:var(--t3);">冷却到期的密钥自动恢复可用；删除需二次确认。</div>
+          </main>
+        </div>
+      </div>
+      <p class="cap"><b>方案 2 · 详情页式（cc-switch 旧版添加页同款骨架）</b> —— 点卡片进整页详情：页头（返回 + 徽章 + 测试/保存）+ Segmented 切「连接配置 / 密钥池 / 渠道模型」，每块都有整页空间放表格和表单。优点：密钥池、模型重定向这类重内容从容展开；缺点：多一次点击、上下文切换感强一点。</p>
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top:14px;">点选一个，或在终端里说（也可以混搭：添加走弹窗、密钥管理走详情页）。</p>
