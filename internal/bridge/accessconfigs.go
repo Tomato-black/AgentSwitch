@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -711,4 +712,24 @@ func (s AccessConfigs) RegenerateDerived() {
 			}
 		}
 	}
+}
+
+// openTerminalExec 是 OpenTerminal 的终端拉起注入点（测试替换断言脚本，
+// 不真开终端）；默认经 osascript 让 Terminal.app 执行 do script。
+var openTerminalExec = func(script string) error {
+	return exec.Command("osascript", "-e", script).Run()
+}
+
+// OpenTerminal 用指定配置拉起一个终端（spec「打开终端」，仅 macOS）：
+// 先经 LaunchCommand 刷新持久文件并取启动命令，再组装 AppleScript
+// do script；命令内的双引号按 AppleScript 语义转义。不存在的配置报错。
+func (s AccessConfigs) OpenTerminal(id string) error {
+	cmd, err := s.LaunchCommand(id)
+	if err != nil {
+		return err
+	}
+	escaped := strings.ReplaceAll(cmd, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
+	script := `tell application "Terminal" to do script "` + escaped + `"`
+	return openTerminalExec(script)
 }

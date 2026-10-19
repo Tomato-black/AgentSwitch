@@ -417,3 +417,25 @@ func TestGatewayRegenerateTokenRefreshesDerivedFiles(t *testing.T) {
 		t.Fatal("live 文件未刷新令牌")
 	}
 }
+
+func TestOpenTerminalAssemblesScript(t *testing.T) {
+	a := tempApp(t)
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "m", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	v, _ := acc.Create("claude", "工作", "lm1", nil)
+	var got string
+	old := openTerminalExec
+	openTerminalExec = func(script string) error { got = script; return nil }
+	defer func() { openTerminalExec = old }()
+	if err := acc.OpenTerminal(v.ID); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `tell application "Terminal" to do script "claude --settings`) {
+		t.Fatal(got)
+	}
+	if err := acc.OpenTerminal("missing"); err == nil {
+		t.Fatal("不存在的配置应报错")
+	}
+}
