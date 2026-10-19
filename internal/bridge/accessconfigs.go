@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -146,7 +147,11 @@ func (s AccessConfigs) writeClaudeLive(env map[string]string) error {
 	root := map[string]any{}
 	if b, err := os.ReadFile(path); err == nil {
 		// 解析失败必须在任何写动作前返回，原文件保持不动。
-		if err := json.Unmarshal(b, &root); err != nil {
+		// UseNumber：大整数保留原始数字文本，避免 float64 往返丢精度
+		//（评审 Minor#9）。
+		dec := json.NewDecoder(bytes.NewReader(b))
+		dec.UseNumber()
+		if err := dec.Decode(&root); err != nil {
 			return err
 		}
 		if root == nil { // 合法 JSON null → 视为空对象
@@ -340,7 +345,11 @@ func (s AccessConfigs) backupLive(appType string) error {
 			}
 			dst = filepath.Join(bdir, fmt.Sprintf("%s-%d-%s", ts, i, src.name))
 		}
-		if err := os.WriteFile(dst, src.data, src.mode); err != nil {
+		// 备份含令牌：强制 0600（源文件若是 0644 也收紧——评审 Minor#7）。
+		if err := os.WriteFile(dst, src.data, 0o600); err != nil {
+			return err
+		}
+		if err := os.Chmod(dst, 0o600); err != nil {
 			return err
 		}
 	}
@@ -459,6 +468,7 @@ func (s AccessConfigs) Create(appType, name, logicalModelID string, overrides ma
 		return AccessConfigView{}, friendlyAccessSaveErr(err)
 	}
 	s.A.Log().Info("access config created", "id", id, "app", appType, "actor", "ui", "result", "ok")
+	s.RegenerateDerived() // 新配置即落持久文件，其余派生文件同步刷新（spec「保存/更新时同步生成」）
 	return s.view(saved), nil
 }
 
@@ -484,18 +494,26 @@ func (s AccessConfigs) Update(id, name, logicalModelID string, overrides map[str
 		return friendlyAccessSaveErr(err)
 	}
 	s.A.Log().Info("access config updated", "id", id, "app", c.AppType, "actor", "ui", "result", "ok")
+	s.RegenerateDerived() // 覆盖项/模型变了，全部派生文件同步刷新（spec「保存/更新时同步生成」）
 	return nil
 }
 
 // Remove 直接删行，**不触碰任何 live 文件**（删除使用中配置时 live 保持原样，
 // 由用户自行决定后续处理）；is_current 行删除后 current 自然消失（部分唯一
-// 索引允许）。
-func (s AccessConfigs) Remove(id string) {
+// 索引允许）。删除后重写其余配置的持久文件（被删配置的持久文件保留——
+// 用户可能仍持有其启动命令）。
+func (s AccessConfigs) Remove(id string) error {
+	c, getErr := s.A.Store().AccessConfigs().Get(id)
+	if getErr == nil && c.IsCurrent {
+		// current 行删除后无 current；无需特殊处理，RegenerateDerived 按库态走。
+	}
 	if err := s.A.Store().AccessConfigs().Delete(id); err != nil {
 		s.A.Log().Error("access config remove failed", "id", id, "err", err)
-		return
+		return err
 	}
 	s.A.Log().Info("access config removed", "id", id, "actor", "ui", "result", "ok")
+	s.RegenerateDerived()
+	return nil
 }
 
 // Apply 把配置合成后投影到 Agent live 文件并置为 current：Get(id) →
@@ -572,6 +590,7 @@ func (s AccessConfigs) SaveGlobalConfig(appType string, env map[string]string) e
 		return err
 	}
 	s.A.Log().Info("access global config saved", "app", appType, "actor", "ui", "result", "ok")
+	s.RegenerateDerived() // 全局配置变了，全部派生文件同步刷新（spec 验收场景④）
 	return nil
 }
 
@@ -612,15 +631,21 @@ func (s AccessConfigs) writePersistEnv(c storage.AccessConfig, env map[string]st
 			if strings.ContainsAny(env[k], "\r\n") {
 				return "", "", fmt.Errorf("配置值不能包含换行符: %s", k)
 			}
+			// 键不得含 = / 换行（KEY=VALUE 行格式无法安全表达）。
+			if k == "" || strings.ContainsAny(k, "=\r\n") {
+				return "", "", fmt.Errorf("配置键含非法字符: %q", k)
+			}
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
 		var sb strings.Builder
 		for _, k := range keys {
+			// 值用单引号包裹（' 换成 '\''）：source 时空格/元字符不再被
+			// shell 解释——「复制出来的命令在干净 shell 里可直接运行」。
 			sb.WriteString(k)
-			sb.WriteString("=")
-			sb.WriteString(env[k])
-			sb.WriteString("\n")
+			sb.WriteString("='")
+			sb.WriteString(strings.ReplaceAll(env[k], "'", `'\''`))
+			sb.WriteString("'\n")
 		}
 		p := filepath.Join(home, ".agentswitch", "access", "codex", c.ID+".env")
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -633,15 +658,6 @@ func (s AccessConfigs) writePersistEnv(c storage.AccessConfig, env map[string]st
 	default:
 		return "", "", fmt.Errorf("不支持的接入类型: %q", c.AppType)
 	}
-}
-
-// writePersist 合成该配置的 env 并落持久文件（便捷入口）。
-func (s AccessConfigs) writePersist(c storage.AccessConfig) (string, string, error) {
-	env, _, err := s.composeFor(c)
-	if err != nil {
-		return "", "", err
-	}
-	return s.writePersistEnv(c, env)
 }
 
 // shellDQ 转义值用于双引号 shell 片段内（\ " $ ` 五个有语义字符）；
@@ -714,9 +730,11 @@ func (s AccessConfigs) RegenerateDerived() {
 				s.A.Log().Error("access derived refresh failed", "app", appType, "stage", "compose", "err", err)
 				continue
 			}
-			if _, _, err := s.writePersistEnv(c, env); err != nil {
-				s.A.Log().Error("access derived refresh failed", "app", appType, "stage", "persist", "err", err)
-				continue
+			// 持久文件失败不跳过 current 的 live 重写——令牌轮换后 live
+			// 仍是 Agent 实际使用的文件，陈旧令牌比持久文件缺失更糟
+			// （评审 Minor#8）。
+			if _, _, perr := s.writePersistEnv(c, env); perr != nil {
+				s.A.Log().Error("access derived refresh failed", "app", appType, "stage", "persist", "err", perr)
 			}
 			if cur.ID != c.ID {
 				continue

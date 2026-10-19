@@ -270,41 +270,54 @@ func (u *uiState) accessConfigRow(c *ui.Context, t *ui.Theme, s softPalette, acc
 			softBadge(c, t, s, "ok", badge)
 		}
 		ui.Text(c, "→ "+v.LogicalModelName).TextColor(t.TextMuted).Grow(1)
-		if !gateOK {
-			return
-		}
-		if v.IsCurrent {
-			ui.Text(c, "已应用").TextColor(t.TextMuted)
-		} else if softButton(c, t, s, "act", "应用").Clicked() {
+		// 应用/复制命令/打开终端依赖网关（终审#3：编辑/删除是纯 DB 操作，
+		// 不受门禁影响——spec 只点名门禁前三个操作）。
+		apply := func() {
 			if err := acc.Apply(v.ID); err != nil {
 				u.accessMsg = "应用失败：" + err.Error()
 			} else {
 				u.accessMsg = "已应用「" + v.Name + "」——Agent 下次启动生效"
 			}
 		}
+		if gateOK {
+			// 「使用中」也保留按钮（终审 Critical#1）：改全局配置/模型改名后
+			// 必须能重新应用，验收场景④才可达；徽标已表达状态，不另放死文本。
+			label := "应用"
+			if v.IsCurrent {
+				label = "重新应用"
+			}
+			if softButton(c, t, s, "act", label).Clicked() {
+				apply()
+			}
+		}
 		if softButton(c, t, s, "gray", "编辑").Clicked() {
 			u.accessForm = accessForm{open: true, editID: v.ID}
 			u.accessPreloadForm(acc)
 		}
-		if softButton(c, t, s, "gray", "复制启动命令").Clicked() {
-			cmd, err := acc.LaunchCommand(v.ID)
-			if err != nil {
-				u.accessMsg = "生成启动命令失败：" + err.Error()
-			} else {
-				mygo.Clipboard.Write(transfer.TextData(cmd))
-				u.accessMsg = "启动命令已复制"
+		if gateOK {
+			if softButton(c, t, s, "gray", "复制启动命令").Clicked() {
+				cmd, err := acc.LaunchCommand(v.ID)
+				if err != nil {
+					u.accessMsg = "生成启动命令失败：" + err.Error()
+				} else {
+					mygo.Clipboard.Write(transfer.TextData(cmd))
+					u.accessMsg = "启动命令已复制"
+				}
 			}
-		}
-		if softButton(c, t, s, "gray", "打开终端").Clicked() {
-			if err := acc.OpenTerminal(v.ID); err != nil {
-				u.accessMsg = "打开终端失败：" + err.Error()
-			} else {
-				u.accessMsg = ""
+			if softButton(c, t, s, "gray", "打开终端").Clicked() {
+				if err := acc.OpenTerminal(v.ID); err != nil {
+					u.accessMsg = "打开终端失败：" + err.Error()
+				} else {
+					u.accessMsg = ""
+				}
 			}
 		}
 		if softButton(c, t, s, "danger", "删除").Clicked() {
-			acc.Remove(v.ID)
-			u.accessMsg = "已删除「" + v.Name + "」——Agent 配置文件保留最后状态"
+			if err := acc.Remove(v.ID); err != nil {
+				u.accessMsg = "删除失败：" + err.Error()
+			} else {
+				u.accessMsg = "已删除「" + v.Name + "」——Agent 配置文件保留最后状态"
+			}
 		}
 	})
 }

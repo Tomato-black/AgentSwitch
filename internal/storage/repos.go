@@ -425,6 +425,9 @@ func (r *accessConfigRepo) Save(c AccessConfig) (AccessConfig, error) {
 	if overrides == nil {
 		overrides = map[string]string{}
 	}
+	// 归一化后回写：调用方拿到的返回值不得留 nil map（与 Get 对称，
+	// 防调用方改写 nil map panic——评审 deferred#5）。
+	c.Overrides = overrides
 	raw, err := json.Marshal(overrides)
 	if err != nil {
 		return AccessConfig{}, err

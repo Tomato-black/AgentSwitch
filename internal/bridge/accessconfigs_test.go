@@ -479,3 +479,84 @@ func TestWritePersistRejectsNewlineValue(t *testing.T) {
 		t.Fatal("报错后不得落盘")
 	}
 }
+
+// TestSaveGlobalConfigRefreshesDerived 覆盖终审 Important#2：全局配置保存
+// 后 live 与全部持久文件同步刷新（验收场景④——无需令牌轮换）。
+func TestSaveGlobalConfigRefreshesDerived(t *testing.T) {
+	a := tempApp(t)
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "m", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	cur, _ := acc.Create("claude", "工作", "lm1", nil)
+	other, _ := acc.Create("claude", "备用", "lm1", nil)
+	if err := acc.Apply(cur.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := acc.LaunchCommand(cur.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := acc.LaunchCommand(other.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := acc.SaveGlobalConfig("claude", map[string]string{"HTTPS_PROXY": "http://p:1"}); err != nil {
+		t.Fatal(err)
+	}
+	live, _ := os.ReadFile(filepath.Join(acc.Home, ".claude", "settings.json"))
+	if !strings.Contains(string(live), "http://p:1") {
+		t.Fatal("live 未刷新全局 env")
+	}
+	for _, id := range []string{cur.ID, other.ID} {
+		b, _ := os.ReadFile(filepath.Join(acc.Home, ".agentswitch", "access", "claude", id+".json"))
+		if !strings.Contains(string(b), "http://p:1") {
+			t.Fatalf("持久文件 %s 未刷新全局 env", id)
+		}
+	}
+}
+
+// TestWritePersistQuotesEnvValues 覆盖终审 Important#4：.env 值单引号包裹，
+// 空格/单引号不再被 source 的 shell 解释或截断。
+func TestWritePersistQuotesEnvValues(t *testing.T) {
+	a := tempApp(t)
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "m", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Store().Settings().Set("access.global.codex", `{"A":"x y","B":"it's"}`); err != nil {
+		t.Fatal(err)
+	}
+	xv, _ := acc.Create("codex", "x", "lm1", nil)
+	b, err := os.ReadFile(filepath.Join(acc.Home, ".agentswitch", "access", "codex", xv.ID+".env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "A='x y'") {
+		t.Fatalf("含空格值未加引号: %s", b)
+	}
+	if !strings.Contains(string(b), `B='it'\''s'`) {
+		t.Fatalf("单引号未转义: %s", b)
+	}
+}
+
+// TestBackupFilesAre0600 覆盖终审 Minor#7：备份含令牌，写入强制 0600。
+func TestBackupFilesAre0600(t *testing.T) {
+	acc := AccessConfigs{A: tempApp(t), Home: t.TempDir()}
+	dir := filepath.Join(acc.Home, ".claude")
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"a":1}`), 0o644) // 源 0644 也收紧
+	if err := acc.backupLive("claude"); err != nil {
+		t.Fatal(err)
+	}
+	bdir := filepath.Join(acc.Home, ".agentswitch", "backups", "claude")
+	ents, _ := os.ReadDir(bdir)
+	if len(ents) != 1 {
+		t.Fatal(ents)
+	}
+	fi, err := os.Stat(filepath.Join(bdir, ents[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Fatalf("备份权限 = %v，应 0600", fi.Mode().Perm())
+	}
+}
