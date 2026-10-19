@@ -991,6 +991,10 @@ git commit -m "refactor: 删除旧接入片段页，接入配置管理落地"
 
 ---
 
+## 勘误（终审后补记）
+
+Task 6/12 的联动挂钩清单（仅令牌/端口）相对 spec 验收场景④与「持久文件保存/更新时同步生成」欠规格：`SaveGlobalConfig`/`Create`/`Update`/`Remove` 亦须触发 `RegenerateDerived()`；「使用中」配置行保留「重新应用」按钮；`.env` 值须单引号包裹。均已按终审修复落地（见分支 fix commit），后续特性勿沿用旧清单。
+
 ## 依赖关系
 
 - Task 1→2→3（storage 内部顺序）；Task 4→5→6→(7,8,9)→10→11→12→13（bridge 依赖链；7/8/9 相互独立可换序，10 需要 4–9 全部就位）。

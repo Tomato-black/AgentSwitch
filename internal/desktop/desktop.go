@@ -59,8 +59,12 @@ type uiState struct {
 	lmEdit      lmForm // 新建/编辑表单状态（名称/描述/目标链/信息位）
 	lmDeleteArm bool   // 删除逻辑模型 AlertDialog open 位
 	lmDeleteID  string // 删除武装对象——确认仅对匹配 id 生效
-	// 接入页（Task 15）：
-	accessModel string // 当前逻辑模型名（Select 绑定；pickAccessModel 解析）
+	// 接入页（2026-10-18-agent-access-config）：
+	accessApp     string      // Agent tab："claude"/"codex"（"" 落 claude）
+	accessGlob    [][2]string // 全局配置编辑行（键/值；nil 时首帧从库加载）
+	accessGlobMsg string      // 全局配置卡提示
+	accessMsg     string      // 列表卡操作结果提示
+	accessForm    accessForm  // 新建/编辑表单（open 时渲染编辑器卡）
 	// 设置页（Task 15）：
 	passthroughOn bool // 透传未登记模型开关（预留：SaveSettings 不消费）
 }

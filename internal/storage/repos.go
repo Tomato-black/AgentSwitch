@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -353,4 +354,135 @@ func (r *logicalModelTargetRepo) Delete(id string) error {
 func (r *logicalModelTargetRepo) DeleteByModel(modelID string) error {
 	_, err := r.db.Exec(`DELETE FROM logical_model_targets WHERE logical_model_id=?`, modelID)
 	return err
+}
+
+// ---- access_configs ----
+
+type accessConfigRepo struct{ db *sql.DB }
+
+const accessConfigCols = `id,app_type,name,logical_model_id,overrides,is_current,sort_order,created_at,updated_at`
+
+func scanAccessConfig(sc func(...any) error) (AccessConfig, error) {
+	var c AccessConfig
+	var cur int
+	var overrides string
+	if err := sc(&c.ID, &c.AppType, &c.Name, &c.LogicalModelID, &overrides, &cur, &c.SortOrder, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		return AccessConfig{}, err
+	}
+	c.IsCurrent = cur == 1
+	// overrides 为 JSON 文本；空/坏文本回读为空 map（写入侧保证是合法 JSON）。
+	c.Overrides = map[string]string{}
+	if overrides != "" {
+		if err := json.Unmarshal([]byte(overrides), &c.Overrides); err != nil {
+			return AccessConfig{}, err
+		}
+	}
+	return c, nil
+}
+
+func (r *accessConfigRepo) ListByApp(appType string) ([]AccessConfig, error) {
+	rows, err := r.db.Query(`SELECT `+accessConfigCols+` FROM access_configs WHERE app_type=? ORDER BY sort_order ASC, name ASC`, appType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AccessConfig
+	for rows.Next() {
+		c, err := scanAccessConfig(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (r *accessConfigRepo) Get(id string) (AccessConfig, error) {
+	c, err := scanAccessConfig(r.db.QueryRow(`SELECT `+accessConfigCols+` FROM access_configs WHERE id=?`, id).Scan)
+	if err != nil {
+		return AccessConfig{}, mapNotFound(err)
+	}
+	return c, nil
+}
+
+func (r *accessConfigRepo) Save(c AccessConfig) (AccessConfig, error) {
+	if c.ID == "" {
+		c.ID = NewID()
+	}
+	// 与 Channel.Save 同口径：更新保留原 created_at，返回值与库内一致。
+	existing, err := r.Get(c.ID)
+	if err == nil {
+		c.CreatedAt = existing.CreatedAt
+	} else if !errors.Is(err, ErrNotFound) {
+		return AccessConfig{}, err
+	}
+	if c.CreatedAt == 0 {
+		c.CreatedAt = nowMS()
+	}
+	c.UpdatedAt = nowMS()
+	// Overrides 为 nil 时存 "{}"。
+	overrides := c.Overrides
+	if overrides == nil {
+		overrides = map[string]string{}
+	}
+	// 归一化后回写：调用方拿到的返回值不得留 nil map（与 Get 对称，
+	// 防调用方改写 nil map panic——评审 deferred#5）。
+	c.Overrides = overrides
+	raw, err := json.Marshal(overrides)
+	if err != nil {
+		return AccessConfig{}, err
+	}
+	// UNIQUE(app_type, name) 冲突由驱动冒泡为非 nil error（bridge 负责友好化）。
+	_, err = r.db.Exec(`INSERT INTO access_configs(id,app_type,name,logical_model_id,overrides,is_current,sort_order,created_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(id) DO UPDATE SET app_type=excluded.app_type, name=excluded.name,
+			logical_model_id=excluded.logical_model_id, overrides=excluded.overrides,
+			is_current=excluded.is_current, sort_order=excluded.sort_order, updated_at=excluded.updated_at`,
+		c.ID, c.AppType, c.Name, c.LogicalModelID, string(raw), boolInt(c.IsCurrent), c.SortOrder, c.CreatedAt, c.UpdatedAt)
+	if err != nil {
+		return AccessConfig{}, err
+	}
+	return c, nil
+}
+
+func (r *accessConfigRepo) Delete(id string) error {
+	_, err := r.db.Exec(`DELETE FROM access_configs WHERE id=?`, id)
+	return err
+}
+
+// SetCurrent 在事务内原子切换该 app_type 的 current：先清同 app 全部
+// is_current，再置目标 id（id 必须已存在，否则回滚报错）；id=="" 仅清空。
+func (r *accessConfigRepo) SetCurrent(appType, id string) error {
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE access_configs SET is_current=0 WHERE app_type=?`, appType); err != nil {
+		tx.Rollback()
+		return err
+	}
+	if id != "" {
+		var n int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM access_configs WHERE id=?`, id).Scan(&n); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if n == 0 {
+			tx.Rollback()
+			return ErrNotFound
+		}
+		if _, err := tx.Exec(`UPDATE access_configs SET is_current=1 WHERE id=?`, id); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (r *accessConfigRepo) Current(appType string) (AccessConfig, error) {
+	c, err := scanAccessConfig(r.db.QueryRow(`SELECT `+accessConfigCols+` FROM access_configs WHERE app_type=? AND is_current=1`, appType).Scan)
+	if err != nil {
+		return AccessConfig{}, mapNotFound(err)
+	}
+	return c, nil
 }

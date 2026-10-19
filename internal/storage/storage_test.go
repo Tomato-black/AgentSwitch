@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,6 +19,17 @@ func tempStore(t *testing.T) Store {
 	return s
 }
 
+func TestMigrationV3CreatesAccessConfigs(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "v3.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if s.AccessConfigs() == nil {
+		t.Fatal("AccessConfigs() = nil")
+	}
+}
+
 func TestMigrationIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "m.db")
 	s1, err := Open(path)
@@ -30,7 +42,7 @@ func TestMigrationIdempotent(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	t.Cleanup(func() { s2.Close() })
-	// 重开时已记录版本按序跳过，不得重放报错，schema_migrations 必须恰为 [1 2]。
+	// 重开时已记录版本按序跳过，不得重放报错，schema_migrations 必须恰为 [1 2 3]。
 	ds, ok := s2.(*dbStore)
 	if !ok {
 		t.Fatalf("Store = %T", s2)
@@ -48,8 +60,8 @@ func TestMigrationIdempotent(t *testing.T) {
 		}
 		got = append(got, v)
 	}
-	if rows.Err() != nil || len(got) != 2 || got[0] != 1 || got[1] != 2 {
-		t.Fatalf("schema_migrations = %v, want [1 2]", got)
+	if rows.Err() != nil || len(got) != 3 || got[0] != 1 || got[1] != 2 || got[2] != 3 {
+		t.Fatalf("schema_migrations = %v, want [1 2 3]", got)
 	}
 }
 
@@ -533,5 +545,93 @@ func TestTargetListOrdered(t *testing.T) {
 		if ts[i].Priority != p {
 			t.Fatalf("ListByModel priorities = %+v, want %v", ts, want)
 		}
+	}
+}
+
+func TestAccessConfigRepoSaveGetListDelete(t *testing.T) {
+	s, _ := Open(filepath.Join(t.TempDir(), "a.db"))
+	defer s.Close()
+	r := s.AccessConfigs()
+	saved, err := r.Save(AccessConfig{AppType: "claude", Name: "工作", LogicalModelID: "lm1",
+		Overrides: map[string]string{"HTTPS_PROXY": "http://127.0.0.1:7890"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.ID == "" || saved.CreatedAt == 0 {
+		t.Fatal("ID/CreatedAt 未填充")
+	}
+	got, err := r.Get(saved.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Overrides["HTTPS_PROXY"] != "http://127.0.0.1:7890" {
+		t.Fatalf("overrides 未回读: %#v", got.Overrides)
+	}
+	if _, err := r.Save(AccessConfig{AppType: "claude", Name: "工作", LogicalModelID: "lm2"}); err == nil {
+		t.Fatal("同 app 同名应 UNIQUE 冲突")
+	}
+	list, err := r.ListByApp("claude")
+	if err != nil || len(list) != 1 {
+		t.Fatalf("ListByApp = %v, %v", list, err)
+	}
+	if err := r.Delete(saved.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Get(saved.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get after delete = %v", err)
+	}
+}
+
+func TestAccessConfigRepoSetCurrentExclusive(t *testing.T) {
+	s, _ := Open(filepath.Join(t.TempDir(), "a.db"))
+	defer s.Close()
+	r := s.AccessConfigs()
+	a, _ := r.Save(AccessConfig{AppType: "claude", Name: "A", LogicalModelID: "lm1"})
+	b, _ := r.Save(AccessConfig{AppType: "claude", Name: "B", LogicalModelID: "lm1"})
+	c, _ := r.Save(AccessConfig{AppType: "codex", Name: "C", LogicalModelID: "lm1"})
+	// codex 需有 current 才能验证「不被 claude 操作波及」（is_current 由 SetCurrent 置位，Save 不自动置）。
+	if err := r.SetCurrent("codex", c.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetCurrent("claude", a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetCurrent("claude", b.ID); err != nil {
+		t.Fatal(err)
+	}
+	cur, err := r.Current("claude")
+	if err != nil || cur.ID != b.ID {
+		t.Fatalf("Current = %v, %v", cur, err)
+	}
+	all, _ := r.ListByApp("claude")
+	n := 0
+	for _, x := range all {
+		if x.IsCurrent {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("is_current 行数 = %d，应为 1", n)
+	}
+	if cur, _ := r.Current("codex"); cur.ID != c.ID {
+		t.Fatal("codex current 不应被 claude 操作波及")
+	}
+	if err := r.SetCurrent("claude", b.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetCurrent("claude", "nonexistent"); err == nil {
+		t.Fatal("不存在的 id 应报错")
+	}
+	if cur, _ := r.Current("claude"); cur.ID != b.ID {
+		t.Fatal("失败应回滚，既有 current 应保持 b")
+	}
+	if err := r.SetCurrent("claude", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Current("claude"); !errors.Is(err, ErrNotFound) {
+		t.Fatal("清空后 Current 应 ErrNotFound")
+	}
+	if err := r.SetCurrent("claude", "nonexistent"); err == nil {
+		t.Fatal("不存在的 id 应报错")
 	}
 }

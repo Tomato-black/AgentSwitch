@@ -8,73 +8,64 @@ import (
 	"AgentSwitch/internal/bridge"
 )
 
-// TestAccessCardTitles 覆盖两卡标题字符串快照：「Claude Code」/「Codex CLI」，
-// 且与 bridge 空片段 Title 一字不差（UI 卡头与片段标题同源对齐，spec §6.4）。
-func TestAccessCardTitles(t *testing.T) {
-	claude, codex := accessCardTitles()
-	if claude != "Claude Code" || codex != "Codex CLI" {
-		t.Fatalf("titles = %q %q, want Claude Code / Codex CLI", claude, codex)
-	}
-	if got := (bridge.Access{}).ClaudeCodeSnippet("").Title; got != claude {
-		t.Fatalf("claude card title %q != bridge snippet title %q", claude, got)
-	}
-	if got := (bridge.Access{}).CodexSnippet("").Title; got != codex {
-		t.Fatalf("codex card title %q != bridge snippet title %q", codex, got)
+// TestAccessTabTitles 覆盖接入页两个 Agent tab 标题快照。
+func TestAccessTabTitles(t *testing.T) {
+	if a, b := accessTabTitles(); a != "Claude Code" || b != "Codex CLI" {
+		t.Fatal(a, b)
 	}
 }
 
-// TestAccessDefaultModelSelection 覆盖接入页选中纯函数：无记忆键默认第一个
-// enabled；记忆命中沿用；记忆失效（已删/已停用）回落第一个 enabled；
-// 跳过 disabled；全无 enabled 返回空串。
-func TestAccessDefaultModelSelection(t *testing.T) {
-	models := []bridge.ModelView{
-		{Name: "off-1", Enabled: false},
-		{Name: "gpt-5", Enabled: true},
-		{Name: "claude-x", Enabled: true},
+// TestAccessConfigRowShowsCurrentBadge 覆盖「使用中」徽标纯函数。
+func TestAccessConfigRowShowsCurrentBadge(t *testing.T) {
+	if got := accessRowBadge(true); got != "使用中" {
+		t.Fatal(got)
 	}
-	if got := pickAccessModel(models, ""); got != "gpt-5" {
-		t.Fatalf("no memory = %q, want gpt-5 (first enabled)", got)
-	}
-	if got := pickAccessModel(models, "claude-x"); got != "claude-x" {
-		t.Fatalf("remembered = %q, want claude-x", got)
-	}
-	if got := pickAccessModel(models, "gone"); got != "gpt-5" {
-		t.Fatalf("stale memory = %q, want gpt-5", got)
-	}
-	if got := pickAccessModel(models, "off-1"); got != "gpt-5" {
-		t.Fatalf("disabled memory = %q, want gpt-5", got)
-	}
-	if got := pickAccessModel([]bridge.ModelView{{Name: "x", Enabled: false}}, ""); got != "" {
-		t.Fatalf("no enabled = %q, want empty", got)
+	if accessRowBadge(false) != "" {
+		t.Fatal("非 current 应无徽标")
 	}
 }
 
-// TestMaskSnippetLines 覆盖展示侧令牌掩码（展示与复制分离，spec §6.4/§9）：
-// 展示行不得出现网关令牌明文。
-func TestMaskSnippetLines(t *testing.T) {
-	lines := []string{"ANTHROPIC_AUTH_TOKEN=tok123", "ANTHROPIC_MODEL=m"}
-	got := maskSnippetLines(lines, "tok123")
-	if got[0] != "ANTHROPIC_AUTH_TOKEN=***" || got[1] != "ANTHROPIC_MODEL=m" {
-		t.Fatalf("masked = %v", got)
-	}
-	// 原切片不被改动（复制路径仍拿真实行）。
-	if lines[0] != "ANTHROPIC_AUTH_TOKEN=tok123" {
-		t.Fatal("mask must not mutate input")
+// TestAccessOverridesFromRows 覆盖覆盖项行→map：空键/空值都剔除（半填行
+// 是误操作——评审裁定按计划语义收口）。
+func TestAccessOverridesFromRows(t *testing.T) {
+	got := accessOverridesFromRows([][2]string{{"K", "V"}, {"", "x"}, {"K2", ""}})
+	if len(got) != 1 || got["K"] != "V" {
+		t.Fatal(got)
 	}
 }
 
-// TestAccessPageRenders 覆盖接入页替换占位：选择器标题与两卡标题在场，
-// 无逻辑模型时给出引导 Hint；不再出现 TODO 占位。
+// TestAccessModelIDByLabel 覆盖模型名→ID 映射：命中含 disabled 项（编辑
+// 旧配置回显不丢引用）；未命中空串。
+func TestAccessModelIDByLabel(t *testing.T) {
+	ms := []bridge.ModelView{{ID: "id1", Name: "m1", Enabled: true}, {ID: "id2", Name: "m2"}}
+	if accessModelIDByLabel(ms, "m2") != "id2" {
+		t.Fatal("应命中含 disabled 项")
+	}
+	if accessModelIDByLabel(ms, "nope") != "" {
+		t.Fatal("未命中应空串")
+	}
+}
+
+// TestAccessPageRenders 覆盖接入页骨架：两 tab、全局配置卡、实际配置卡、
+// 空态引导与网关未运行提示在场；旧片段页元素（当前逻辑模型选择器）不再出现。
 func TestAccessPageRenders(t *testing.T) {
 	u, _ := testUI(t)
 	u.page = "access"
 	tt := ui.NewTester(u.view, 900, 600)
-	for _, want := range []string{"当前逻辑模型", "Claude Code", "Codex CLI", "请先创建并选择逻辑模型"} {
+	for _, want := range []string{"Claude Code", "Codex CLI", "全局配置", "实际配置", "还没有配置", "网关未运行"} {
 		if !tt.HasText(want) {
 			t.Fatalf("missing %q in %v", want, tt.Texts())
 		}
 	}
-	if tt.HasText("TODO: 接入") {
-		t.Fatalf("placeholder leaked: %v", tt.Texts())
+	if tt.HasText("当前逻辑模型") {
+		t.Fatalf("旧片段页元素泄漏: %v", tt.Texts())
+	}
+}
+
+// TestAccessGlobalRowsOrdered 覆盖全局配置编辑行的键序稳定（字典序）。
+func TestAccessGlobalRowsOrdered(t *testing.T) {
+	rows := accessGlobalRows(map[string]string{"b": "2", "a": "1"})
+	if rows[0][0] != "a" || rows[1][0] != "b" {
+		t.Fatal(rows)
 	}
 }

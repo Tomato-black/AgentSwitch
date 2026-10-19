@@ -59,6 +59,7 @@ func (g Gateway) RegenerateToken() (string, error) {
 		return "", err
 	}
 	g.A.Log().Info("token regenerated", "actor", "ui", "result", "ok") // 审计只记事件，绝不记令牌值
+	AccessConfigs{A: g.A}.RegenerateDerived()                          // 令牌变了，刷新接入派生文件（无配置时零写入）
 	return tok, nil
 }
 
@@ -69,6 +70,9 @@ func (g Gateway) SaveSettings(port, timeoutSeconds int) (bool, error) {
 	}
 	g.A.Log().Info("settings saved", "port", port, "timeoutSeconds", timeoutSeconds, "restartRequired", restart,
 		"actor", "ui", "result", "ok")
+	if restart { // 端口变更：base_url 派生的接入文件需刷新（无配置时零写入）
+		AccessConfigs{A: g.A}.RegenerateDerived()
+	}
 	return restart, nil
 }
 func (g Gateway) Recent() []telemetry.RequestRecord { return g.A.Recent() }

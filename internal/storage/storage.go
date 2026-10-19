@@ -52,12 +52,28 @@ type LogicalModelTarget struct {
 	Priority       int
 }
 
+// AccessConfig 是一份 Agent 接入配置（spec 2026-10-18 agent-access-config）：
+// 按 app 分组，指向一个逻辑模型并可覆盖 env/base URL 等；同 app 名唯一、
+// 至多一个 is_current。Overrides 为 JSON 文本（默认 "{}"）。
+type AccessConfig struct {
+	ID             string
+	AppType        string
+	Name           string
+	LogicalModelID string
+	Overrides      map[string]string
+	IsCurrent      bool
+	SortOrder      int
+	CreatedAt      int64
+	UpdatedAt      int64
+}
+
 // Store 是持久层入口。
 type Store interface {
 	Channels() ChannelRepo
 	ChannelModels() ChannelModelRepo
 	LogicalModels() LogicalModelRepo
 	LogicalModelTargets() LogicalModelTargetRepo
+	AccessConfigs() AccessConfigRepo
 	Secrets() SecretRepo
 	Settings() SettingsRepo
 	Close() error
@@ -106,4 +122,18 @@ type LogicalModelTargetRepo interface {
 	Save(t LogicalModelTarget) (LogicalModelTarget, error)
 	Delete(id string) error
 	DeleteByModel(modelID string) error
+}
+
+// AccessConfigRepo 读写 access_configs；UNIQUE(app_type, name)、
+// UNIQUE(app_type) WHERE is_current=1。
+type AccessConfigRepo interface {
+	ListByApp(appType string) ([]AccessConfig, error)
+	Get(id string) (AccessConfig, error)
+	Save(c AccessConfig) (AccessConfig, error)
+	Delete(id string) error
+	// SetCurrent：id="" 仅清空该 app 的 current；否则事务内清 app 全部再置
+	// id（id 必须存在）。
+	SetCurrent(appType, id string) error
+	// Current 返回该 app 当前生效的配置；无 → ErrNotFound。
+	Current(appType string) (AccessConfig, error)
 }
