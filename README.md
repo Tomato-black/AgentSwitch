@@ -22,7 +22,7 @@ Agent 指向 `127.0.0.1:17890` 并调用**逻辑模型名**（如 `my-code`）�
 1. 启动应用 → 网关自动运行（侧栏底条 LED 可停/重启）
 2. 「渠道」页添加渠道：预设一键导入（小米、千问、DeepSeek、Kimi、Anthropic、OpenAI 等精选）或自定义 base_url/协议；每渠道填**一个** API Key（AES-256-GCM 加密后存库，主密钥 `master.key` 与数据库分离，密钥本体不以明文落盘）
 3. 「逻辑模型」页新建逻辑模型，挂有序目标链（渠道 + 该渠道上的模型名，越靠前越优先）
-4. 「接入」页选定逻辑模型，复制配置片段到 shell 环境（网关已随应用自动启动）
+4. 「接入」页为 Claude Code / Codex CLI 新建配置（绑定逻辑模型）并点「应用」——配置直接写入 Agent 的真实配置文件，下次启动即生效（网关已随应用自动启动）
 5. 用 Claude Code / Codex 发起真实请求；UI 改目标链/密钥/启停即时生效，无需重启 agent
 
 ### 逻辑模型快速上手
@@ -37,27 +37,24 @@ Agent 指向 `127.0.0.1:17890` 并调用**逻辑模型名**（如 `my-code`）�
 
 ## 接入 Claude Code / Codex
 
-「接入」页选定逻辑模型后一键复制片段（含网关密钥与逻辑模型名）。等价形式如下（端口以设置页为准，默认 `17890`）：
+「接入」页为每个 Agent 管理**全局配置**（env 键值，合并进该 Agent 所有实际配置）与任意多份**实际配置**（绑定逻辑模型，可带覆盖项）。对某配置点「应用」，网关地址、令牌、模型名等受管键直接投影写入该 Agent 的真实配置文件——只改受管键、其余内容保留，写入前自动备份到 `~/.agentswitch/backups/`（每 Agent 保留最近 10 份）。
 
-### Claude Code
+### Claude Code（应用后写入 `~/.claude/settings.json` 的 `env`）
 
-```bash
-export ANTHROPIC_BASE_URL=http://127.0.0.1:17890
-export ANTHROPIC_AUTH_TOKEN=<网关密钥>
-export ANTHROPIC_MODEL=my-code
-export ANTHROPIC_SMALL_FAST_MODEL=my-code
-```
+受管键：`ANTHROPIC_BASE_URL=http://127.0.0.1:<port>`、`ANTHROPIC_AUTH_TOKEN=<网关令牌>`、`ANTHROPIC_MODEL=<逻辑模型名>`、`ANTHROPIC_SMALL_FAST_MODEL=<逻辑模型名>`（小模型可用覆盖项改写；前三键不可篡改）。流量走网关 Anthropic 入站 `POST /v1/messages`。
 
-写入 shell 环境变量，或 `~/.claude/settings.json` 的 `env` 字段。流量走网关 Anthropic 入站 `POST /v1/messages`。
+### Codex CLI（应用后写入 `~/.codex/config.toml` + `~/.codex/auth.json`）
 
-### Codex CLI
+config.toml 受管键：`model`、`model_provider = "agentswitch"`、`[model_providers.agentswitch]`（base_url / wire_api="chat" / requires_openai_auth=false）；auth.json 受管键 `OPENAI_API_KEY`。流量走网关 OpenAI 入站 `POST /v1/chat/completions`。
 
-```bash
-export OPENAI_BASE_URL=http://127.0.0.1:17890/v1
-export OPENAI_API_KEY=<网关密钥>
-```
+### 使用非默认配置
 
-前两行写入 shell 环境变量；`model = "my-code"` 写入 `~/.codex/config.toml`。流量走网关 OpenAI 入站 `POST /v1/chat/completions`。
+每份配置在保存时生成持久文件（`~/.agentswitch/access/<agent>/<配置id>.json|.env`，随令牌轮换自动刷新）：
+
+- **复制启动命令**：`claude --settings "<持久文件>"`，或 `sh -c 'set -a; . "<持久文件>"; set +a; exec codex -m "<模型>"'`——在终端直接运行即以该配置启动（不改动已应用的默认配置）；
+- **打开终端**：一键拉起已带好命令的 Terminal。
+
+「应用」的那份始终是默认；网关重新生成令牌或改端口后，live 文件与所有持久文件自动刷新。
 
 ## 双入站
 
