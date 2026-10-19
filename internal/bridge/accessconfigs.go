@@ -656,7 +656,7 @@ func shellDQ(v string) string {
 	).Replace(v)
 }
 
-// shellSQ 转义字符串用于外层单引号 shell 片段内（' → '\”）。
+// shellSQ 转义字符串用于外层单引号 shell 片段内（单引号换成反斜杠转义序列）。
 func shellSQ(v string) string {
 	return strings.ReplaceAll(v, `'`, `'\''`)
 }
