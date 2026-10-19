@@ -261,8 +261,8 @@ func (u *uiState) accessPreloadForm(acc bridge.AccessConfigs) {
 }
 
 // accessConfigRow 渲染一行实际配置：名称 + 使用中徽标 + 逻辑模型名 +
-// 操作按钮（应用/编辑/复制启动命令/打开终端/删除）。网关不可用时操作
-// 按钮不渲染（列表仍可见）。
+// 操作按钮（应用/重新应用/编辑/复制启动命令/打开终端/删除）。网关不可用
+// 时仅 应用/复制启动命令/打开终端 不渲染；编辑/删除是纯 DB 操作，始终在。
 func (u *uiState) accessConfigRow(c *ui.Context, t *ui.Theme, s softPalette, acc bridge.AccessConfigs, v bridge.AccessConfigView, gateOK bool) {
 	ui.Row(c).Gap(10).Children(func() {
 		ui.Text(c, v.Name).Width(140)

@@ -503,10 +503,6 @@ func (s AccessConfigs) Update(id, name, logicalModelID string, overrides map[str
 // 索引允许）。删除后重写其余配置的持久文件（被删配置的持久文件保留——
 // 用户可能仍持有其启动命令）。
 func (s AccessConfigs) Remove(id string) error {
-	c, getErr := s.A.Store().AccessConfigs().Get(id)
-	if getErr == nil && c.IsCurrent {
-		// current 行删除后无 current；无需特殊处理，RegenerateDerived 按库态走。
-	}
 	if err := s.A.Store().AccessConfigs().Delete(id); err != nil {
 		s.A.Log().Error("access config remove failed", "id", id, "err", err)
 		return err
