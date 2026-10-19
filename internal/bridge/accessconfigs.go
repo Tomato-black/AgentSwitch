@@ -670,3 +670,45 @@ func (s AccessConfigs) LaunchCommand(id string) (string, error) {
 		return "", fmt.Errorf("不支持的接入类型: %q", c.AppType)
 	}
 }
+
+// RegenerateDerived 令牌/端口变更后的联动重写（spec「令牌/端口联动」）：
+// 遍历两个 appType 的全部配置重写持久文件；对 Current(appType) 命中的
+// 配置额外重写 live 文件。任一配置失败只记 Error 日志并继续其余
+// （err 可能含路径，不回显 env/令牌值）；无任何配置时零写入、零日志
+// （既有 Gateway 测试不触碰用户目录的前提）。由 Gateway.RegenerateToken
+// 与 SaveSettings（端口变更）成功后调用。
+func (s AccessConfigs) RegenerateDerived() {
+	for _, appType := range []string{"claude", "codex"} {
+		cfgs, err := s.A.Store().AccessConfigs().ListByApp(appType)
+		if err != nil {
+			s.A.Log().Error("access derived refresh failed", "app", appType, "stage", "list", "err", err)
+			continue
+		}
+		if len(cfgs) == 0 {
+			continue
+		}
+		cur, _ := s.A.Store().AccessConfigs().Current(appType)
+		for _, c := range cfgs {
+			env, model, err := s.composeFor(c)
+			if err != nil {
+				s.A.Log().Error("access derived refresh failed", "app", appType, "stage", "compose", "err", err)
+				continue
+			}
+			if _, _, err := s.writePersistEnv(c, env); err != nil {
+				s.A.Log().Error("access derived refresh failed", "app", appType, "stage", "persist", "err", err)
+				continue
+			}
+			if cur.ID != c.ID {
+				continue
+			}
+			if appType == "claude" {
+				err = s.writeClaudeLive(env)
+			} else {
+				err = s.writeCodexLive(env, model)
+			}
+			if err != nil {
+				s.A.Log().Error("access derived refresh failed", "app", appType, "stage", "live", "err", err)
+			}
+		}
+	}
+}
