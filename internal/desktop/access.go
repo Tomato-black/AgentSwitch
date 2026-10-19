@@ -7,6 +7,7 @@
 package desktop
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/egoist/mygo"
@@ -38,13 +39,15 @@ func accessRowBadge(isCurrent bool) string {
 	return ""
 }
 
-// accessOverridesFromRows 把键值行转成 overrides map（空键/空值剔除；
-// 同键后者胜——与合成层 overrides 优先语义一致）。
+// accessOverridesFromRows 把键值行转成 overrides map（空键/空值都剔除
+// ——半填行是误操作，清空请删行；同键后者胜——与合成层 overrides 优先
+// 语义一致）。
 func accessOverridesFromRows(rows [][2]string) map[string]string {
 	out := map[string]string{}
 	for _, r := range rows {
 		k := strings.TrimSpace(r[0])
-		if k == "" {
+		v := strings.TrimSpace(r[1])
+		if k == "" || v == "" {
 			continue
 		}
 		out[k] = r[1]
@@ -80,22 +83,12 @@ func accessGlobalRows(env map[string]string) [][2]string {
 	for k := range env {
 		keys = append(keys, k)
 	}
-	sortStrings(keys)
+	sort.Strings(keys)
 	rows := make([][2]string, 0, len(keys))
 	for _, k := range keys {
 		rows = append(rows, [2]string{k, env[k]})
 	}
 	return rows
-}
-
-// sortStrings 是包内极小排序助手（避免为一处调用引 sort 包后与其他
-// 文件的将来改动纠缠；accessGlobalRows 单键场景）。
-func sortStrings(keys []string) {
-	for i := 1; i < len(keys); i++ {
-		for j := i; j > 0 && keys[j] < keys[j-1]; j-- {
-			keys[j], keys[j-1] = keys[j-1], keys[j]
-		}
-	}
 }
 
 // accessGatewayGate 返回网关是否可用（应用/启动类操作的前提）与原因。
@@ -126,16 +119,18 @@ func (u *uiState) accessPage(c *ui.Context) {
 	gateOK, gateReason := u.accessGatewayGate()
 
 	ui.Column(c).Gap(12).Children(func() {
-		// Agent tab 行
+		// Agent tab 行（切 tab 重置编辑态，避免表单跨 Agent 误存）
 		ui.Row(c).Gap(8).Children(func() {
 			if softButton(c, t, s, tabKind(u.accessApp == "claude"), claudeTitle).Clicked() {
 				u.accessApp = "claude"
 				u.accessMsg = ""
+				u.accessForm = accessForm{}
 				u.accessReloadGlobal(acc)
 			}
 			if softButton(c, t, s, tabKind(u.accessApp == "codex"), codexTitle).Clicked() {
 				u.accessApp = "codex"
 				u.accessMsg = ""
+				u.accessForm = accessForm{}
 				u.accessReloadGlobal(acc)
 			}
 		})
@@ -148,16 +143,21 @@ func (u *uiState) accessPage(c *ui.Context) {
 			ui.Column(c).Gap(10).Children(func() {
 				ui.Text(c, "全局配置").Bold()
 				ui.Text(c, "以下环境变量会应用到本 Agent 的所有实际配置（实际配置的同名覆盖项优先）").TextColor(t.TextMuted)
+				// 行内删除只记下标，循环结束后统一应用——构建中改切片会
+				// 越界（logicalmodels.go 同款注释与模式）。
+				globDel := -1
 				for i := range u.accessGlob {
 					row := &u.accessGlob[i]
 					ui.Row(c).Gap(8).Children(func() {
 						ui.TextInput(c, &row[0]).Width(220).Placeholder("键")
 						ui.TextInput(c, &row[1]).Grow(1).Placeholder("值")
 						if softButton(c, t, s, "danger", "删除").Clicked() {
-							u.accessGlob = append(u.accessGlob[:i], u.accessGlob[i+1:]...)
-							return
+							globDel = i
 						}
 					})
+				}
+				if globDel >= 0 {
+					u.accessGlob = append(u.accessGlob[:globDel], u.accessGlob[globDel+1:]...)
 				}
 				ui.Row(c).Gap(8).Children(func() {
 					if softButton(c, t, s, "gray", "＋ 添加一项").Clicked() {
@@ -250,9 +250,7 @@ func (u *uiState) accessPreloadForm(acc bridge.AccessConfigs) {
 			if v.ID == u.accessForm.editID {
 				u.accessForm.name = v.Name
 				u.accessForm.modelLabel = v.LogicalModelName
-				for k, val := range v.Overrides {
-					u.accessForm.overrides = append(u.accessForm.overrides, [2]string{k, val})
-				}
+				u.accessForm.overrides = accessGlobalRows(v.Overrides) // 键序稳定，与全局卡一致
 			}
 		}
 		return
@@ -346,15 +344,19 @@ func (u *uiState) accessEditorCard(c *ui.Context, t *ui.Theme, s softPalette, ac
 			}
 			if u.accessForm.showOverrides {
 				ui.Text(c, "覆盖项：仅本配置生效，优先于全局配置（不能改网关地址/令牌/模型名基础键）").TextColor(t.TextMuted)
+				ovrDel := -1 // 行内删除只记下标，循环后统一应用（防越界，同全局卡）
 				for i := range u.accessForm.overrides {
 					row := &u.accessForm.overrides[i]
 					ui.Row(c).Gap(8).Children(func() {
 						ui.TextInput(c, &row[0]).Width(220).Placeholder("键")
 						ui.TextInput(c, &row[1]).Grow(1).Placeholder("值")
 						if softButton(c, t, s, "danger", "删除").Clicked() {
-							u.accessForm.overrides = append(u.accessForm.overrides[:i], u.accessForm.overrides[i+1:]...)
+							ovrDel = i
 						}
 					})
+				}
+				if ovrDel >= 0 {
+					u.accessForm.overrides = append(u.accessForm.overrides[:ovrDel], u.accessForm.overrides[ovrDel+1:]...)
 				}
 				if softButton(c, t, s, "gray", "＋ 添加覆盖项").Clicked() {
 					u.accessForm.overrides = append(u.accessForm.overrides, [2]string{})

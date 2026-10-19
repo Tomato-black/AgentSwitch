@@ -25,11 +25,11 @@ func TestAccessConfigRowShowsCurrentBadge(t *testing.T) {
 	}
 }
 
-// TestAccessOverridesFromRows 覆盖覆盖项行→map：空键剔除、空值保留键
-// （值为空串是合法覆盖，交由合成层决定）。
+// TestAccessOverridesFromRows 覆盖覆盖项行→map：空键/空值都剔除（半填行
+// 是误操作——评审裁定按计划语义收口）。
 func TestAccessOverridesFromRows(t *testing.T) {
 	got := accessOverridesFromRows([][2]string{{"K", "V"}, {"", "x"}, {"K2", ""}})
-	if len(got) != 2 || got["K"] != "V" || got["K2"] != "" {
+	if len(got) != 1 || got["K"] != "V" {
 		t.Fatal(got)
 	}
 }
