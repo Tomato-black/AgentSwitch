@@ -125,20 +125,30 @@ func TestBackupLiveCopiesAndRotates(t *testing.T) {
 	os.MkdirAll(dir, 0o755)
 	os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"a":1}`), 0o600)
 	for i := 0; i < 12; i++ {
-		if err := acc.backupLive("claude"); err != nil { t.Fatal(err) }
+		if err := acc.backupLive("claude"); err != nil {
+			t.Fatal(err)
+		}
 		time.Sleep(2 * time.Millisecond) // 时间戳文件名去重
 	}
 	bdir := filepath.Join(acc.Home, ".agentswitch", "backups", "claude")
 	ents, _ := os.ReadDir(bdir)
-	if len(ents) != 10 { t.Fatalf("备份份数 = %d，应为 10", len(ents)) }
+	if len(ents) != 10 {
+		t.Fatalf("备份份数 = %d，应为 10", len(ents))
+	}
 	b, err := os.ReadFile(filepath.Join(bdir, ents[0].Name()))
-	if err != nil || string(b) != `{"a":1}` { t.Fatalf("%v %s", err, b) }
+	if err != nil || string(b) != `{"a":1}` {
+		t.Fatalf("%v %s", err, b)
+	}
 }
 
 func TestBackupLiveSkipsMissingSource(t *testing.T) {
 	acc := AccessConfigs{A: tempApp(t), Home: t.TempDir()}
-	if err := acc.backupLive("claude"); err != nil { t.Fatal(err) } // 无源文件不报错、不建目录
-	if _, err := os.Stat(filepath.Join(acc.Home, ".agentswitch", "backups", "claude")); !os.IsNotExist(err) { t.Fatal("不应创建备份目录") }
+	if err := acc.backupLive("claude"); err != nil {
+		t.Fatal(err)
+	} // 无源文件不报错、不建目录
+	if _, err := os.Stat(filepath.Join(acc.Home, ".agentswitch", "backups", "claude")); !os.IsNotExist(err) {
+		t.Fatal("不应创建备份目录")
+	}
 }
 
 func TestComposeAccessEnvClaudeMergePrecedence(t *testing.T) {
@@ -254,43 +264,119 @@ func TestAccessConfigsGlobalConfig(t *testing.T) {
 func TestApplyWritesLiveAndSetsCurrent(t *testing.T) {
 	a := tempApp(t)
 	acc := AccessConfigs{A: a, Home: t.TempDir()}
-	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil { t.Fatal(err) }
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
 	v, err := acc.Create("claude", "工作", "lm1", nil)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	// 控制器裁定：Apply 前先预置旧 settings.json——空 Home 上无源文件不建
 	// 备份目录（Task 8 契约），预置后「应用前应有备份」断言才有意义。
-	if err := os.MkdirAll(filepath.Join(acc.Home, ".claude"), 0o755); err != nil { t.Fatal(err) }
-	if err := os.WriteFile(filepath.Join(acc.Home, ".claude", "settings.json"), []byte(`{"old":1}`), 0o600); err != nil { t.Fatal(err) }
-	if err := acc.Apply(v.ID); err != nil { t.Fatal(err) }
+	if err := os.MkdirAll(filepath.Join(acc.Home, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(acc.Home, ".claude", "settings.json"), []byte(`{"old":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := acc.Apply(v.ID); err != nil {
+		t.Fatal(err)
+	}
 	b, err := os.ReadFile(filepath.Join(acc.Home, ".claude", "settings.json"))
-	if err != nil { t.Fatal(err) }
-	if !strings.Contains(string(b), "ANTHROPIC_MODEL") || !strings.Contains(string(b), "my-code") { t.Fatal(string(b)) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "ANTHROPIC_MODEL") || !strings.Contains(string(b), "my-code") {
+		t.Fatal(string(b))
+	}
 	cur, err := a.Store().AccessConfigs().Current("claude")
-	if err != nil || cur.ID != v.ID { t.Fatalf("%v %v", cur, err) }
-	if _, err := os.Stat(filepath.Join(acc.Home, ".agentswitch", "backups", "claude")); err != nil { t.Fatal("应用前应有备份") }
+	if err != nil || cur.ID != v.ID {
+		t.Fatalf("%v %v", cur, err)
+	}
+	if _, err := os.Stat(filepath.Join(acc.Home, ".agentswitch", "backups", "claude")); err != nil {
+		t.Fatal("应用前应有备份")
+	}
 }
 
 func TestRemoveCurrentKeepsLiveUntouched(t *testing.T) {
 	a := tempApp(t)
 	acc := AccessConfigs{A: a, Home: t.TempDir()}
-	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "m", Enabled: true}); err != nil { t.Fatal(err) }
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "m", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
 	v, _ := acc.Create("claude", "工作", "lm1", nil)
-	if err := acc.Apply(v.ID); err != nil { t.Fatal(err) }
+	if err := acc.Apply(v.ID); err != nil {
+		t.Fatal(err)
+	}
 	before, _ := os.ReadFile(filepath.Join(acc.Home, ".claude", "settings.json"))
 	acc.Remove(v.ID)
 	after, _ := os.ReadFile(filepath.Join(acc.Home, ".claude", "settings.json"))
-	if string(before) != string(after) { t.Fatal("删除使用中配置不得改动 live 文件") }
+	if string(before) != string(after) {
+		t.Fatal("删除使用中配置不得改动 live 文件")
+	}
 }
 
 // 失败路径不产生半状态：绑定逻辑模型缺失时 Apply 即停——不写 live、不置 current。
 func TestApplyMissingLogicalModelLeavesNoHalfState(t *testing.T) {
 	a := tempApp(t)
 	acc := AccessConfigs{A: a, Home: t.TempDir()}
-	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil { t.Fatal(err) }
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
 	v, err := acc.Create("claude", "工作", "lm1", nil)
-	if err != nil { t.Fatal(err) }
-	if err := a.Store().LogicalModels().Delete("lm1"); err != nil { t.Fatal(err) }
-	if err := acc.Apply(v.ID); err == nil { t.Fatal("绑定逻辑模型缺失应报错") }
-	if _, err := os.Stat(filepath.Join(acc.Home, ".claude", "settings.json")); !os.IsNotExist(err) { t.Fatal("失败不得写 live") }
-	if _, err := a.Store().AccessConfigs().Current("claude"); err == nil { t.Fatal("失败不得置 current") }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Store().LogicalModels().Delete("lm1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := acc.Apply(v.ID); err == nil {
+		t.Fatal("绑定逻辑模型缺失应报错")
+	}
+	if _, err := os.Stat(filepath.Join(acc.Home, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Fatal("失败不得写 live")
+	}
+	if _, err := a.Store().AccessConfigs().Current("claude"); err == nil {
+		t.Fatal("失败不得置 current")
+	}
+}
+
+func TestWritePersistAndLaunchCommand(t *testing.T) {
+	a := tempApp(t)
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	cv, _ := acc.Create("claude", "工作", "lm1", nil)
+	cmd, err := acc.LaunchCommand(cv.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(acc.Home, ".agentswitch", "access", "claude", cv.ID+".json")
+	if !strings.Contains(cmd, p) || !strings.HasPrefix(cmd, "claude --settings ") {
+		t.Fatal(cmd)
+	}
+	b, _ := os.ReadFile(p)
+	var payload struct {
+		Env map[string]string `json:"env"`
+	}
+	if err := json.Unmarshal(b, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Env["ANTHROPIC_MODEL"] != "my-code" || payload.Env["ANTHROPIC_AUTH_TOKEN"] == "" {
+		t.Fatal(string(b))
+	}
+	fi, _ := os.Stat(p)
+	if fi.Mode().Perm() != 0o600 {
+		t.Fatalf("权限 = %v", fi.Mode().Perm())
+	}
+
+	xv, _ := acc.Create("codex", "x", "lm1", nil)
+	cmd2, err := acc.LaunchCommand(xv.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(cmd2, "codex -m \"my-code\"") || !strings.Contains(cmd2, ".env") {
+		t.Fatal(cmd2)
+	}
 }

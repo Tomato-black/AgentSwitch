@@ -186,6 +186,7 @@ func (s AccessConfigs) writeClaudeLive(env map[string]string) error {
 //     顶层键/表语义保留（TOML 注释允许丢失）；0600 原子写。
 //   - auth.json：不存在建空对象；JSON 解析失败中止；受管键 OPENAI_API_KEY
 //     = env["OPENAI_API_KEY"]；其余键保留；0600 原子写。
+//
 // 落盘顺序：任一写失败即中止、不写第二个。本方法不写任何日志——写入值
 // 含网关令牌（spec §9 脱敏）。
 func (s AccessConfigs) writeCodexLive(env map[string]string, model string) error {
@@ -571,4 +572,101 @@ func (s AccessConfigs) SaveGlobalConfig(appType string, env map[string]string) e
 	}
 	s.A.Log().Info("access global config saved", "app", appType, "actor", "ui", "result", "ok")
 	return nil
+}
+
+// writePersistEnv 把合成 env 落成该配置的持久文件（spec「持久文件」）：
+// claude → <home>/.agentswitch/access/claude/<id>.json（{"env":{...}}，
+// 供 `claude --settings` 引用）；codex → <home>/.agentswitch/access/codex/
+// <id>.env（KEY=VALUE 行，键按字典序，供 shell source 后启动 codex）。
+// 按 appType 只生成对应一种，另一种路径返回空串。.env 任一值含换行符即
+// 报错中止（行格式无法安全表达）。文件 0600（含网关令牌，不写日志）。
+func (s AccessConfigs) writePersistEnv(c storage.AccessConfig, env map[string]string) (string, string, error) {
+	home := s.Home
+	if home == "" {
+		var err error
+		if home, err = os.UserHomeDir(); err != nil {
+			return "", "", err
+		}
+	}
+	switch c.AppType {
+	case "claude":
+		payload := struct {
+			Env map[string]string `json:"env"`
+		}{Env: env}
+		b, err := json.MarshalIndent(payload, "", "  ")
+		if err != nil {
+			return "", "", err
+		}
+		p := filepath.Join(home, ".agentswitch", "access", "claude", c.ID+".json")
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			return "", "", err
+		}
+		if err := atomicWriteFile0600(p, b); err != nil {
+			return "", "", err
+		}
+		return p, "", nil
+	case "codex":
+		keys := make([]string, 0, len(env))
+		for k := range env {
+			if strings.ContainsAny(env[k], "\r\n") {
+				return "", "", fmt.Errorf("配置值不能包含换行符: %s", k)
+			}
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		var sb strings.Builder
+		for _, k := range keys {
+			sb.WriteString(k)
+			sb.WriteString("=")
+			sb.WriteString(env[k])
+			sb.WriteString("\n")
+		}
+		p := filepath.Join(home, ".agentswitch", "access", "codex", c.ID+".env")
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			return "", "", err
+		}
+		if err := atomicWriteFile0600(p, []byte(sb.String())); err != nil {
+			return "", "", err
+		}
+		return "", p, nil
+	default:
+		return "", "", fmt.Errorf("不支持的接入类型: %q", c.AppType)
+	}
+}
+
+// writePersist 合成该配置的 env 并落持久文件（便捷入口）。
+func (s AccessConfigs) writePersist(c storage.AccessConfig) (string, string, error) {
+	env, _, err := s.composeFor(c)
+	if err != nil {
+		return "", "", err
+	}
+	return s.writePersistEnv(c, env)
+}
+
+// LaunchCommand 返回展示/复制用的启动命令：每次调用都重写持久文件
+// （保证令牌与模型最新——令牌轮换联动的单配置版）。命令拼装：
+// claude：`claude --settings "<json>"`（--settings 未给的键回落
+// ~/.claude/settings.json）；codex：`sh -c 'set -a; . "<env>"; set +a;
+// exec codex -m "<model>"'`（env 文件内容保持命令跨令牌轮换有效）。
+func (s AccessConfigs) LaunchCommand(id string) (string, error) {
+	c, err := s.A.Store().AccessConfigs().Get(id)
+	if err != nil {
+		return "", err
+	}
+	env, model, err := s.composeFor(c)
+	if err != nil {
+		return "", err
+	}
+	claudePath, codexPath, err := s.writePersistEnv(c, env)
+	if err != nil {
+		return "", err
+	}
+	switch c.AppType {
+	case "claude":
+		return fmt.Sprintf("claude --settings %q", claudePath), nil
+	case "codex":
+		return fmt.Sprintf("sh -c 'set -a; . %q; set +a; exec codex -m %q'", codexPath, model), nil
+	default:
+		return "", fmt.Errorf("不支持的接入类型: %q", c.AppType)
+	}
 }
