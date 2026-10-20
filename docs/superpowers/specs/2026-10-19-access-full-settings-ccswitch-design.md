@@ -65,7 +65,7 @@ CREATE TABLE access_configs (
 - `schema_migrations` 含 version 2 或 3 → `errLegacyDB`；
 - `access_configs` 存在但缺 `settings` 列 → `errLegacyDB`；
 - 已记 v1 但缺 `channel_secrets` 表或缺 `access_configs` 表 → `errLegacyDB`
-  （2026-10-19 评审补充：2017-10-17 时代 v1 库两者皆无，放行后会在首次读
+  （2026-10-19 评审补充：2026-10-17 时代 v1 库两者皆无，放行后会在首次读
   密钥/接入配置时裸 SQL 报错，正是本守卫要避免的故障形态；最终单一 v1
   建库时两表必然同时存在）。
 
