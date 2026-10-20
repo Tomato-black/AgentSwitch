@@ -8,6 +8,7 @@ package desktop
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -18,15 +19,16 @@ import (
 	"AgentSwitch/internal/bridge"
 )
 
-// accessForm 是接入配置新建/编辑表单状态（本页私有；open 非空即编辑）。
+// accessForm 是接入配置新建/编辑表单状态（open 非空即编辑）。docJSON 是唯一
+// 共享存储（spec 2026-10-19 §5.2）：编辑器显示 PreviewDoc 合成结果（令牌已
+// 遮蔽），保存原文送 bridge 归一化。
 type accessForm struct {
-	open          bool
-	editID        string // 非空 = 编辑该配置
-	name          string
-	modelLabel    string // 选中的逻辑模型名（保存时映射回 ID）
-	overrides     [][2]string
-	showOverrides bool // 高级：覆盖项折叠开关
-	msg           string
+	open       bool
+	editID     string // 非空 = 编辑该配置
+	name       string
+	modelLabel string // 选中的逻辑模型名（保存时映射回 ID）
+	docJSON    string
+	msg        string
 }
 
 // accessTabTitles 返回两个 Agent tab 的标题（字符串快照锚点）。
@@ -42,7 +44,7 @@ func accessRowBadge(isCurrent bool) string {
 
 // accessOverridesFromRows 把键值行转成 overrides map（空键/空值都剔除
 // ——半填行是误操作，清空请删行；同键后者胜——与合成层 overrides 优先
-// 语义一致）。
+// 语义一致）。用于全局配置卡。
 func accessOverridesFromRows(rows [][2]string) map[string]string {
 	out := map[string]string{}
 	for _, r := range rows {
@@ -54,6 +56,69 @@ func accessOverridesFromRows(rows [][2]string) map[string]string {
 		out[k] = r[1]
 	}
 	return out
+}
+
+// accessDocSetEnv 解析 raw 文档并对 env 键打补丁（value=="" 删除该键），2 空格
+// 缩进序列化。解析失败返回 error（调用方保留旧文本）。仅 UI 本地补丁用，不做
+// appType 校验（保存校验在 bridge）。
+func accessDocSetEnv(raw, key, value string) (string, error) {
+	doc := map[string]any{}
+	if trimmed := strings.TrimSpace(raw); trimmed != "" {
+		if err := json.Unmarshal([]byte(trimmed), &doc); err != nil {
+			return "", err
+		}
+		if doc == nil {
+			return "", fmt.Errorf("配置必须是 JSON 对象")
+		}
+	}
+	env := map[string]any{}
+	if v, ok := doc["env"].(map[string]any); ok {
+		env = v
+	}
+	if value == "" {
+		delete(env, key)
+	} else {
+		env[key] = value
+	}
+	doc["env"] = env
+	b, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// accessDocEnvStrings 提取文档 env 字符串 map（角色行回填数据源）；env 值非
+// 字符串/JSON 非法返回 error——调用方保留上一合法状态。
+func accessDocEnvStrings(raw string) (map[string]string, error) {
+	doc := map[string]any{}
+	if strings.TrimSpace(raw) != "" {
+		if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+			return nil, err
+		}
+		if doc == nil {
+			return nil, fmt.Errorf("配置必须是 JSON 对象")
+		}
+	}
+	out := map[string]string{}
+	if v, ok := doc["env"].(map[string]any); ok {
+		for k, val := range v {
+			s, ok := val.(string)
+			if !ok {
+				return nil, fmt.Errorf("env 值必须是字符串: %s", k)
+			}
+			out[k] = s
+		}
+	}
+	return out, nil
+}
+
+// accessParseOneM 剥离值尾部 "[1M]"（大小写不敏感）——1M 勾选状态回显。
+func accessParseOneM(v string) (string, bool) {
+	if len(v) >= 4 && strings.EqualFold(v[len(v)-4:], "[1M]") {
+		return v[:len(v)-4], true
+	}
+	return v, false
 }
 
 // accessModelLabels 返回 enabled 逻辑模型名列表（编辑器 Select 数据源）。
@@ -214,7 +279,7 @@ func (u *uiState) accessPage(c *ui.Context) {
 
 		// 编辑器卡（Task 15 表单）
 		if u.accessForm.open {
-			u.accessEditorCard(c, t, s, acc)
+			u.accessEditorCard(c, t, s, acc, gateOK)
 		}
 	})
 }
@@ -239,26 +304,37 @@ func (u *uiState) accessReloadGlobal(acc bridge.AccessConfigs) {
 	u.accessGlobMsg = ""
 }
 
-// accessPreloadForm 为「编辑」预填表单（新建仅开空表单 + 默认模型名）。
+// accessPreloadForm 打开编辑器：预填名称/模型，加载 PreviewDoc 合成预览
+//（新建以 "{}" 为底；预览失败回退原文并内联报错）。
 func (u *uiState) accessPreloadForm(acc bridge.AccessConfigs) {
+	f := &u.accessForm
 	var models []bridge.ModelView
 	if u.svc.Logical != nil {
 		models = u.svc.Logical.List()
 	}
-	labels := accessModelLabels(models)
-	if u.accessForm.editID != "" {
+	if f.modelLabel == "" {
+		if labels := accessModelLabels(models); len(labels) > 0 {
+			f.modelLabel = labels[0]
+		}
+	}
+	raw := "{}"
+	if f.editID != "" {
 		for _, v := range acc.List(u.accessApp) {
-			if v.ID == u.accessForm.editID {
-				u.accessForm.name = v.Name
-				u.accessForm.modelLabel = v.LogicalModelName
-				u.accessForm.overrides = accessGlobalRows(v.Overrides) // 键序稳定，与全局卡一致
+			if v.ID == f.editID {
+				f.name = v.Name
+				f.modelLabel = v.LogicalModelName
+				raw = v.Settings
 			}
 		}
+	}
+	modelID := accessModelIDByLabel(models, f.modelLabel)
+	preview, err := acc.PreviewDoc(u.accessApp, modelID, raw)
+	if err != nil {
+		f.docJSON = raw
+		f.msg = "预览失败：" + err.Error()
 		return
 	}
-	if len(labels) > 0 {
-		u.accessForm.modelLabel = labels[0]
-	}
+	f.docJSON = preview
 }
 
 // accessConfigRow 渲染一行实际配置：名称 + 使用中徽标 + 逻辑模型名 +
@@ -323,9 +399,10 @@ func (u *uiState) accessConfigRow(c *ui.Context, t *ui.Theme, s softPalette, acc
 	})
 }
 
-// accessEditorCard 渲染新建/编辑表单：名称、逻辑模型下拉、覆盖项折叠区、
-// 保存/取消。保存：编辑走 Update，新建走 Create；模型名映射回 ID。
-func (u *uiState) accessEditorCard(c *ui.Context, t *ui.Theme, s softPalette, acc bridge.AccessConfigs) {
+// accessEditorCard 渲染新建/编辑表单（spec 2026-10-19 §5.1）：名称、逻辑模型
+// 下拉（主模型，锁定键）、网关只读行、配置 JSON（TextArea，令牌已遮蔽）。
+// 保存原文送 bridge（校验+归一化在 bridge）。
+func (u *uiState) accessEditorCard(c *ui.Context, t *ui.Theme, s softPalette, acc bridge.AccessConfigs, gateOK bool) {
 	card(c, t, func() {
 		ui.Column(c).Gap(10).Children(func() {
 			title := "新建配置"
@@ -349,39 +426,33 @@ func (u *uiState) accessEditorCard(c *ui.Context, t *ui.Theme, s softPalette, ac
 				if len(labels) == 0 {
 					ui.Text(c, "还没有启用的逻辑模型——先在「逻辑模型」页创建并启用").TextColor(t.TextMuted)
 				} else {
-					ui.Select(c, &u.accessForm.modelLabel, labels)
+					prev := u.accessForm.modelLabel
+					sel := ui.Select(c, &u.accessForm.modelLabel, labels)
+					if sel.Changed() && u.accessForm.modelLabel != prev {
+						// 主模型切换：重新取合成预览（锁定键随之刷新）
+						modelID := accessModelIDByLabel(models, u.accessForm.modelLabel)
+						if preview, err := acc.PreviewDoc(u.accessApp, modelID, u.accessForm.docJSON); err == nil {
+							u.accessForm.docJSON = preview
+						}
+					}
 				}
 			})
 
-			if softButton(c, t, s, "gray", coverToggleLabel(u.accessForm.showOverrides)).Clicked() {
-				u.accessForm.showOverrides = !u.accessForm.showOverrides
-			}
-			if u.accessForm.showOverrides {
-				ui.Text(c, "覆盖项：仅本配置生效，优先于全局配置（不能改网关地址/令牌/模型名基础键）").TextColor(t.TextMuted)
-				ovrDel := -1 // 行内删除只记下标，循环后统一应用（防越界，同全局卡）
-				for i := range u.accessForm.overrides {
-					row := &u.accessForm.overrides[i]
-					ui.Row(c).Gap(8).Children(func() {
-						ui.TextInput(c, &row[0]).Width(220).Placeholder("键")
-						ui.TextInput(c, &row[1]).Grow(1).Placeholder("值")
-						if softButton(c, t, s, "danger", "删除").Clicked() {
-							ovrDel = i
-						}
-					})
-				}
-				if ovrDel >= 0 {
-					u.accessForm.overrides = append(u.accessForm.overrides[:ovrDel], u.accessForm.overrides[ovrDel+1:]...)
-				}
-				if softButton(c, t, s, "gray", "＋ 添加覆盖项").Clicked() {
-					u.accessForm.overrides = append(u.accessForm.overrides, [2]string{})
-				}
-			}
+			st := u.svc.Gateway.Status()
+			ui.Text(c, fmt.Sprintf("网关地址 http://127.0.0.1:%d · 令牌自动生成（不在本页展示）", st.Port)).TextColor(t.TextMuted)
+
+			ui.Text(c, "配置 JSON（最终写入 Agent 的完整文档；网关地址/令牌/模型三键自动锁定）").TextColor(t.TextMuted)
+			ui.TextArea(c, &u.accessForm.docJSON).Height(320).Grow(1)
+			ui.Text(c, "与全局/默认值相同的键保存时自动视为未定制（保持继承）；要覆盖请改成不同值").TextColor(t.TextMuted)
 
 			if u.accessForm.msg != "" {
 				ui.Text(c, u.accessForm.msg).TextColor(t.Danger)
 			}
 
 			ui.Row(c).Gap(8).Children(func() {
+				if !gateOK {
+					ui.Text(c, "网关未运行——保存后需启动网关才能「应用」").TextColor(t.TextMuted)
+				}
 				if pillButton(c, t, "保存").Clicked() {
 					u.accessSaveForm(acc, models)
 				}
@@ -393,15 +464,7 @@ func (u *uiState) accessEditorCard(c *ui.Context, t *ui.Theme, s softPalette, ac
 	})
 }
 
-// coverToggleLabel 是覆盖项折叠开关的文案。
-func coverToggleLabel(open bool) string {
-	if open {
-		return "高级：收起覆盖项"
-	}
-	return "高级：覆盖项"
-}
-
-// accessSaveForm 校验并保存表单；成功关闭编辑态，失败内联中文错误。
+// accessSaveForm 校验并保存表单；文档原文送 bridge（parse+归一化错误内联）。
 func (u *uiState) accessSaveForm(acc bridge.AccessConfigs, models []bridge.ModelView) {
 	f := &u.accessForm
 	if strings.TrimSpace(f.name) == "" {
@@ -413,17 +476,10 @@ func (u *uiState) accessSaveForm(acc bridge.AccessConfigs, models []bridge.Model
 		f.msg = "请选择逻辑模型"
 		return
 	}
-	// 过渡适配（Task 7）：旧键值行 UI 打包成 {"env":{...}} 文档传入；
-	// bridge 侧保存时归一化（Task 8 换整份文档编辑器 UI）。
-	payload := struct {
-		Env map[string]string `json:"env"`
-	}{Env: accessOverridesFromRows(f.overrides)}
-	b, err := json.Marshal(payload)
-	if err != nil {
-		f.msg = err.Error()
-		return
+	settingsJSON := strings.TrimSpace(f.docJSON)
+	if settingsJSON == "" {
+		settingsJSON = "{}"
 	}
-	settingsJSON := string(b)
 	if f.editID != "" {
 		if err := acc.Update(f.editID, f.name, modelID, settingsJSON); err != nil {
 			f.msg = err.Error()

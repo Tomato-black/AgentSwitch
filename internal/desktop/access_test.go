@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -67,5 +68,58 @@ func TestAccessGlobalRowsOrdered(t *testing.T) {
 	rows := accessGlobalRows(map[string]string{"b": "2", "a": "1"})
 	if rows[0][0] != "a" || rows[1][0] != "b" {
 		t.Fatal(rows)
+	}
+}
+
+func TestAccessDocSetEnv(t *testing.T) {
+	raw, err := accessDocSetEnv(`{"env":{"A":"1"},"language":"zh-CN"}`, "B", "2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	json.Unmarshal([]byte(raw), &doc)
+	env := doc["env"].(map[string]any)
+	if env["A"] != "1" || env["B"] != "2" || doc["language"] != "zh-CN" {
+		t.Fatal(raw)
+	}
+	// value=="" 删除键
+	raw2, err := accessDocSetEnv(raw, "A", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	json.Unmarshal([]byte(raw2), &doc)
+	if _, ok := doc["env"].(map[string]any)["A"]; ok {
+		t.Fatal("空值应删键: " + raw2)
+	}
+	// 非法 JSON 报错
+	if _, err := accessDocSetEnv(`{bad`, "A", "1"); err == nil {
+		t.Fatal("非法 JSON 应报错")
+	}
+}
+
+func TestAccessDocEnvStrings(t *testing.T) {
+	env, err := accessDocEnvStrings(`{"env":{"A":"1"}}`)
+	if err != nil || env["A"] != "1" {
+		t.Fatalf("%v %v", env, err)
+	}
+	if _, err := accessDocEnvStrings(`{"env":{"A":1}}`); err == nil {
+		t.Fatal("非字符串值应报错（保留旧状态）")
+	}
+	if _, err := accessDocEnvStrings(`{bad`); err == nil {
+		t.Fatal("非法 JSON 应报错")
+	}
+}
+
+func TestAccessParseOneM(t *testing.T) {
+	cases := map[string][2]any{
+		"my-code[1M]": {"my-code", true},
+		"my-code[1m]": {"my-code", true},
+		"my-code":     {"my-code", false},
+	}
+	for in, want := range cases {
+		name, oneM := accessParseOneM(in)
+		if name != want[0] || oneM != want[1] {
+			t.Fatalf("accessParseOneM(%q)=%v,%v want %v", in, name, oneM, want)
+		}
 	}
 }
