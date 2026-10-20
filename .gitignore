@@ -12,3 +12,4 @@
 /build/
 /.mygo/
 node_modules/
+.superpowers/
