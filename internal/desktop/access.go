@@ -7,6 +7,7 @@
 package desktop
 
 import (
+	"encoding/json"
 	"sort"
 	"strings"
 
@@ -412,14 +413,24 @@ func (u *uiState) accessSaveForm(acc bridge.AccessConfigs, models []bridge.Model
 		f.msg = "请选择逻辑模型"
 		return
 	}
-	overrides := accessOverridesFromRows(f.overrides)
+	// 过渡适配（Task 7）：旧键值行 UI 打包成 {"env":{...}} 文档传入；
+	// bridge 侧保存时归一化（Task 8 换整份文档编辑器 UI）。
+	payload := struct {
+		Env map[string]string `json:"env"`
+	}{Env: accessOverridesFromRows(f.overrides)}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		f.msg = err.Error()
+		return
+	}
+	settingsJSON := string(b)
 	if f.editID != "" {
-		if err := acc.Update(f.editID, f.name, modelID, overrides); err != nil {
+		if err := acc.Update(f.editID, f.name, modelID, settingsJSON); err != nil {
 			f.msg = err.Error()
 			return
 		}
 	} else {
-		if _, err := acc.Create(u.accessApp, f.name, modelID, overrides); err != nil {
+		if _, err := acc.Create(u.accessApp, f.name, modelID, settingsJSON); err != nil {
 			f.msg = err.Error()
 			return
 		}

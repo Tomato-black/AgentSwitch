@@ -210,6 +210,29 @@ func (s AccessConfigs) PreviewDoc(appType, logicalModelID, settingsJSON string) 
 	return string(b), nil
 }
 
+// prepareDoc 解析+归一化接入文档并序列化（Create/Update 共用）：parseAccessDoc
+// 校验 → normalizeAccessEnv 剔除锁定键与未定制键 → env 写回文档 → 2 空格缩进。
+func (s AccessConfigs) prepareDoc(appType, modelName, settingsJSON string) (string, error) {
+	doc, env, err := parseAccessDoc(appType, settingsJSON)
+	if err != nil {
+		return "", err
+	}
+	global, err := s.GlobalConfig(appType)
+	if err != nil {
+		return "", err
+	}
+	norm, err := normalizeAccessEnv(appType, Gateway{A: s.A}.Status(), modelName, global, env)
+	if err != nil {
+		return "", err
+	}
+	doc["env"] = norm
+	b, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
 // accessDocEnvMap 从整份 settings 文档提取 env 字符串 map（写入侧保证 env 值为
 // 字符串；解析失败向上返回错误）。文档缺 env 视为空 map。
 func accessDocEnvMap(settings string) (map[string]string, error) {
@@ -228,7 +251,8 @@ func accessDocEnvMap(settings string) (map[string]string, error) {
 	return doc.Env, nil
 }
 
-// accessEnvDoc 把 env map 包装为最小文档 JSON（Task 7 前的过渡存法）。
+// accessEnvDoc 把 env map 包装为最小文档 JSON。Create/Update 文档化签名
+// （Task 7）后仅测试用（构造最小文档入参）。
 func accessEnvDoc(env map[string]string) string {
 	if env == nil {
 		env = map[string]string{}
@@ -591,15 +615,17 @@ func friendlyAccessSaveErr(err error) error {
 
 // AccessConfigView 是接入配置卡片视图（UI 接线契约，字段名勿改）；
 // LogicalModelName 为绑定逻辑模型的对外名（解析失败留空串）。
+// Settings 为整份配置文档原文（含归一化后的 env）。
 type AccessConfigView struct {
 	ID, Name, AppType, LogicalModelID, LogicalModelName string
+	Settings                                            string
 	Overrides                                           map[string]string
 	IsCurrent                                           bool
 }
 
 func (s AccessConfigs) view(c storage.AccessConfig) AccessConfigView {
 	v := AccessConfigView{ID: c.ID, Name: c.Name, AppType: c.AppType,
-		LogicalModelID: c.LogicalModelID, IsCurrent: c.IsCurrent}
+		LogicalModelID: c.LogicalModelID, Settings: c.Settings, IsCurrent: c.IsCurrent}
 	// 逐条解析逻辑模型名；Get 失败（如已删模型）留空串即可。
 	if lm, err := s.A.Store().LogicalModels().Get(c.LogicalModelID); err == nil {
 		v.LogicalModelName = lm.Name
@@ -626,9 +652,10 @@ func (s AccessConfigs) List(appType string) []AccessConfigView {
 }
 
 // Create 建接入配置：appType 白名单、name 非空（TrimSpace）、logicalModelID
-// 必须存在；同 app 重名译「配置名已存在」。审计行绝不记录 env/overrides 值
-// 或 token（spec §9 脱敏）。
-func (s AccessConfigs) Create(appType, name, logicalModelID string, overrides map[string]string) (AccessConfigView, error) {
+// 必须存在；settingsJSON 经 prepareDoc 归一化后入库（锁定键剔除、未定制键
+// 剔除、文档顶层键保留）；同 app 重名译「配置名已存在」。审计行绝不记录
+// env/settings 值或 token（spec §9 脱敏）。
+func (s AccessConfigs) Create(appType, name, logicalModelID, settingsJSON string) (AccessConfigView, error) {
 	if err := validateAccessAppType(appType); err != nil {
 		return AccessConfigView{}, err
 	}
@@ -636,15 +663,20 @@ func (s AccessConfigs) Create(appType, name, logicalModelID string, overrides ma
 	if name == "" {
 		return AccessConfigView{}, fmt.Errorf("配置名不能为空")
 	}
-	if _, err := s.A.Store().LogicalModels().Get(logicalModelID); err != nil {
+	lm, err := s.A.Store().LogicalModels().Get(logicalModelID)
+	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			return AccessConfigView{}, fmt.Errorf("逻辑模型不存在")
 		}
 		return AccessConfigView{}, err
 	}
+	raw, err := s.prepareDoc(appType, lm.Name, settingsJSON)
+	if err != nil {
+		return AccessConfigView{}, err
+	}
 	id := storage.NewID()
 	saved, err := s.A.Store().AccessConfigs().Save(storage.AccessConfig{
-		ID: id, AppType: appType, Name: name, LogicalModelID: logicalModelID, Settings: accessEnvDoc(overrides),
+		ID: id, AppType: appType, Name: name, LogicalModelID: logicalModelID, Settings: raw,
 	})
 	if err != nil {
 		return AccessConfigView{}, friendlyAccessSaveErr(err)
@@ -655,8 +687,9 @@ func (s AccessConfigs) Create(appType, name, logicalModelID string, overrides ma
 }
 
 // Update 改配置字段并保 ID（非 Remove+Create）：直接 repo.Save 覆盖，
-// 保留原 app_type / is_current / sort_order。
-func (s AccessConfigs) Update(id, name, logicalModelID string, overrides map[string]string) error {
+// 保留原 app_type / is_current / sort_order；settingsJSON 经 prepareDoc
+// 归一化后覆盖 Settings（语义同 Create）。
+func (s AccessConfigs) Update(id, name, logicalModelID, settingsJSON string) error {
 	c, err := s.A.Store().AccessConfigs().Get(id)
 	if err != nil {
 		return err
@@ -665,14 +698,19 @@ func (s AccessConfigs) Update(id, name, logicalModelID string, overrides map[str
 	if name == "" {
 		return fmt.Errorf("配置名不能为空")
 	}
-	if _, err := s.A.Store().LogicalModels().Get(logicalModelID); err != nil {
+	lm, err := s.A.Store().LogicalModels().Get(logicalModelID)
+	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			return fmt.Errorf("逻辑模型不存在")
 		}
 		return err
 	}
+	raw, err := s.prepareDoc(c.AppType, lm.Name, settingsJSON)
+	if err != nil {
+		return err
+	}
 	c.Name, c.LogicalModelID = name, logicalModelID
-	c.Settings = accessEnvDoc(overrides)
+	c.Settings = raw
 	if _, err := s.A.Store().AccessConfigs().Save(c); err != nil {
 		return friendlyAccessSaveErr(err)
 	}

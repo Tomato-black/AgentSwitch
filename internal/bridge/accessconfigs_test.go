@@ -331,7 +331,7 @@ func TestAccessConfigsCRUDAndView(t *testing.T) {
 	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	v, err := acc.Create("claude", "工作", "lm1", map[string]string{"A": "1"})
+	v, err := acc.Create("claude", "工作", "lm1", accessEnvDoc(map[string]string{"A": "1"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -351,10 +351,10 @@ func TestAccessConfigsCRUDAndView(t *testing.T) {
 	if err != nil || env["A"] != "1" {
 		t.Fatalf("composeFor 应取回文档 env 覆盖项: %v %v", env, err)
 	}
-	if _, err := acc.Create("claude", "工作", "lm1", nil); err == nil {
+	if _, err := acc.Create("claude", "工作", "lm1", ""); err == nil {
 		t.Fatal("重名应报中文错误")
 	}
-	if err := acc.Update(v.ID, "个人", "lm1", nil); err != nil {
+	if err := acc.Update(v.ID, "个人", "lm1", ""); err != nil {
 		t.Fatal(err)
 	}
 	if len(acc.List("claude")) != 1 || acc.List("claude")[0].Name != "个人" {
@@ -363,6 +363,40 @@ func TestAccessConfigsCRUDAndView(t *testing.T) {
 	acc.Remove(v.ID)
 	if len(acc.List("claude")) != 0 {
 		t.Fatal("删除未生效")
+	}
+}
+
+func TestCreateNormalizesDocBeforeStore(t *testing.T) {
+	a := tempApp(t)
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	v, err := acc.Create("claude", "工作", "lm1",
+		`{"env":{"ANTHROPIC_AUTH_TOKEN":"steal","ANTHROPIC_MODEL":"other","API_TIMEOUT_MS":"1"},"language":"zh-CN"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(v.Settings), &doc); err != nil {
+		t.Fatal(err)
+	}
+	env := doc["env"].(map[string]any)
+	if _, ok := env["ANTHROPIC_AUTH_TOKEN"]; ok {
+		t.Fatal("锁定键不应入库")
+	}
+	if _, ok := env["ANTHROPIC_MODEL"]; ok {
+		t.Fatal("锁定键不应入库")
+	}
+	if env["API_TIMEOUT_MS"] != "1" {
+		t.Fatalf("定制键应保留: %v", env)
+	}
+	if doc["language"] != "zh-CN" {
+		t.Fatalf("顶层键应保留: %v", doc)
+	}
+	// codex 顶层键拒绝
+	if _, err := acc.Create("codex", "x", "lm1", `{"env":{},"language":"zh-CN"}`); err == nil {
+		t.Fatal("codex 顶层键应报错")
 	}
 }
 
@@ -387,7 +421,7 @@ func TestApplyWritesLiveAndSetsCurrent(t *testing.T) {
 	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	v, err := acc.Create("claude", "工作", "lm1", nil)
+	v, err := acc.Create("claude", "工作", "lm1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -424,7 +458,7 @@ func TestRemoveCurrentKeepsLiveUntouched(t *testing.T) {
 	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "m", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	v, _ := acc.Create("claude", "工作", "lm1", nil)
+	v, _ := acc.Create("claude", "工作", "lm1", "")
 	if err := acc.Apply(v.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -443,7 +477,7 @@ func TestApplyMissingLogicalModelLeavesNoHalfState(t *testing.T) {
 	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	v, err := acc.Create("claude", "工作", "lm1", nil)
+	v, err := acc.Create("claude", "工作", "lm1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -507,7 +541,7 @@ func TestWritePersistAndLaunchCommand(t *testing.T) {
 	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	cv, _ := acc.Create("claude", "工作", "lm1", nil)
+	cv, _ := acc.Create("claude", "工作", "lm1", "")
 	cmd, err := acc.LaunchCommand(cv.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -531,7 +565,7 @@ func TestWritePersistAndLaunchCommand(t *testing.T) {
 		t.Fatalf("权限 = %v", fi.Mode().Perm())
 	}
 
-	xv, _ := acc.Create("codex", "x", "lm1", nil)
+	xv, _ := acc.Create("codex", "x", "lm1", "")
 	cmd2, err := acc.LaunchCommand(xv.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -551,7 +585,7 @@ func TestGatewayRegenerateTokenRefreshesDerivedFiles(t *testing.T) {
 	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "m", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	v, _ := acc.Create("claude", "工作", "lm1", nil)
+	v, _ := acc.Create("claude", "工作", "lm1", "")
 	if err := acc.Apply(v.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -584,7 +618,7 @@ func TestOpenTerminalAssemblesScript(t *testing.T) {
 	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "m", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	v, _ := acc.Create("claude", "工作", "lm1", nil)
+	v, _ := acc.Create("claude", "工作", "lm1", "")
 	var got string
 	old := openTerminalExec
 	openTerminalExec = func(script string) error { got = script; return nil }
@@ -609,7 +643,7 @@ func TestLaunchCommandEscapesShellMetachars(t *testing.T) {
 	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "a'b$(id)", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	xv, _ := acc.Create("codex", "x", "lm1", nil)
+	xv, _ := acc.Create("codex", "x", "lm1", "")
 	cmd, err := acc.LaunchCommand(xv.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -631,7 +665,7 @@ func TestWritePersistRejectsNewlineValue(t *testing.T) {
 	if err := a.Store().Settings().Set("access.global.codex", `{"K":"a\nb"}`); err != nil {
 		t.Fatal(err)
 	}
-	xv, _ := acc.Create("codex", "x", "lm1", nil)
+	xv, _ := acc.Create("codex", "x", "lm1", "")
 	if _, err := acc.LaunchCommand(xv.ID); err == nil {
 		t.Fatal("换行值应报错中止")
 	}
@@ -648,8 +682,8 @@ func TestSaveGlobalConfigRefreshesDerived(t *testing.T) {
 	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "m", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	cur, _ := acc.Create("claude", "工作", "lm1", nil)
-	other, _ := acc.Create("claude", "备用", "lm1", nil)
+	cur, _ := acc.Create("claude", "工作", "lm1", "")
+	other, _ := acc.Create("claude", "备用", "lm1", "")
 	if err := acc.Apply(cur.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -685,7 +719,7 @@ func TestWritePersistQuotesEnvValues(t *testing.T) {
 	if err := a.Store().Settings().Set("access.global.codex", `{"A":"x y","B":"it's"}`); err != nil {
 		t.Fatal(err)
 	}
-	xv, _ := acc.Create("codex", "x", "lm1", nil)
+	xv, _ := acc.Create("codex", "x", "lm1", "")
 	b, err := os.ReadFile(filepath.Join(acc.Home, ".agentswitch", "access", "codex", xv.ID+".env"))
 	if err != nil {
 		t.Fatal(err)
