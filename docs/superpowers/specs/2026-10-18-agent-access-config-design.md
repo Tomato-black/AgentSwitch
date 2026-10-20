@@ -1,5 +1,7 @@
 # Agent 接入配置管理设计（2026-10-18）
 
+> **状态（2026-10-19）：存储形态（overrides）、合成输入与 Claude 持久文件格式已被 `2026-10-19-access-full-settings-ccswitch-design.md` 取代；其余机制（应用投影、备份、令牌轮换联动、启动命令/打开终端、全局 env 层）仍有效。**
+
 ## 背景与意图
 
 当前接入页（`internal/desktop/access.go`）只是展示两段可复制的环境变量片段（Claude Code / Codex CLI），用户需要自己复制并手动编辑 Agent 的配置文件，体验差、易错、无状态。

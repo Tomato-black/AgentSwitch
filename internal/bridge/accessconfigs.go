@@ -233,39 +233,6 @@ func (s AccessConfigs) prepareDoc(appType, modelName, settingsJSON string) (stri
 	return string(b), nil
 }
 
-// accessDocEnvMap 从整份 settings 文档提取 env 字符串 map（写入侧保证 env 值为
-// 字符串；解析失败向上返回错误）。文档缺 env 视为空 map。
-func accessDocEnvMap(settings string) (map[string]string, error) {
-	var doc struct {
-		Env map[string]string `json:"env"`
-	}
-	if strings.TrimSpace(settings) == "" {
-		return map[string]string{}, nil
-	}
-	if err := json.Unmarshal([]byte(settings), &doc); err != nil {
-		return nil, err
-	}
-	if doc.Env == nil {
-		return map[string]string{}, nil
-	}
-	return doc.Env, nil
-}
-
-// accessEnvDoc 把 env map 包装为最小文档 JSON。Create/Update 文档化签名
-// （Task 7）后仅测试用（构造最小文档入参）。
-func accessEnvDoc(env map[string]string) string {
-	if env == nil {
-		env = map[string]string{}
-	}
-	b, err := json.Marshal(struct {
-		Env map[string]string `json:"env"`
-	}{Env: env})
-	if err != nil {
-		return "{}" // map[string]string 不可能 marshal 失败；防御
-	}
-	return string(b)
-}
-
 // validateAccessAppType 校验接入类型白名单 {claude, codex}。
 func validateAccessAppType(appType string) error {
 	if appType != "claude" && appType != "codex" {
@@ -619,7 +586,6 @@ func friendlyAccessSaveErr(err error) error {
 type AccessConfigView struct {
 	ID, Name, AppType, LogicalModelID, LogicalModelName string
 	Settings                                            string
-	Overrides                                           map[string]string
 	IsCurrent                                           bool
 }
 
@@ -630,8 +596,6 @@ func (s AccessConfigs) view(c storage.AccessConfig) AccessConfigView {
 	if lm, err := s.A.Store().LogicalModels().Get(c.LogicalModelID); err == nil {
 		v.LogicalModelName = lm.Name
 	}
-	// 文档提取失败留空 map：view 只读展示，不因单份脏数据整体失败。
-	v.Overrides, _ = accessDocEnvMap(c.Settings)
 	return v
 }
 

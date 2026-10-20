@@ -338,10 +338,13 @@ func TestAccessConfigsCRUDAndView(t *testing.T) {
 	if v.LogicalModelName != "my-code" {
 		t.Fatal(v.LogicalModelName)
 	}
-	// Create 落库的是整份 settings 文档：view 须取回覆盖项、composeFor 须能
+	// Create 落库的是整份 settings 文档：view 须取回文档、composeFor 须能
 	// 从文档提取 env（Task 1 机械适配的行为等价性）。
-	if v.Overrides["A"] != "1" {
-		t.Fatalf("view 覆盖项未回读: %#v", v.Overrides)
+	var viewDoc struct {
+		Env map[string]string `json:"env"`
+	}
+	if err := json.Unmarshal([]byte(v.Settings), &viewDoc); err != nil || viewDoc.Env["A"] != "1" {
+		t.Fatalf("view 文档未回读: %q %v", v.Settings, err)
 	}
 	stored, err := a.Store().AccessConfigs().Get(v.ID)
 	if err != nil {
@@ -843,4 +846,18 @@ func TestPreviewDocErrors(t *testing.T) {
 	if _, err := acc.PreviewDoc("claude", "lm1", `{bad`); err == nil || !strings.Contains(err.Error(), "配置必须是 JSON 对象") {
 		t.Fatalf("非法 JSON 应报解析错误: %v", err)
 	}
+}
+
+// accessEnvDoc 把 env map 包装为最小文档 JSON（构造 Create/Update 最小文档入参）。
+func accessEnvDoc(env map[string]string) string {
+	if env == nil {
+		env = map[string]string{}
+	}
+	b, err := json.Marshal(struct {
+		Env map[string]string `json:"env"`
+	}{Env: env})
+	if err != nil {
+		return "{}" // map[string]string 不可能 marshal 失败；防御
+	}
+	return string(b)
 }
