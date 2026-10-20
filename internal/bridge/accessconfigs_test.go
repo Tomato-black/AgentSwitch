@@ -730,10 +730,13 @@ func TestPreviewDocMasksTokenAndComposes(t *testing.T) {
 func TestPreviewDocErrors(t *testing.T) {
 	a := tempApp(t)
 	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := acc.PreviewDoc("claude", "nope", `{}`); err == nil {
 		t.Fatal("逻辑模型不存在应报错")
 	}
-	if _, err := acc.PreviewDoc("claude", "lm1", `{bad`); err == nil {
-		t.Fatal("非法 JSON 应报错")
+	if _, err := acc.PreviewDoc("claude", "lm1", `{bad`); err == nil || !strings.Contains(err.Error(), "配置必须是 JSON 对象") {
+		t.Fatalf("非法 JSON 应报解析错误: %v", err)
 	}
 }
