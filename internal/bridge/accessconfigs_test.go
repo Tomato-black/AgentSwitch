@@ -843,8 +843,126 @@ func TestPreviewDocErrors(t *testing.T) {
 	if _, err := acc.PreviewDoc("claude", "nope", `{}`); err == nil {
 		t.Fatal("逻辑模型不存在应报错")
 	}
-	if _, err := acc.PreviewDoc("claude", "lm1", `{bad`); err == nil || !strings.Contains(err.Error(), "配置必须是 JSON 对象") {
+	if _, err := acc.PreviewDoc("claude", "lm1", `{bad`); err == nil || !strings.Contains(err.Error(), "配置 JSON 格式错误") {
 		t.Fatalf("非法 JSON 应报解析错误: %v", err)
+	}
+}
+
+// TestRebaseAccessDoc 覆盖 Important#1 的合成基线重定位纯函数：值等于旧基线
+// 的继承键删除（切换模型/更新全局后不再冻结）、不同值与其他键原样保留；
+// 解析失败返回 error（调用方保留原文）。
+func TestRebaseAccessDoc(t *testing.T) {
+	in := `{"env":{"A":"1","B":"2","C":"keep"},"language":"zh-CN"}`
+	got, err := RebaseAccessDoc("claude", in, map[string]string{"A": "1", "B": "different", "D": "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(got), &doc); err != nil {
+		t.Fatal(err)
+	}
+	env, ok := doc["env"].(map[string]any)
+	if !ok {
+		t.Fatalf("env 非对象: %s", got)
+	}
+	if _, still := env["A"]; still {
+		t.Fatalf("等于旧基线的键应删除: %s", got)
+	}
+	if env["B"] != "2" || env["C"] != "keep" {
+		t.Fatalf("不同值/其他键应保留: %s", got)
+	}
+	if doc["language"] != "zh-CN" {
+		t.Fatalf("顶层键应保留: %s", got)
+	}
+	if _, err := RebaseAccessDoc("claude", `{bad`, map[string]string{"A": "1"}); err == nil {
+		t.Fatal("非法 JSON 应返回 error")
+	}
+}
+
+// TestPreviewRebaseSaveRoundTrip 覆盖 Important#1/#2 端到端回归：旧预览里的
+// 派生值（SMALL_FAST=旧模型、全局 HTTPS_PROXY=旧值）在切换模型/更新全局后
+// 经重定位不再被保存归一化冻结；真正的定制键 CUSTOM 保留。
+func TestPreviewRebaseSaveRoundTrip(t *testing.T) {
+	a := tempApp(t)
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	for _, lm := range []storage.LogicalModel{
+		{ID: "lm1", Name: "model-a", Enabled: true},
+		{ID: "lm2", Name: "model-b", Enabled: true},
+	} {
+		if _, err := a.Store().LogicalModels().Save(lm); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := acc.SaveGlobalConfig("claude", map[string]string{"HTTPS_PROXY": "p1"}); err != nil {
+		t.Fatal(err)
+	}
+	previewA, err := acc.PreviewDoc("claude", "lm1", `{"env":{"CUSTOM":"x"}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 主模型 A → B：按旧模型的 SMALL_FAST 派生值重定位。
+	rebased, err := RebaseAccessDoc("claude", previewA,
+		map[string]string{"ANTHROPIC_SMALL_FAST_MODEL": "model-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 全局 HTTPS_PROXY p1 → p2：按保存前的全局值重定位。
+	if err := acc.SaveGlobalConfig("claude", map[string]string{"HTTPS_PROXY": "p2"}); err != nil {
+		t.Fatal(err)
+	}
+	rebased, err = RebaseAccessDoc("claude", rebased, map[string]string{"HTTPS_PROXY": "p1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	previewB, err := acc.PreviewDoc("claude", "lm2", rebased)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := acc.Create("claude", "cfg", "lm2", previewB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := a.Store().AccessConfigs().Get(v.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Env map[string]string `json:"env"`
+	}
+	if err := json.Unmarshal([]byte(stored.Settings), &doc); err != nil {
+		t.Fatalf("存储文档非法: %v: %s", err, stored.Settings)
+	}
+	if _, frozen := doc.Env["ANTHROPIC_SMALL_FAST_MODEL"]; frozen {
+		t.Fatalf("旧模型派生值被冻结: %s", stored.Settings)
+	}
+	if _, frozen := doc.Env["HTTPS_PROXY"]; frozen {
+		t.Fatalf("旧全局值被冻结: %s", stored.Settings)
+	}
+	if doc.Env["CUSTOM"] != "x" {
+		t.Fatalf("定制键丢失: %s", stored.Settings)
+	}
+}
+
+// TestParseAccessDocPreservesLargeIntegers 覆盖 Minor#3：UseNumber 解码后
+// 大整数往返（parse + marshal）保持原值，不丢精度。
+func TestParseAccessDocPreservesLargeIntegers(t *testing.T) {
+	doc, _, err := parseAccessDoc("claude", `{"threads":12345678901234567890}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "12345678901234567890") {
+		t.Fatalf("大整数精度丢失: %s", b)
+	}
+	// 尾随垃圾/多余 JSON 值拒绝。
+	for _, raw := range []string{`{} {}`, `{"a":1}x`} {
+		if _, _, err := parseAccessDoc("claude", raw); err == nil ||
+			!strings.Contains(err.Error(), "配置 JSON 格式错误") {
+			t.Fatalf("raw=%q 应报格式错误: %v", raw, err)
+		}
 	}
 }
 

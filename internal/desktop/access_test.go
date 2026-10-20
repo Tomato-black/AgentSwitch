@@ -2,11 +2,13 @@ package desktop
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
 
 	"AgentSwitch/internal/bridge"
+	"AgentSwitch/internal/storage"
 )
 
 // TestAccessTabTitles 覆盖接入页两个 Agent tab 标题快照。
@@ -95,6 +97,15 @@ func TestAccessDocSetEnv(t *testing.T) {
 	if _, err := accessDocSetEnv(`{bad`, "A", "1"); err == nil {
 		t.Fatal("非法 JSON 应报错")
 	}
+	// env 非对象（非 null）必须报错，不得静默清空（Minor#4）
+	if _, err := accessDocSetEnv(`{"env":5}`, "A", "1"); err == nil ||
+		!strings.Contains(err.Error(), "env 必须是 JSON 对象") {
+		t.Fatalf("env 非对象应报错: %v", err)
+	}
+	// env:null 视为缺省
+	if _, err := accessDocSetEnv(`{"env":null}`, "A", "1"); err != nil {
+		t.Fatalf("env:null 应视为缺省: %v", err)
+	}
 }
 
 func TestAccessDocEnvStrings(t *testing.T) {
@@ -107,6 +118,63 @@ func TestAccessDocEnvStrings(t *testing.T) {
 	}
 	if _, err := accessDocEnvStrings(`{bad`); err == nil {
 		t.Fatal("非法 JSON 应报错")
+	}
+	// env 非对象（非 null）必须报错，不得静默返回空表（Minor#4）
+	if _, err := accessDocEnvStrings(`{"env":5}`); err == nil ||
+		!strings.Contains(err.Error(), "env 必须是 JSON 对象") {
+		t.Fatalf("env 非对象应报错: %v", err)
+	}
+	if env, err := accessDocEnvStrings(`{"env":null}`); err != nil || len(env) != 0 {
+		t.Fatalf("env:null 应视为缺省: %v %v", env, err)
+	}
+}
+
+// TestAccessRepreviewForm 覆盖基线变化后的表单重预览（Important#1）：按当前
+// 表单模型重新合成、成功清空旧消息、失败内联「预览失败：」。
+func TestAccessRepreviewForm(t *testing.T) {
+	u, a := testUI(t)
+	for _, lm := range []storage.LogicalModel{
+		{ID: "lm1", Name: "model-a", Enabled: true},
+		{ID: "lm2", Name: "model-b", Enabled: true},
+	} {
+		if _, err := a.Store().LogicalModels().Save(lm); err != nil {
+			t.Fatal(err)
+		}
+	}
+	u.accessApp = "claude"
+	u.accessForm = accessForm{
+		open:       true,
+		modelLabel: "model-b",
+		docJSON:    `{"env":{"ANTHROPIC_SMALL_FAST_MODEL":"model-a","CUSTOM":"x"}}`,
+		msg:        "旧文案",
+	}
+	// 主模型切换处理器的顺序：先按旧模型派生值重定位，再重预览。
+	rebased, err := bridge.RebaseAccessDoc(u.accessApp, u.accessForm.docJSON,
+		map[string]string{"ANTHROPIC_SMALL_FAST_MODEL": "model-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.accessForm.docJSON = rebased
+	u.accessRepreviewForm(u.accessSvc())
+	if u.accessForm.msg != "" {
+		t.Fatalf("成功应清空 msg: %q", u.accessForm.msg)
+	}
+	var doc struct {
+		Env map[string]string `json:"env"`
+	}
+	if err := json.Unmarshal([]byte(u.accessForm.docJSON), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Env["ANTHROPIC_MODEL"] != "model-b" ||
+		doc.Env["ANTHROPIC_SMALL_FAST_MODEL"] != "model-b" ||
+		doc.Env["CUSTOM"] != "x" {
+		t.Fatalf("预览未按当前模型合成: %s", u.accessForm.docJSON)
+	}
+	// 未知模型名 → PreviewDoc 报错 → 内联提示
+	u.accessForm.modelLabel = "missing"
+	u.accessRepreviewForm(u.accessSvc())
+	if !strings.HasPrefix(u.accessForm.msg, "预览失败：") {
+		t.Fatalf("失败应内联报错: %q", u.accessForm.msg)
 	}
 }
 

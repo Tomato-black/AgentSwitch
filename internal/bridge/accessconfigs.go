@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -233,6 +234,27 @@ func (s AccessConfigs) prepareDoc(appType, modelName, settingsJSON string) (stri
 	return string(b), nil
 }
 
+// RebaseAccessDoc 在合成基线变化（切换主模型/更新全局配置）时，从文档 env 中
+// 删除「值等于旧基线」的继承键，避免旧派生值在新基线的保存归一化中被误判为
+// 定制项而冻结。解析失败返回 error（调用方保留原文）。
+func RebaseAccessDoc(appType, settingsJSON string, baseline map[string]string) (string, error) {
+	doc, env, err := parseAccessDoc(appType, settingsJSON)
+	if err != nil {
+		return "", err
+	}
+	for k, v := range baseline {
+		if ev, ok := env[k]; ok && ev == v {
+			delete(env, k)
+		}
+	}
+	doc["env"] = env
+	b, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
 // validateAccessAppType 校验接入类型白名单 {claude, codex}。
 func validateAccessAppType(appType string) error {
 	if appType != "claude" && appType != "codex" {
@@ -243,20 +265,30 @@ func validateAccessAppType(appType string) error {
 
 // parseAccessDoc 解析接入配置文档（spec 2026-10-19 §5.2）：根必须是 JSON 对象
 // （空串视为空对象）；env 缺省/null 视为空对象、必须是字符串值对象；Codex 仅
-// 允许 env 键（其 live 是 TOML，顶层文档编辑仅 Claude 享受）。返回解析后的
-// 文档与提取的 env 字符串 map。
+// 允许 env 键（其 live 是 TOML，顶层文档编辑仅 Claude 享受）。UseNumber 保留
+// 大整数原文（避免 float64 往返丢精度）；尾随垃圾/多余 JSON 值拒绝。返回解析
+// 后的文档与提取的 env 字符串 map。
 func parseAccessDoc(appType, raw string) (map[string]any, map[string]string, error) {
 	if err := validateAccessAppType(appType); err != nil {
 		return nil, nil, err
 	}
 	doc := map[string]any{}
 	if trimmed := strings.TrimSpace(raw); trimmed != "" {
-		if err := json.Unmarshal([]byte(trimmed), &doc); err != nil {
-			return nil, nil, fmt.Errorf("配置必须是 JSON 对象：%v", err)
+		dec := json.NewDecoder(strings.NewReader(trimmed))
+		dec.UseNumber()
+		var root any
+		if err := dec.Decode(&root); err != nil {
+			return nil, nil, fmt.Errorf("配置 JSON 格式错误，请检查语法")
 		}
-		if doc == nil { // 合法 "null" 也拒绝：根必须是对象
+		var extra any
+		if err := dec.Decode(&extra); err != io.EOF {
+			return nil, nil, fmt.Errorf("配置 JSON 格式错误，请检查语法")
+		}
+		m, ok := root.(map[string]any)
+		if !ok { // 合法 "null"/"[]" 也拒绝：根必须是对象
 			return nil, nil, fmt.Errorf("配置必须是 JSON 对象")
 		}
+		doc = m
 	}
 	env := map[string]string{}
 	if v, ok := doc["env"]; ok && v != nil {

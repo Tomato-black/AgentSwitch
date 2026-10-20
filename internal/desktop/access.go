@@ -76,8 +76,12 @@ func accessDocSetEnv(raw, key, value string) (string, error) {
 		}
 	}
 	env := map[string]any{}
-	if v, ok := doc["env"].(map[string]any); ok {
-		env = v
+	if v, ok := doc["env"]; ok && v != nil {
+		m, ok := v.(map[string]any)
+		if !ok {
+			return "", fmt.Errorf("env 必须是 JSON 对象")
+		}
+		env = m
 	}
 	if value == "" {
 		delete(env, key)
@@ -105,8 +109,12 @@ func accessDocEnvStrings(raw string) (map[string]string, error) {
 		}
 	}
 	out := map[string]string{}
-	if v, ok := doc["env"].(map[string]any); ok {
-		for k, val := range v {
+	if v, ok := doc["env"]; ok && v != nil {
+		m, ok := v.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("env 必须是 JSON 对象")
+		}
+		for k, val := range m {
 			s, ok := val.(string)
 			if !ok {
 				return nil, fmt.Errorf("env 值必须是字符串: %s", k)
@@ -309,10 +317,21 @@ func (u *uiState) accessPage(c *ui.Context) {
 						u.accessGlob = append(u.accessGlob, [2]string{})
 					}
 					if softButton(c, t, s, "act", "保存全局配置").Clicked() {
+						// 行绑定随输入即时更新，此处 u.accessGlob 已是待保存
+						// 的新值；重定位旧派生值需要保存前的持久基线。
+						oldGlobal, _ := acc.GlobalConfig(u.accessApp)
 						if err := acc.SaveGlobalConfig(u.accessApp, accessOverridesFromRows(u.accessGlob)); err != nil {
 							u.accessGlobMsg = err.Error()
 						} else {
 							u.accessGlobMsg = "已保存"
+							// 编辑器打开时全局基线变了：删除旧基线派生值并
+							// 按新基线与当前表单模型重预览（Important#1）。
+							if u.accessForm.open {
+								if rebased, err := bridge.RebaseAccessDoc(u.accessApp, u.accessForm.docJSON, oldGlobal); err == nil {
+									u.accessForm.docJSON = rebased
+								}
+								u.accessRepreviewForm(acc)
+							}
 						}
 					}
 				})
@@ -416,6 +435,22 @@ func (u *uiState) accessPreloadForm(acc bridge.AccessConfigs) {
 	f.docJSON = preview
 }
 
+// accessRepreviewForm 用当前表单模型重新合成预览（基线变化后调用）；失败内联报错。
+func (u *uiState) accessRepreviewForm(acc bridge.AccessConfigs) {
+	var models []bridge.ModelView
+	if u.svc.Logical != nil {
+		models = u.svc.Logical.List()
+	}
+	modelID := accessModelIDByLabel(models, u.accessForm.modelLabel)
+	preview, err := acc.PreviewDoc(u.accessApp, modelID, u.accessForm.docJSON)
+	if err != nil {
+		u.accessForm.msg = "预览失败：" + err.Error()
+		return
+	}
+	u.accessForm.docJSON = preview
+	u.accessForm.msg = ""
+}
+
 // accessConfigRow 渲染一行实际配置：名称 + 使用中徽标 + 逻辑模型名 +
 // 操作按钮（应用/重新应用/编辑/复制启动命令/打开终端/删除）。网关不可用
 // 时仅 应用/复制启动命令/打开终端 不渲染；编辑/删除是纯 DB 操作，始终在。
@@ -508,11 +543,16 @@ func (u *uiState) accessEditorCard(c *ui.Context, t *ui.Theme, s softPalette, ac
 					prev := u.accessForm.modelLabel
 					sel := ui.Select(c, &u.accessForm.modelLabel, labels)
 					if sel.Changed() && u.accessForm.modelLabel != prev {
-						// 主模型切换：重新取合成预览（锁定键随之刷新）
-						modelID := accessModelIDByLabel(models, u.accessForm.modelLabel)
-						if preview, err := acc.PreviewDoc(u.accessApp, modelID, u.accessForm.docJSON); err == nil {
-							u.accessForm.docJSON = preview
+						// 主模型切换：先按旧模型的 SMALL_FAST 派生值重定位
+						//（否则旧值会覆盖新基线并在保存时被冻结），再重新
+						// 取合成预览（锁定键随之刷新）。
+						if u.accessApp == "claude" {
+							if rebased, err := bridge.RebaseAccessDoc(u.accessApp, u.accessForm.docJSON,
+								map[string]string{"ANTHROPIC_SMALL_FAST_MODEL": prev}); err == nil {
+								u.accessForm.docJSON = rebased
+							}
 						}
+						u.accessRepreviewForm(acc)
 					}
 				}
 			})
