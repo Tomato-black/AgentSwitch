@@ -63,7 +63,11 @@ CREATE TABLE access_configs (
 旧表、已记 v1 但 channels 缺失或无 `credential_ref`）外，新增：
 
 - `schema_migrations` 含 version 2 或 3 → `errLegacyDB`；
-- `access_configs` 存在但缺 `settings` 列 → `errLegacyDB`。
+- `access_configs` 存在但缺 `settings` 列 → `errLegacyDB`；
+- 已记 v1 但缺 `channel_secrets` 表或缺 `access_configs` 表 → `errLegacyDB`
+  （2026-10-19 评审补充：2017-10-17 时代 v1 库两者皆无，放行后会在首次读
+  密钥/接入配置时裸 SQL 报错，正是本守卫要避免的故障形态；最终单一 v1
+  建库时两表必然同时存在）。
 
 文案沿用 `errLegacyDB`（删库重建、不就地迁移、删 `agentswitch.db` 重启）。
 
