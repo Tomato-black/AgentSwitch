@@ -162,6 +162,18 @@ func rejectLegacySchema(db *sql.DB) error {
 	if !hasCredRef {
 		return errLegacyDB
 	}
+	// 已记 v1 即应是最终 schema（spec §2.3 评审补充 2026-10-19）：缺
+	// channel_secrets/access_configs 是合并前的旧时代库——放行后首次读
+	// 密钥/接入配置会裸 SQL 报错，正是本守卫要避免的故障形态。
+	for _, required := range []string{"channel_secrets", "access_configs"} {
+		ok, err := tableExists(db, required)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errLegacyDB
+		}
+	}
 	// 删库重建（2026-10-19）：v2/v3 记录的库与旧形态 access_configs 一律拒绝。
 	for _, legacyVersion := range []int64{2, 3} {
 		ok, err := hasRecordedVersion(db, legacyVersion)

@@ -664,8 +664,9 @@ func TestAccessConfigRepoSetCurrentExclusive(t *testing.T) {
 }
 
 // TestOpenRejectsV3RecordedDB 覆盖删库重建守卫的「v2/v3 记录」分支：
-// schema_migrations 含 2/3 的库一律拒绝。channels 表须建出来（含
-// credential_ref），使既有 v1-shape 检查通过、拒绝原因唯一落在版本检查上。
+// schema_migrations 含 2/3 的库一律拒绝。channels/channel_secrets/
+// access_configs(settings) 均按最终形态建齐，使既有表形状检查全部通过、
+// 拒绝原因唯一落在版本检查上。
 func TestOpenRejectsV3RecordedDB(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agentswitch.db")
@@ -675,7 +676,9 @@ func TestOpenRejectsV3RecordedDB(t *testing.T) {
 	}
 	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY);
 		INSERT INTO schema_migrations(version) VALUES (1),(2),(3);
-		CREATE TABLE channels (id TEXT PRIMARY KEY, credential_ref TEXT NOT NULL)`); err != nil {
+		CREATE TABLE channels (id TEXT PRIMARY KEY, credential_ref TEXT NOT NULL);
+		CREATE TABLE channel_secrets (credential_ref TEXT PRIMARY KEY, ciphertext BLOB NOT NULL);
+		CREATE TABLE access_configs (id TEXT PRIMARY KEY, settings TEXT NOT NULL DEFAULT '{}')`); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
@@ -685,8 +688,8 @@ func TestOpenRejectsV3RecordedDB(t *testing.T) {
 }
 
 // TestOpenRejectsAccessConfigsMissingSettingsColumn 覆盖「v3 时代旧形态」：
-// 已记 v1、channels 形状合法，但 access_configs 仍是 overrides 列——守卫
-// 必须拒绝（settings 列检查），不得当最终 schema 放行。
+// 已记 v1、channels/channel_secrets 形状合法，但 access_configs 仍是
+// overrides 列——守卫必须拒绝（settings 列检查），不得当最终 schema 放行。
 func TestOpenRejectsAccessConfigsMissingSettingsColumn(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agentswitch.db")
@@ -698,6 +701,7 @@ func TestOpenRejectsAccessConfigsMissingSettingsColumn(t *testing.T) {
 	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY);
 		INSERT INTO schema_migrations(version) VALUES (1);
 		CREATE TABLE channels (id TEXT PRIMARY KEY, credential_ref TEXT NOT NULL);
+		CREATE TABLE channel_secrets (credential_ref TEXT PRIMARY KEY, ciphertext BLOB NOT NULL);
 		CREATE TABLE access_configs (id TEXT PRIMARY KEY, overrides TEXT NOT NULL DEFAULT '{}')`); err != nil {
 		t.Fatal(err)
 	}
@@ -735,5 +739,53 @@ func TestAccessConfigSettingsRoundTrip(t *testing.T) {
 	got2, _ := s.AccessConfigs().Get(empty.ID)
 	if got2.Settings != "{}" {
 		t.Fatalf("空 settings 应为 {}: %s", got2.Settings)
+	}
+}
+
+// TestOpenRejectsV1MissingChannelSecrets 覆盖 2026-10-17 时代 v1 库：已记 1、
+// channels 形状合法，但 channel_secrets/access_configs 皆无（spec §2.3 评审
+// 补充）——守卫必须拒绝，不得放行后在首次读密钥/接入配置时报裸 SQL 错。
+func TestOpenRejectsV1MissingChannelSecrets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pre-secrets-v1.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		CREATE TABLE channels (id TEXT PRIMARY KEY, credential_ref TEXT NOT NULL);
+		CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY);
+		INSERT INTO schema_migrations(version) VALUES (1);
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(path); !errors.Is(err, errLegacyDB) {
+		t.Fatalf("缺 channel_secrets/access_configs 的已记 v1 库应拒绝，got %v", err)
+	}
+}
+
+// TestOpenRejectsV1MissingAccessConfigs 覆盖守卫 OR 分支的另一侧：已有
+// channel_secrets 但缺 access_configs（中间态残库）同样拒绝。
+func TestOpenRejectsV1MissingAccessConfigs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "no-access-v1.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		CREATE TABLE channels (id TEXT PRIMARY KEY, credential_ref TEXT NOT NULL);
+		CREATE TABLE channel_secrets (credential_ref TEXT PRIMARY KEY, ciphertext BLOB NOT NULL);
+		CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY);
+		INSERT INTO schema_migrations(version) VALUES (1);
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(path); !errors.Is(err, errLegacyDB) {
+		t.Fatalf("缺 access_configs 的已记 v1 库应拒绝，got %v", err)
 	}
 }
