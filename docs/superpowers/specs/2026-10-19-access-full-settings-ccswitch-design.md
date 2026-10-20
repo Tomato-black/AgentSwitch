@@ -103,9 +103,12 @@ CREATE TABLE access_configs (
 
 ### 3.3 `[1M]` 网关剥离
 
-路由器是模型匹配的唯一权威，**在 router 入口**（双协议共用点）剥离模型名尾部
-`"[1M]"`（大小写不敏感，如 `[1m]`；无后缀不动作），使 `my-code[1M]` 命中逻辑模型
-`my-code`。单点生效覆盖 Anthropic + OpenAI 双入站。
+路由匹配必须看到剥离后的模型名——注意 `Candidates(publicModel)` 在
+`Router.Resolve` 之前按公开名查候选，所以剥离点是**网关双入口 Parse 之后、
+Candidates 调用之前**（gateway 包共享私有助手 `stripOneM`，Anthropic +
+OpenAI 两处各调一次）：剥离模型名尾部 `"[1M]"`（大小写不敏感，如 `[1m]`；
+无后缀不动作），使 `my-code[1M]` 命中逻辑模型 `my-code`。若只在
+`router.Resolve` 内剥离则为时已晚（候选集已按未剥离名查空）。
 
 ### 3.4 合成预览与令牌遮蔽
 
@@ -141,8 +144,10 @@ Codex 写 live 逻辑不变（受管键仍为 model / model_provider / providers
 ### 5.1 Claude 编辑器卡布局（自上而下）
 
 1. **名称**（必填）+ **逻辑模型**下拉（选项 = 启用的逻辑模型，即主模型）。
-   下方只读小字：`网关地址 http://127.0.0.1:<port> · 令牌自动生成（不在本页展示）`；
-   网关不可用时显示原因并禁用保存（沿用现有 `accessGatewayGate` 门禁）。
+   下方只读小字：`网关地址 http://127.0.0.1:<port> · 令牌自动生成（不在本页展示）`。
+   网关不可用时在卡内显示原因，但**不禁用保存**——保存是纯 DB 操作，与既有
+   「编辑/删除不受门禁影响」原则一致（2026-10-18 spec 终审#3）；「应用/复制
+   启动命令/打开终端」仍受 `accessGatewayGate` 门禁。
 2. **模型映射表**（仅 Claude tab）：5 行角色，每行 = 角色名 + 显示名称输入（可选，
    Subagent 行无此列）+ 逻辑模型下拉（可选）+ 1M 复选框。
 3. **配置 JSON**（`ui.TextArea` 多行编辑）：显示 `PreviewDoc` 合成结果（令牌已遮蔽）。
