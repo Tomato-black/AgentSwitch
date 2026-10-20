@@ -2,7 +2,6 @@ package storage
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"time"
 )
@@ -360,22 +359,17 @@ func (r *logicalModelTargetRepo) DeleteByModel(modelID string) error {
 
 type accessConfigRepo struct{ db *sql.DB }
 
-const accessConfigCols = `id,app_type,name,logical_model_id,overrides,is_current,sort_order,created_at,updated_at`
+const accessConfigCols = `id,app_type,name,logical_model_id,settings,is_current,sort_order,created_at,updated_at`
 
 func scanAccessConfig(sc func(...any) error) (AccessConfig, error) {
 	var c AccessConfig
 	var cur int
-	var overrides string
-	if err := sc(&c.ID, &c.AppType, &c.Name, &c.LogicalModelID, &overrides, &cur, &c.SortOrder, &c.CreatedAt, &c.UpdatedAt); err != nil {
+	if err := sc(&c.ID, &c.AppType, &c.Name, &c.LogicalModelID, &c.Settings, &cur, &c.SortOrder, &c.CreatedAt, &c.UpdatedAt); err != nil {
 		return AccessConfig{}, err
 	}
 	c.IsCurrent = cur == 1
-	// overrides 为 JSON 文本；空/坏文本回读为空 map（写入侧保证是合法 JSON）。
-	c.Overrides = map[string]string{}
-	if overrides != "" {
-		if err := json.Unmarshal([]byte(overrides), &c.Overrides); err != nil {
-			return AccessConfig{}, err
-		}
+	if c.Settings == "" { // 写入侧保证合法 JSON；空串回读为 "{}"
+		c.Settings = "{}"
 	}
 	return c, nil
 }
@@ -420,25 +414,16 @@ func (r *accessConfigRepo) Save(c AccessConfig) (AccessConfig, error) {
 		c.CreatedAt = nowMS()
 	}
 	c.UpdatedAt = nowMS()
-	// Overrides 为 nil 时存 "{}"。
-	overrides := c.Overrides
-	if overrides == nil {
-		overrides = map[string]string{}
-	}
-	// 归一化后回写：调用方拿到的返回值不得留 nil map（与 Get 对称，
-	// 防调用方改写 nil map panic——评审 deferred#5）。
-	c.Overrides = overrides
-	raw, err := json.Marshal(overrides)
-	if err != nil {
-		return AccessConfig{}, err
+	if c.Settings == "" {
+		c.Settings = "{}"
 	}
 	// UNIQUE(app_type, name) 冲突由驱动冒泡为非 nil error（bridge 负责友好化）。
-	_, err = r.db.Exec(`INSERT INTO access_configs(id,app_type,name,logical_model_id,overrides,is_current,sort_order,created_at,updated_at)
+	_, err = r.db.Exec(`INSERT INTO access_configs(id,app_type,name,logical_model_id,settings,is_current,sort_order,created_at,updated_at)
 		VALUES(?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET app_type=excluded.app_type, name=excluded.name,
-			logical_model_id=excluded.logical_model_id, overrides=excluded.overrides,
+			logical_model_id=excluded.logical_model_id, settings=excluded.settings,
 			is_current=excluded.is_current, sort_order=excluded.sort_order, updated_at=excluded.updated_at`,
-		c.ID, c.AppType, c.Name, c.LogicalModelID, string(raw), boolInt(c.IsCurrent), c.SortOrder, c.CreatedAt, c.UpdatedAt)
+		c.ID, c.AppType, c.Name, c.LogicalModelID, c.Settings, boolInt(c.IsCurrent), c.SortOrder, c.CreatedAt, c.UpdatedAt)
 	if err != nil {
 		return AccessConfig{}, err
 	}

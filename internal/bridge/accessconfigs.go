@@ -106,11 +106,47 @@ func (s AccessConfigs) composeFor(c storage.AccessConfig) (map[string]string, st
 			return nil, "", err
 		}
 	}
-	env, err := composeAccessEnv(c.AppType, Gateway{A: s.A}.Status(), lm.Name, global, c.Overrides)
+	overrides, err := accessDocEnvMap(c.Settings)
+	if err != nil {
+		return nil, "", err
+	}
+	env, err := composeAccessEnv(c.AppType, Gateway{A: s.A}.Status(), lm.Name, global, overrides)
 	if err != nil {
 		return nil, "", err
 	}
 	return env, lm.Name, nil
+}
+
+// accessDocEnvMap 从整份 settings 文档提取 env 字符串 map（写入侧保证 env 值为
+// 字符串；解析失败向上返回错误）。文档缺 env 视为空 map。
+func accessDocEnvMap(settings string) (map[string]string, error) {
+	var doc struct {
+		Env map[string]string `json:"env"`
+	}
+	if strings.TrimSpace(settings) == "" {
+		return map[string]string{}, nil
+	}
+	if err := json.Unmarshal([]byte(settings), &doc); err != nil {
+		return nil, err
+	}
+	if doc.Env == nil {
+		return map[string]string{}, nil
+	}
+	return doc.Env, nil
+}
+
+// accessEnvDoc 把 env map 包装为最小文档 JSON（Task 7 前的过渡存法）。
+func accessEnvDoc(env map[string]string) string {
+	if env == nil {
+		env = map[string]string{}
+	}
+	b, err := json.Marshal(struct {
+		Env map[string]string `json:"env"`
+	}{Env: env})
+	if err != nil {
+		return "{}" // map[string]string 不可能 marshal 失败；防御
+	}
+	return string(b)
 }
 
 // validateAccessAppType 校验接入类型白名单 {claude, codex}。
@@ -419,11 +455,13 @@ type AccessConfigView struct {
 
 func (s AccessConfigs) view(c storage.AccessConfig) AccessConfigView {
 	v := AccessConfigView{ID: c.ID, Name: c.Name, AppType: c.AppType,
-		LogicalModelID: c.LogicalModelID, Overrides: c.Overrides, IsCurrent: c.IsCurrent}
+		LogicalModelID: c.LogicalModelID, IsCurrent: c.IsCurrent}
 	// 逐条解析逻辑模型名；Get 失败（如已删模型）留空串即可。
 	if lm, err := s.A.Store().LogicalModels().Get(c.LogicalModelID); err == nil {
 		v.LogicalModelName = lm.Name
 	}
+	// 文档提取失败留空 map：view 只读展示，不因单份脏数据整体失败。
+	v.Overrides, _ = accessDocEnvMap(c.Settings)
 	return v
 }
 
@@ -462,7 +500,7 @@ func (s AccessConfigs) Create(appType, name, logicalModelID string, overrides ma
 	}
 	id := storage.NewID()
 	saved, err := s.A.Store().AccessConfigs().Save(storage.AccessConfig{
-		ID: id, AppType: appType, Name: name, LogicalModelID: logicalModelID, Overrides: overrides,
+		ID: id, AppType: appType, Name: name, LogicalModelID: logicalModelID, Settings: accessEnvDoc(overrides),
 	})
 	if err != nil {
 		return AccessConfigView{}, friendlyAccessSaveErr(err)
@@ -489,7 +527,8 @@ func (s AccessConfigs) Update(id, name, logicalModelID string, overrides map[str
 		}
 		return err
 	}
-	c.Name, c.LogicalModelID, c.Overrides = name, logicalModelID, overrides
+	c.Name, c.LogicalModelID = name, logicalModelID
+	c.Settings = accessEnvDoc(overrides)
 	if _, err := s.A.Store().AccessConfigs().Save(c); err != nil {
 		return friendlyAccessSaveErr(err)
 	}

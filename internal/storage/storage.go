@@ -52,15 +52,15 @@ type LogicalModelTarget struct {
 	Priority       int
 }
 
-// AccessConfig 是一份 Agent 接入配置（spec 2026-10-18 agent-access-config）：
-// 按 app 分组，指向一个逻辑模型并可覆盖 env/base URL 等；同 app 名唯一、
-// 至多一个 is_current。Overrides 为 JSON 文本（默认 "{}"）。
+// AccessConfig 是一份 Agent 接入配置（spec 2026-10-18 agent-access-config，
+// 2026-10-19 文档化升级）：按 app 分组，指向一个逻辑模型；同 app 名唯一、
+// 至多一个 is_current。Settings 为整份 JSON 文本（默认 "{}"）。
 type AccessConfig struct {
 	ID             string
 	AppType        string
 	Name           string
 	LogicalModelID string
-	Overrides      map[string]string
+	Settings       string // 整份 JSON 文档（spec 2026-10-19）；空读写归一化为 "{}"
 	IsCurrent      bool
 	SortOrder      int
 	CreatedAt      int64

@@ -19,8 +19,10 @@ func tempStore(t *testing.T) Store {
 	return s
 }
 
-func TestMigrationV3CreatesAccessConfigs(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "v3.db"))
+// TestMigrationCreatesAccessConfigs 断言单一 v1 首发迁移即含 access_configs
+// （接入配置表随建库落地，不再有独立 v3 迁移）。
+func TestMigrationCreatesAccessConfigs(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "access.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +44,7 @@ func TestMigrationIdempotent(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	t.Cleanup(func() { s2.Close() })
-	// 重开时已记录版本按序跳过，不得重放报错，schema_migrations 必须恰为 [1 2 3]。
+	// 重开时已记录版本按序跳过，不得重放报错，schema_migrations 必须恰为 [1]。
 	ds, ok := s2.(*dbStore)
 	if !ok {
 		t.Fatalf("Store = %T", s2)
@@ -60,15 +62,16 @@ func TestMigrationIdempotent(t *testing.T) {
 		}
 		got = append(got, v)
 	}
-	if rows.Err() != nil || len(got) != 3 || got[0] != 1 || got[1] != 2 || got[2] != 3 {
-		t.Fatalf("schema_migrations = %v, want [1 2 3]", got)
+	if rows.Err() != nil || len(got) != 1 || got[0] != 1 {
+		t.Fatalf("schema_migrations = %v, want [1]", got)
 	}
 }
 
-// TestMigrateV1ToV2：既有 v1 库（渠道化重构产物）经 Open 自动升级到 v2
-// （channel_secrets 加密凭据表），免删库重建。
-func TestMigrateV1ToV2(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "v1.db")
+// TestOpenAcceptsFinalSchemaRecordedV1 覆盖删库重建守卫的放行面：手建最终
+// schema（执行当前 migrationV1）且已记 v1 的库，Open 必须放行（不误拒）、
+// 渠道数据原样保留、迁移不重放。
+func TestOpenAcceptsFinalSchemaRecordedV1(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "final.db")
 	raw, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
@@ -90,7 +93,7 @@ func TestMigrateV1ToV2(t *testing.T) {
 
 	s, err := Open(path)
 	if err != nil {
-		t.Fatalf("v1->v2 open: %v", err)
+		t.Fatalf("已记 v1 的最终 schema 库应放行: %v", err)
 	}
 	defer s.Close()
 	ds, ok := s.(*dbStore)
@@ -99,19 +102,20 @@ func TestMigrateV1ToV2(t *testing.T) {
 	}
 	var n int
 	if err := ds.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='channel_secrets'`).Scan(&n); err != nil || n != 1 {
-		t.Fatalf("channel_secrets missing after migrate (n=%d err=%v)", n, err)
+		t.Fatalf("channel_secrets 缺失 (n=%d err=%v)", n, err)
 	}
-	// 旧渠道数据必须原样保留。
+	// 已有数据必须原样保留（守卫放行 + 迁移不重放）。
 	ch, err := s.Channels().Get("c1")
 	if err != nil || ch.Name != "旧渠道" || ch.CredentialRef != "channel:c1" {
-		t.Fatalf("v1 row lost: %+v err=%v", ch, err)
+		t.Fatalf("渠道数据丢失: %+v err=%v", ch, err)
 	}
 }
 
 // TestMigrationFinalSchema 断言删库重建后的最终表结构：logical_models /
-// logical_model_targets 必须存在、channel_keys 必须不存在；channels 单 Key
-// 列（credential_ref/preset_id/allow_private_upstream）就位，旧列
-// priority/type 退役。
+// logical_model_targets / access_configs 必须存在、channel_keys 必须不存在；
+// channels 单 Key 列（credential_ref/preset_id/allow_private_upstream）就位，
+// 旧列 priority/type 退役；access_configs 含 settings 列、无 overrides 列
+// （spec 2026-10-19 §7）。
 func TestMigrationFinalSchema(t *testing.T) {
 	s := tempStore(t)
 	ds, ok := s.(*dbStore)
@@ -134,7 +138,7 @@ func TestMigrationFinalSchema(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"channels", "channel_models", "logical_models", "logical_model_targets", "settings", "channel_secrets"} {
+	for _, want := range []string{"channels", "channel_models", "logical_models", "logical_model_targets", "settings", "channel_secrets", "access_configs"} {
 		if !tables[want] {
 			t.Fatalf("missing table %s (have %v)", want, tables)
 		}
@@ -164,6 +168,29 @@ func TestMigrationFinalSchema(t *testing.T) {
 		if cols[gone] {
 			t.Fatalf("channels must not have column %s", gone)
 		}
+	}
+	// access_configs：settings 整份文档列就位、旧 overrides 列退役（spec §7）。
+	acols := map[string]bool{}
+	acrows, err := ds.db.Query(`SELECT name FROM pragma_table_info('access_configs')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for acrows.Next() {
+		var name string
+		if err := acrows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		acols[name] = true
+	}
+	acrows.Close()
+	if err := acrows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !acols["settings"] {
+		t.Fatalf("access_configs missing column settings (have %v)", acols)
+	}
+	if acols["overrides"] {
+		t.Fatalf("access_configs must not have column overrides")
 	}
 }
 
@@ -553,7 +580,7 @@ func TestAccessConfigRepoSaveGetListDelete(t *testing.T) {
 	defer s.Close()
 	r := s.AccessConfigs()
 	saved, err := r.Save(AccessConfig{AppType: "claude", Name: "工作", LogicalModelID: "lm1",
-		Overrides: map[string]string{"HTTPS_PROXY": "http://127.0.0.1:7890"}})
+		Settings: `{"env":{"HTTPS_PROXY":"http://127.0.0.1:7890"}}`})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -564,8 +591,8 @@ func TestAccessConfigRepoSaveGetListDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Overrides["HTTPS_PROXY"] != "http://127.0.0.1:7890" {
-		t.Fatalf("overrides 未回读: %#v", got.Overrides)
+	if got.Settings != `{"env":{"HTTPS_PROXY":"http://127.0.0.1:7890"}}` {
+		t.Fatalf("settings 未回读: %s", got.Settings)
 	}
 	if _, err := r.Save(AccessConfig{AppType: "claude", Name: "工作", LogicalModelID: "lm2"}); err == nil {
 		t.Fatal("同 app 同名应 UNIQUE 冲突")
@@ -633,5 +660,80 @@ func TestAccessConfigRepoSetCurrentExclusive(t *testing.T) {
 	}
 	if err := r.SetCurrent("claude", "nonexistent"); err == nil {
 		t.Fatal("不存在的 id 应报错")
+	}
+}
+
+// TestOpenRejectsV3RecordedDB 覆盖删库重建守卫的「v2/v3 记录」分支：
+// schema_migrations 含 2/3 的库一律拒绝。channels 表须建出来（含
+// credential_ref），使既有 v1-shape 检查通过、拒绝原因唯一落在版本检查上。
+func TestOpenRejectsV3RecordedDB(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agentswitch.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY);
+		INSERT INTO schema_migrations(version) VALUES (1),(2),(3);
+		CREATE TABLE channels (id TEXT PRIMARY KEY, credential_ref TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	if _, err := Open(path); !errors.Is(err, errLegacyDB) {
+		t.Fatalf("v2/v3 记录库应拒绝，got %v", err)
+	}
+}
+
+// TestOpenRejectsAccessConfigsMissingSettingsColumn 覆盖「v3 时代旧形态」：
+// 已记 v1、channels 形状合法，但 access_configs 仍是 overrides 列——守卫
+// 必须拒绝（settings 列检查），不得当最终 schema 放行。
+func TestOpenRejectsAccessConfigsMissingSettingsColumn(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agentswitch.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 模拟 v3 时代库：schema_migrations 只记 1，但 access_configs 是旧 overrides 形态
+	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY);
+		INSERT INTO schema_migrations(version) VALUES (1);
+		CREATE TABLE channels (id TEXT PRIMARY KEY, credential_ref TEXT NOT NULL);
+		CREATE TABLE access_configs (id TEXT PRIMARY KEY, overrides TEXT NOT NULL DEFAULT '{}')`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	if _, err := Open(path); !errors.Is(err, errLegacyDB) {
+		t.Fatalf("无 settings 列的 access_configs 应拒绝，got %v", err)
+	}
+}
+
+// TestAccessConfigSettingsRoundTrip 覆盖 settings 整份文档列的存取：写入
+// 什么回读什么（JSON 文本直通、不重排）；空 Settings 读写两侧都归一化 "{}"。
+func TestAccessConfigSettingsRoundTrip(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "agentswitch.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	doc := `{"env":{"A":"1"},"mcpServers":{"x":{"command":"c"}}}`
+	saved, err := s.AccessConfigs().Save(AccessConfig{AppType: "claude", Name: "n", LogicalModelID: "lm", Settings: doc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.AccessConfigs().Get(saved.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Settings != doc {
+		t.Fatalf("settings 应原样回读: %s", got.Settings)
+	}
+	// 空 Settings 存取归一化为 "{}"
+	empty, err := s.AccessConfigs().Save(AccessConfig{AppType: "claude", Name: "e", LogicalModelID: "lm"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got2, _ := s.AccessConfigs().Get(empty.ID)
+	if got2.Settings != "{}" {
+		t.Fatalf("空 settings 应为 {}: %s", got2.Settings)
 	}
 }

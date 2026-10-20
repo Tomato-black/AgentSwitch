@@ -12,9 +12,9 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// migrationV1 是逻辑模型重构后的首发 schema（spec 2026-10-17-logical-models §5；
-// 用户决策：删库重建——勿改已发布语句的纪律自本 v1 起生效）。ID 均为 TEXT
-// NewID()，时间戳为 INTEGER 毫秒。
+// migrationV1 是删库重建后的单一 schema（spec 2026-10-19-access-full-settings）：
+// 合并原 v1/v2/v3，access_configs 以 settings 整份文档列取代 overrides。
+// 用户决策（2026-10-19）：删库重建——旧库启动报错提示删一次库，不就地迁移。
 const migrationV1 = `
 CREATE TABLE channels (
   id TEXT PRIMARY KEY,
@@ -35,6 +35,10 @@ CREATE TABLE channel_models (
   created_at INTEGER NOT NULL,
   UNIQUE(channel_id, model_name)
 );
+CREATE TABLE channel_secrets (
+  credential_ref TEXT PRIMARY KEY,
+  ciphertext BLOB NOT NULL
+);
 CREATE TABLE logical_models (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
@@ -52,29 +56,12 @@ CREATE TABLE logical_model_targets (
   UNIQUE(logical_model_id, channel_id, model_name)
 );
 CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-`
-
-// migrationV2（2026-10-18 用户决策）：渠道 API Key 改为 AES-256-GCM 加密
-// 落库——channel_secrets 存 credential_ref→密文；channels.credential_ref
-// 保留为 identity/有钥标志。取代 OS 钥匙串 + 明文降级文件（对 docx §8 的
-// 明示偏离）。加表不动旧表，既有 v1 库自动升级，免删库重建。
-const migrationV2 = `
-CREATE TABLE channel_secrets (
-  credential_ref TEXT PRIMARY KEY,
-  ciphertext BLOB NOT NULL
-);
-`
-
-// migrationV3（2026-10-18 Agent 接入配置管理）：access_configs 表——每 app
-// 一份接入配置（env/base URL 覆盖 + 指向逻辑模型），同 app 名唯一、至多一个
-// is_current。加表不动旧表，既有 v1/v2 库自动升级。
-const migrationV3 = `
 CREATE TABLE access_configs (
   id TEXT PRIMARY KEY,
   app_type TEXT NOT NULL,
   name TEXT NOT NULL,
   logical_model_id TEXT NOT NULL,
-  overrides TEXT NOT NULL DEFAULT '{}',
+  settings TEXT NOT NULL DEFAULT '{}',
   is_current INTEGER NOT NULL DEFAULT 0,
   sort_order INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
@@ -85,14 +72,13 @@ CREATE UNIQUE INDEX idx_access_configs_app_current ON access_configs(app_type) W
 `
 
 // migrations 是按版本序执行的迁移表；migrate 只跑 schema_migrations 里
-// 未记录的版本（幂等）。追加新版本 = 追加一行，勿改已发布语句。
+// 未记录的版本（幂等）。删库重建后只剩单一 v1——追加新版本须先过用户决策
+// （是否又一次删库重建），勿就地改已发布语句。
 var migrations = []struct {
 	version int64
 	sql     string
 }{
 	{1, migrationV1},
-	{2, migrationV2},
-	{3, migrationV3},
 }
 
 type dbStore struct {
@@ -175,6 +161,29 @@ func rejectLegacySchema(db *sql.DB) error {
 	}
 	if !hasCredRef {
 		return errLegacyDB
+	}
+	// 删库重建（2026-10-19）：v2/v3 记录的库与旧形态 access_configs 一律拒绝。
+	for _, legacyVersion := range []int64{2, 3} {
+		ok, err := hasRecordedVersion(db, legacyVersion)
+		if err != nil {
+			return err
+		}
+		if ok {
+			return errLegacyDB
+		}
+	}
+	hasAccess, err := tableExists(db, "access_configs")
+	if err != nil {
+		return err
+	}
+	if hasAccess {
+		hasSettings, err := columnExists(db, "access_configs", "settings")
+		if err != nil {
+			return err
+		}
+		if !hasSettings {
+			return errLegacyDB
+		}
 	}
 	return nil
 }

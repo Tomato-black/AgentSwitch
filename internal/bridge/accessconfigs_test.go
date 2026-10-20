@@ -231,6 +231,19 @@ func TestAccessConfigsCRUDAndView(t *testing.T) {
 	if v.LogicalModelName != "my-code" {
 		t.Fatal(v.LogicalModelName)
 	}
+	// Create 落库的是整份 settings 文档：view 须取回覆盖项、composeFor 须能
+	// 从文档提取 env（Task 1 机械适配的行为等价性）。
+	if v.Overrides["A"] != "1" {
+		t.Fatalf("view 覆盖项未回读: %#v", v.Overrides)
+	}
+	stored, err := a.Store().AccessConfigs().Get(v.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, _, err := acc.composeFor(stored)
+	if err != nil || env["A"] != "1" {
+		t.Fatalf("composeFor 应取回文档 env 覆盖项: %v %v", env, err)
+	}
 	if _, err := acc.Create("claude", "工作", "lm1", nil); err == nil {
 		t.Fatal("重名应报中文错误")
 	}
