@@ -694,3 +694,46 @@ func TestParseAccessDocValid(t *testing.T) {
 		t.Fatalf("doc=%v env=%v", doc, env)
 	}
 }
+
+func TestPreviewDocMasksTokenAndComposes(t *testing.T) {
+	a := tempApp(t)
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := acc.SaveGlobalConfig("claude", map[string]string{"HTTPS_PROXY": "http://p:1"}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := acc.PreviewDoc("claude", "lm1", `{"env":{"API_TIMEOUT_MS":"1","ANTHROPIC_AUTH_TOKEN":"x"},"language":"zh-CN"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		t.Fatal(err)
+	}
+	env := doc["env"].(map[string]any)
+	if env["ANTHROPIC_AUTH_TOKEN"] != gatewayTokenPlaceholder {
+		t.Fatalf("令牌应遮蔽: %v", env["ANTHROPIC_AUTH_TOKEN"])
+	}
+	if env["ANTHROPIC_MODEL"] != "my-code" || env["ANTHROPIC_BASE_URL"] == "" {
+		t.Fatalf("锁定键应就位: %v", env)
+	}
+	if env["HTTPS_PROXY"] != "http://p:1" || env["API_TIMEOUT_MS"] != "1" {
+		t.Fatalf("全局/文档 env 应合成: %v", env)
+	}
+	if doc["language"] != "zh-CN" {
+		t.Fatalf("顶层键应保留: %v", doc)
+	}
+}
+
+func TestPreviewDocErrors(t *testing.T) {
+	a := tempApp(t)
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	if _, err := acc.PreviewDoc("claude", "nope", `{}`); err == nil {
+		t.Fatal("逻辑模型不存在应报错")
+	}
+	if _, err := acc.PreviewDoc("claude", "lm1", `{bad`); err == nil {
+		t.Fatal("非法 JSON 应报错")
+	}
+}

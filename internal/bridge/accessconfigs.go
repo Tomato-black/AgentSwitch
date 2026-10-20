@@ -162,6 +162,52 @@ func (s AccessConfigs) composeFor(c storage.AccessConfig) (map[string]string, st
 	return env, lm.Name, nil
 }
 
+// gatewayTokenPlaceholder 是合成预览中网关令牌的遮蔽占位符（spec 2026-10-19
+// §3.4：UI 永不展示令牌真值；保存路径剔除锁定键，占位符永不落库）。
+const gatewayTokenPlaceholder = "__GATEWAY_TOKEN__"
+
+// PreviewDoc 返回「应用该文档后 Agent env 的样子」：base → global → 文档 env →
+// 锁定回写，令牌键遮蔽为占位符；文档顶层键原样保留。编辑器打开与主模型切换时
+// 调用。逻辑模型必须存在。
+func (s AccessConfigs) PreviewDoc(appType, logicalModelID, settingsJSON string) (string, error) {
+	lm, err := s.A.Store().LogicalModels().Get(logicalModelID)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return "", fmt.Errorf("逻辑模型不存在")
+		}
+		return "", err
+	}
+	doc, env, err := parseAccessDoc(appType, settingsJSON)
+	if err != nil {
+		return "", err
+	}
+	global, err := s.GlobalConfig(appType)
+	if err != nil {
+		return "", err
+	}
+	st := Gateway{A: s.A}.Status()
+	composed, err := composeAccessEnv(appType, st, lm.Name, global, env)
+	if err != nil {
+		return "", err
+	}
+	switch appType {
+	case "claude":
+		composed["ANTHROPIC_AUTH_TOKEN"] = gatewayTokenPlaceholder
+	case "codex":
+		composed["OPENAI_API_KEY"] = gatewayTokenPlaceholder
+	}
+	envAny := make(map[string]any, len(composed))
+	for k, v := range composed {
+		envAny[k] = v
+	}
+	doc["env"] = envAny
+	b, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
 // accessDocEnvMap 从整份 settings 文档提取 env 字符串 map（写入侧保证 env 值为
 // 字符串；解析失败向上返回错误）。文档缺 env 视为空 map。
 func accessDocEnvMap(settings string) (map[string]string, error) {
