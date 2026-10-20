@@ -129,37 +129,39 @@ func normalizeAccessEnv(appType string, st Status, modelName string, global, doc
 	return out, nil
 }
 
-// composeFor 解析 c 绑定的逻辑模型名与全局配置，合成应写入 Agent 的 env。
-// 返回 model 为逻辑模型对外名（codex 写 config.toml 的 model 键与启动命令用；
-// claude 的模型名已在 env 内）。绑定的逻辑模型不存在时报中文错误提示改绑；
-// 全局配置读取失败/JSON 非法直接返回错误。本方法不写任何含 env/令牌的日志。
-func (s AccessConfigs) composeFor(c storage.AccessConfig) (map[string]string, string, error) {
+// composeFor 解析 c 绑定的逻辑模型名与全局配置，合成应写入 Agent 的 env，
+// 并返回解析后的整份配置文档（doc 顶层键由 writeClaudeLive/writePersistEnv
+// 投影）。返回 model 为逻辑模型对外名（codex 写 config.toml 的 model 键与
+// 启动命令用；claude 的模型名已在 env 内）。绑定的逻辑模型不存在时报中文
+// 错误提示改绑；全局配置读取失败/文档非法直接返回错误。本方法不写任何含
+// env/令牌的日志。
+func (s AccessConfigs) composeFor(c storage.AccessConfig) (map[string]string, map[string]any, string, error) {
 	lm, err := s.A.Store().LogicalModels().Get(c.LogicalModelID)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			return nil, "", fmt.Errorf("绑定的逻辑模型不存在，请改绑")
+			return nil, nil, "", fmt.Errorf("绑定的逻辑模型不存在，请改绑")
 		}
-		return nil, "", err
+		return nil, nil, "", err
 	}
 	raw, err := s.A.Store().Settings().Get("access.global." + c.AppType)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
 	var global map[string]string
 	if raw != "" { // Settings Get 缺失返回 ("", nil) → 视为无全局配置
 		if err := json.Unmarshal([]byte(raw), &global); err != nil {
-			return nil, "", err
+			return nil, nil, "", err
 		}
 	}
-	overrides, err := accessDocEnvMap(c.Settings)
+	doc, docEnv, err := parseAccessDoc(c.AppType, c.Settings)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
-	env, err := composeAccessEnv(c.AppType, Gateway{A: s.A}.Status(), lm.Name, global, overrides)
+	env, err := composeAccessEnv(c.AppType, Gateway{A: s.A}.Status(), lm.Name, global, docEnv)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
-	return env, lm.Name, nil
+	return env, doc, lm.Name, nil
 }
 
 // gatewayTokenPlaceholder 是合成预览中网关令牌的遮蔽占位符（spec 2026-10-19
@@ -289,17 +291,19 @@ func parseAccessDoc(appType, raw string) (map[string]any, map[string]string, err
 	return doc, env, nil
 }
 
-// writeClaudeLive 把传入**合成 env 的全部键**写进 <home>/.claude/settings.json
-// 的 env 子对象（受管集=合成 env 全部键——2026-10-18 裁定：Apply 传入的是
-// 合成 env（基础键+全局配置+覆盖项），spec 验收场景④要求全局 env 如
-// HTTPS_PROXY 可达 live 文件；原简报「只四个受管键」表述过窄，以设计为准）：
-// 目录不存在则 MkdirAll 0o755；文件不存在建空对象，存在则整体解析为
+// writeClaudeLive 把配置文档顶层键与**合成 env 的全部键**写进
+// <home>/.claude/settings.json（受管集=合成 env 全部键——2026-10-18 裁定：
+// Apply 传入的是合成 env（基础键+全局配置+覆盖项），spec 验收场景④要求全局
+// env 如 HTTPS_PROXY 可达 live 文件；原简报「只四个受管键」表述过窄，以设计
+// 为准）：目录不存在则 MkdirAll 0o755；文件不存在建空对象，存在则整体解析为
 // map[string]any，**解析失败直接返回错误且绝不改动原文件**（先读后写，
-// 不猜测修复）；确保 env 子对象存在，同键替换写入合成 env 全部键；文件里
-// 不在本次合成 env 中的键（用户其他 env）与非 env 顶层键原样保留；
-// 0600 原子写回（同目录 CreateTemp → chmod → write → close → rename）。
-// 本方法不写任何日志——写入值含网关令牌（spec §9 脱敏）。
-func (s AccessConfigs) writeClaudeLive(env map[string]string) error {
+// 不猜测修复）；文档顶层键逐键写入（env 键除外——env 走合成结果；同键替换，
+// live 中不在文档的键保留，spec 2026-10-19 §4.1 只增改不删除）；确保 env
+// 子对象存在，同键替换写入合成 env 全部键；文件里不在本次合成 env 中的键
+//（用户其他 env）与非受管顶层键原样保留；0600 原子写回（同目录 CreateTemp
+// → chmod → write → close → rename）。本方法不写任何日志——写入值含网关
+// 令牌（spec §9 脱敏）。
+func (s AccessConfigs) writeClaudeLive(doc map[string]any, env map[string]string) error {
 	home := s.Home
 	if home == "" {
 		var err error
@@ -327,6 +331,14 @@ func (s AccessConfigs) writeClaudeLive(env map[string]string) error {
 		}
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
+	}
+	// 文档顶层键逐键写入（同键替换；live 中不在文档的键保留——只增改不删除，
+	// spec 2026-10-19 §4.1）。
+	for k, v := range doc {
+		if k == "env" {
+			continue
+		}
+		root[k] = v
 	}
 	// 确保 env 子对象存在；已有但非对象则报错（不猜测修复）。
 	envObj := map[string]any{}
@@ -685,7 +697,7 @@ func (s AccessConfigs) Remove(id string) error {
 
 // Apply 把配置合成后投影到 Agent live 文件并置为 current：Get(id) →
 // composeFor → backupLive(appType) → 按 appType 写 live（claude→
-// writeClaudeLive(env)；codex→writeCodexLive(env, model)）→ SetCurrent
+// writeClaudeLive(doc, env)；codex→writeCodexLive(env, model)）→ SetCurrent
 // (appType, id)。任一步失败即停——含备份失败（不写 live、不置 current），
 // 失败路径不产生半状态；composeFor 的逻辑模型缺失错误直接透传。
 // 审计行绝不记录 env/overrides 值或 token（spec §9 脱敏）。
@@ -694,7 +706,7 @@ func (s AccessConfigs) Apply(id string) error {
 	if err != nil {
 		return err
 	}
-	env, model, err := s.composeFor(c)
+	env, doc, model, err := s.composeFor(c)
 	if err != nil {
 		return err
 	}
@@ -703,7 +715,7 @@ func (s AccessConfigs) Apply(id string) error {
 	}
 	switch c.AppType {
 	case "claude":
-		err = s.writeClaudeLive(env)
+		err = s.writeClaudeLive(doc, env)
 	case "codex":
 		err = s.writeCodexLive(env, model)
 	}
@@ -762,12 +774,14 @@ func (s AccessConfigs) SaveGlobalConfig(appType string, env map[string]string) e
 }
 
 // writePersistEnv 把合成 env 落成该配置的持久文件（spec「持久文件」）：
-// claude → <home>/.agentswitch/access/claude/<id>.json（{"env":{...}}，
-// 供 `claude --settings` 引用）；codex → <home>/.agentswitch/access/codex/
-// <id>.env（KEY=VALUE 行，键按字典序，供 shell source 后启动 codex）。
-// 按 appType 只生成对应一种，另一种路径返回空串。.env 任一值含换行符即
-// 报错中止（行格式无法安全表达）。文件 0600（含网关令牌，不写日志）。
-func (s AccessConfigs) writePersistEnv(c storage.AccessConfig, env map[string]string) (string, string, error) {
+// claude → <home>/.agentswitch/access/claude/<id>.json（**整份合成文档**：
+// doc 顶层键 + env 替换为合成结果，供 `claude --settings` 引用）；codex →
+// <home>/.agentswitch/access/codex/<id>.env（KEY=VALUE 行，键按字典序，供
+// shell source 后启动 codex；doc 参数忽略——codex 持久文件是行格式无文档
+// 语义，且 codex 配置本身仅允许 env 键）。按 appType 只生成对应一种，另一
+// 种路径返回空串。.env 任一值含换行符即报错中止（行格式无法安全表达）。
+// 文件 0600（含网关令牌，不写日志）。
+func (s AccessConfigs) writePersistEnv(c storage.AccessConfig, env map[string]string, doc map[string]any) (string, string, error) {
 	home := s.Home
 	if home == "" {
 		var err error
@@ -777,10 +791,16 @@ func (s AccessConfigs) writePersistEnv(c storage.AccessConfig, env map[string]st
 	}
 	switch c.AppType {
 	case "claude":
-		payload := struct {
-			Env map[string]string `json:"env"`
-		}{Env: env}
-		b, err := json.MarshalIndent(payload, "", "  ")
+		docFull := make(map[string]any, len(doc)+1)
+		for k, v := range doc {
+			docFull[k] = v
+		}
+		envAny := make(map[string]any, len(env))
+		for k, v := range env {
+			envAny[k] = v
+		}
+		docFull["env"] = envAny
+		b, err := json.MarshalIndent(docFull, "", "  ")
 		if err != nil {
 			return "", "", err
 		}
@@ -855,11 +875,11 @@ func (s AccessConfigs) LaunchCommand(id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	env, model, err := s.composeFor(c)
+	env, doc, model, err := s.composeFor(c)
 	if err != nil {
 		return "", err
 	}
-	claudePath, codexPath, err := s.writePersistEnv(c, env)
+	claudePath, codexPath, err := s.writePersistEnv(c, env, doc)
 	if err != nil {
 		return "", err
 	}
@@ -892,7 +912,7 @@ func (s AccessConfigs) RegenerateDerived() {
 		}
 		cur, _ := s.A.Store().AccessConfigs().Current(appType)
 		for _, c := range cfgs {
-			env, model, err := s.composeFor(c)
+			env, doc, model, err := s.composeFor(c)
 			if err != nil {
 				s.A.Log().Error("access derived refresh failed", "app", appType, "stage", "compose", "err", err)
 				continue
@@ -900,14 +920,14 @@ func (s AccessConfigs) RegenerateDerived() {
 			// 持久文件失败不跳过 current 的 live 重写——令牌轮换后 live
 			// 仍是 Agent 实际使用的文件，陈旧令牌比持久文件缺失更糟
 			// （评审 Minor#8）。
-			if _, _, perr := s.writePersistEnv(c, env); perr != nil {
+			if _, _, perr := s.writePersistEnv(c, env, doc); perr != nil {
 				s.A.Log().Error("access derived refresh failed", "app", appType, "stage", "persist", "err", perr)
 			}
 			if cur.ID != c.ID {
 				continue
 			}
 			if appType == "claude" {
-				err = s.writeClaudeLive(env)
+				err = s.writeClaudeLive(doc, env)
 			} else {
 				err = s.writeCodexLive(env, model)
 			}

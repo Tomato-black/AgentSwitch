@@ -18,7 +18,7 @@ func TestClaudeLiveProjectionPreservesAndMerges(t *testing.T) {
 	dir := filepath.Join(acc.Home, ".claude")
 	os.MkdirAll(dir, 0o755)
 	os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"permissions":{"allow":["Bash"]},"env":{"FOO":"bar","ANTHROPIC_MODEL":"old"}}`), 0o600)
-	if err := acc.writeClaudeLive(map[string]string{"ANTHROPIC_BASE_URL": "http://127.0.0.1:17890", "ANTHROPIC_MODEL": "new", "HTTPS_PROXY": "http://p:1"}); err != nil {
+	if err := acc.writeClaudeLive(nil, map[string]string{"ANTHROPIC_BASE_URL": "http://127.0.0.1:17890", "ANTHROPIC_MODEL": "new", "HTTPS_PROXY": "http://p:1"}); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(filepath.Join(dir, "settings.json"))
@@ -41,12 +41,42 @@ func TestClaudeLiveProjectionInvalidJSONAborts(t *testing.T) {
 	dir := filepath.Join(acc.Home, ".claude")
 	os.MkdirAll(dir, 0o755)
 	os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{broken`), 0o600)
-	if err := acc.writeClaudeLive(map[string]string{"ANTHROPIC_MODEL": "x"}); err == nil {
+	if err := acc.writeClaudeLive(nil, map[string]string{"ANTHROPIC_MODEL": "x"}); err == nil {
 		t.Fatal("非法 JSON 应中止")
 	}
 	b, _ := os.ReadFile(filepath.Join(dir, "settings.json"))
 	if string(b) != "{broken" {
 		t.Fatal("失败后不得改动原文件")
+	}
+}
+
+func TestClaudeLiveWritesDocTopLevelKeys(t *testing.T) {
+	acc := AccessConfigs{A: tempApp(t), Home: t.TempDir()}
+	dir := filepath.Join(acc.Home, ".claude")
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, "settings.json"),
+		[]byte(`{"permissions":{"allow":["Bash"]},"language":"en-US","env":{"FOO":"bar"}}`), 0o600)
+	doc := map[string]any{
+		"language": "zh-CN",
+		"mcpServers": map[string]any{"x": map[string]any{"command": "c"}},
+	}
+	if err := acc.writeClaudeLive(doc, map[string]string{"ANTHROPIC_MODEL": "new"}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "settings.json"))
+	var got map[string]any
+	json.Unmarshal(b, &got)
+	if got["language"] != "zh-CN" {
+		t.Fatalf("文档顶层键应写入: %s", b)
+	}
+	if got["mcpServers"] == nil {
+		t.Fatalf("文档新增顶层键应写入: %s", b)
+	}
+	if got["permissions"] == nil {
+		t.Fatalf("非文档键应保留: %s", b)
+	}
+	if got["env"].(map[string]any)["FOO"] != "bar" {
+		t.Fatalf("env 非受管键应保留: %s", b)
 	}
 }
 
@@ -280,7 +310,7 @@ func TestComposeForCodexResolvesModelAndErrorsOnMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = a.Store().Settings().Set("access.global.codex", `{"HTTPS_PROXY":"http://p:1"}`)
-	env, model, err := acc.composeFor(storage.AccessConfig{AppType: "codex", LogicalModelID: "lm1"})
+	env, _, model, err := acc.composeFor(storage.AccessConfig{AppType: "codex", LogicalModelID: "lm1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +320,7 @@ func TestComposeForCodexResolvesModelAndErrorsOnMissing(t *testing.T) {
 	if env["OPENAI_BASE_URL"] == "" || env["OPENAI_API_KEY"] == "" || env["HTTPS_PROXY"] != "http://p:1" {
 		t.Fatal(env)
 	}
-	if _, _, err := acc.composeFor(storage.AccessConfig{AppType: "codex", LogicalModelID: "missing"}); err == nil {
+	if _, _, _, err := acc.composeFor(storage.AccessConfig{AppType: "codex", LogicalModelID: "missing"}); err == nil {
 		t.Fatal("缺失逻辑模型应报错")
 	}
 }
@@ -317,7 +347,7 @@ func TestAccessConfigsCRUDAndView(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env, _, err := acc.composeFor(stored)
+	env, _, _, err := acc.composeFor(stored)
 	if err != nil || env["A"] != "1" {
 		t.Fatalf("composeFor 应取回文档 env 覆盖项: %v %v", env, err)
 	}
@@ -428,6 +458,46 @@ func TestApplyMissingLogicalModelLeavesNoHalfState(t *testing.T) {
 	}
 	if _, err := a.Store().AccessConfigs().Current("claude"); err == nil {
 		t.Fatal("失败不得置 current")
+	}
+}
+
+// TestPersistFileIsFullDocForClaude 钉死 claude 持久文件 = 整份合成文档
+// （doc 顶层键 + env 合成结果），不再只是 {"env":{...}}。Create 的文档化签名
+// 是 Task 7 的事，这里直接入库存整份文档，只测 writePersistEnv 语义。
+func TestPersistFileIsFullDocForClaude(t *testing.T) {
+	a := tempApp(t)
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Store().AccessConfigs().Save(storage.AccessConfig{
+		ID: "cfg1", AppType: "claude", Name: "工作", LogicalModelID: "lm1",
+		Settings: `{"language":"zh-CN","env":{}}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	list := acc.List("claude")
+	cmd, err := acc.LaunchCommand(list[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(cmd, "--settings") {
+		t.Fatalf("启动命令应引用持久文件: %s", cmd)
+	}
+	b, err := os.ReadFile(filepath.Join(acc.Home, ".agentswitch", "access", "claude", list[0].ID+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc["language"] != "zh-CN" {
+		t.Fatalf("持久文件应为整份文档: %s", b)
+	}
+	env, ok := doc["env"].(map[string]any)
+	if !ok || env["ANTHROPIC_MODEL"] != "my-code" || env["ANTHROPIC_BASE_URL"] == nil {
+		t.Fatalf("持久文件 env 应合成: %s", b)
 	}
 }
 
