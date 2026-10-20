@@ -573,3 +573,47 @@ func TestBackupFilesAre0600(t *testing.T) {
 		t.Fatalf("备份权限 = %v，应 0600", fi.Mode().Perm())
 	}
 }
+
+func TestParseAccessDocValidation(t *testing.T) {
+	// 根非对象
+	if _, _, err := parseAccessDoc("claude", "[]"); err == nil || !strings.Contains(err.Error(), "配置必须是 JSON 对象") {
+		t.Fatalf("根非对象应报错: %v", err)
+	}
+	if _, _, err := parseAccessDoc("claude", "null"); err == nil || !strings.Contains(err.Error(), "配置必须是 JSON 对象") {
+		t.Fatalf("null 应报错: %v", err)
+	}
+	// env 非对象
+	if _, _, err := parseAccessDoc("claude", `{"env":[]}`); err == nil || !strings.Contains(err.Error(), "env 必须是 JSON 对象") {
+		t.Fatalf("env 非对象应报错: %v", err)
+	}
+	// env 值非字符串
+	if _, _, err := parseAccessDoc("claude", `{"env":{"A":1}}`); err == nil || !strings.Contains(err.Error(), "env 值必须是字符串") {
+		t.Fatalf("env 值非字符串应报错: %v", err)
+	}
+	// codex 仅允许 env 键
+	if _, _, err := parseAccessDoc("codex", `{"env":{},"mcpServers":{}}`); err == nil || !strings.Contains(err.Error(), "Codex 配置仅支持 env 键") {
+		t.Fatalf("codex 顶层键应报错: %v", err)
+	}
+	// 非法 appType
+	if _, _, err := parseAccessDoc("gemini", `{}`); err == nil {
+		t.Fatal("非法 appType 应报错")
+	}
+}
+
+func TestParseAccessDocValid(t *testing.T) {
+	// 空串/空文档 → 空 env
+	for _, raw := range []string{"", "  ", "{}", `{"env":null}`} {
+		doc, env, err := parseAccessDoc("claude", raw)
+		if err != nil || len(env) != 0 || doc == nil {
+			t.Fatalf("raw=%q 应得空 env: doc=%v env=%v err=%v", raw, doc, env, err)
+		}
+	}
+	// claude 允许任意顶层键
+	doc, env, err := parseAccessDoc("claude", `{"env":{"A":"1"},"mcpServers":{"x":{"command":"c"}},"language":"zh-CN"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env["A"] != "1" || doc["language"] != "zh-CN" {
+		t.Fatalf("doc=%v env=%v", doc, env)
+	}
+}

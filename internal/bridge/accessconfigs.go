@@ -157,6 +157,47 @@ func validateAccessAppType(appType string) error {
 	return nil
 }
 
+// parseAccessDoc 解析接入配置文档（spec 2026-10-19 §5.2）：根必须是 JSON 对象
+// （空串视为空对象）；env 缺省/null 视为空对象、必须是字符串值对象；Codex 仅
+// 允许 env 键（其 live 是 TOML，顶层文档编辑仅 Claude 享受）。返回解析后的
+// 文档与提取的 env 字符串 map。
+func parseAccessDoc(appType, raw string) (map[string]any, map[string]string, error) {
+	if err := validateAccessAppType(appType); err != nil {
+		return nil, nil, err
+	}
+	doc := map[string]any{}
+	if trimmed := strings.TrimSpace(raw); trimmed != "" {
+		if err := json.Unmarshal([]byte(trimmed), &doc); err != nil {
+			return nil, nil, fmt.Errorf("配置必须是 JSON 对象：%v", err)
+		}
+		if doc == nil { // 合法 "null" 也拒绝：根必须是对象
+			return nil, nil, fmt.Errorf("配置必须是 JSON 对象")
+		}
+	}
+	env := map[string]string{}
+	if v, ok := doc["env"]; ok && v != nil {
+		m, ok := v.(map[string]any)
+		if !ok {
+			return nil, nil, fmt.Errorf("env 必须是 JSON 对象")
+		}
+		for k, val := range m {
+			s, ok := val.(string)
+			if !ok {
+				return nil, nil, fmt.Errorf("env 值必须是字符串: %s", k)
+			}
+			env[k] = s
+		}
+	}
+	if appType == "codex" {
+		for k := range doc {
+			if k != "env" {
+				return nil, nil, fmt.Errorf("Codex 配置仅支持 env 键")
+			}
+		}
+	}
+	return doc, env, nil
+}
+
 // writeClaudeLive 把传入**合成 env 的全部键**写进 <home>/.claude/settings.json
 // 的 env 子对象（受管集=合成 env 全部键——2026-10-18 裁定：Apply 传入的是
 // 合成 env（基础键+全局配置+覆盖项），spec 验收场景④要求全局 env 如
