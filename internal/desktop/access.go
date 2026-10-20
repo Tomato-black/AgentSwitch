@@ -29,6 +29,10 @@ type accessForm struct {
 	modelLabel string // 选中的逻辑模型名（保存时映射回 ID）
 	docJSON    string
 	msg        string
+	// 角色映射行状态（accessClaudeRoles 同序；由 docJSON 双向同步）
+	roleModels []string
+	roleNames  []string
+	roleOneM   []bool
 }
 
 // accessTabTitles 返回两个 Agent tab 的标题（字符串快照锚点）。
@@ -119,6 +123,81 @@ func accessParseOneM(v string) (string, bool) {
 		return v[:len(v)-4], true
 	}
 	return v, false
+}
+
+// accessRole 是 Claude 模型映射一行（spec 2026-10-19 §3.2）：角色 → 文档 env
+// 键。nameKey 为空的角色无「显示名称」列（Subagent 不进 /model 菜单）。
+type accessRole struct{ label, envKey, nameKey string }
+
+// accessClaudeRoles 是 5 角色固定顺序（与 cc-switch 对齐）。
+var accessClaudeRoles = []accessRole{
+	{"Sonnet", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME"},
+	{"Opus", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"},
+	{"Fable", "ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"},
+	{"Haiku", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME"},
+	{"Subagent", "CLAUDE_CODE_SUBAGENT_MODEL", ""},
+}
+
+// accessRoleFollow 是角色下拉「未设置」的显示值（回落主模型）。
+const accessRoleFollow = "（跟随主模型）"
+
+// accessRoleIndexByEnvKey 返回角色下标（测试与补丁用）。
+func accessRoleIndexByEnvKey(envKey string) int {
+	for i, r := range accessClaudeRoles {
+		if r.envKey == envKey {
+			return i
+		}
+	}
+	return -1
+}
+
+// accessSyncRolesFromDoc JSON→表单回填：解析成功才覆盖角色行（失败保留旧状态，
+// cc-switch 同款「编辑到一半不闪烁」）。
+func (u *uiState) accessSyncRolesFromDoc() {
+	env, err := accessDocEnvStrings(u.accessForm.docJSON)
+	if err != nil {
+		return
+	}
+	f := &u.accessForm
+	for len(f.roleModels) < len(accessClaudeRoles) {
+		f.roleModels = append(f.roleModels, accessRoleFollow)
+		f.roleNames = append(f.roleNames, "")
+		f.roleOneM = append(f.roleOneM, false)
+	}
+	for i, r := range accessClaudeRoles {
+		name, oneM := accessParseOneM(env[r.envKey])
+		if name == "" {
+			f.roleModels[i] = accessRoleFollow
+		} else {
+			f.roleModels[i] = name
+		}
+		f.roleOneM[i] = oneM
+		if r.nameKey != "" {
+			f.roleNames[i] = env[r.nameKey]
+		}
+	}
+}
+
+// accessPatchRole 表单→JSON 补丁：角色行变化写回文档 env（空/跟随=删键；
+// 1M=值尾拼 "[1M]" 字面量）。
+func (u *uiState) accessPatchRole(i int) {
+	r := accessClaudeRoles[i]
+	f := &u.accessForm
+	val := f.roleModels[i]
+	if val == accessRoleFollow {
+		val = ""
+	}
+	if val != "" && f.roleOneM[i] {
+		val += "[1M]"
+	}
+	if raw, err := accessDocSetEnv(f.docJSON, r.envKey, val); err == nil {
+		f.docJSON = raw
+	}
+	if r.nameKey != "" {
+		if raw, err := accessDocSetEnv(f.docJSON, r.nameKey, strings.TrimSpace(f.roleNames[i])); err == nil {
+			f.docJSON = raw
+		}
+	}
 }
 
 // accessModelLabels 返回 enabled 逻辑模型名列表（编辑器 Select 数据源）。
@@ -438,11 +517,43 @@ func (u *uiState) accessEditorCard(c *ui.Context, t *ui.Theme, s softPalette, ac
 				}
 			})
 
+			if u.accessApp == "claude" {
+				ui.Text(c, "模型映射").Bold()
+				ui.Text(c, "显示名称只影响 /model 菜单；1M 只是给 Claude Code 的上下文能力声明").TextColor(t.TextMuted)
+				u.accessSyncRolesFromDoc() // 打开/回填后对齐（解析失败静默保留）
+				for i, r := range accessClaudeRoles {
+					ui.Row(c).Gap(8).Children(func() {
+						ui.Text(c, r.label).Width(80).TextColor(t.TextMuted)
+						if r.nameKey != "" {
+							before := u.accessForm.roleNames[i]
+							nameIn := ui.TextInput(c, &u.accessForm.roleNames[i]).Width(180).Placeholder("显示名称")
+							if nameIn.Changed() && u.accessForm.roleNames[i] != before {
+								u.accessPatchRole(i)
+							}
+						}
+						opts := append([]string{accessRoleFollow}, labels...)
+						before := u.accessForm.roleModels[i]
+						sel := ui.Select(c, &u.accessForm.roleModels[i], opts)
+						if sel.Changed() && u.accessForm.roleModels[i] != before {
+							u.accessPatchRole(i)
+						}
+						beforeB := u.accessForm.roleOneM[i]
+						cb := ui.Checkbox(c, &u.accessForm.roleOneM[i], "1M")
+						if cb.Changed() && u.accessForm.roleOneM[i] != beforeB {
+							u.accessPatchRole(i)
+						}
+					})
+				}
+			}
+
 			st := u.svc.Gateway.Status()
 			ui.Text(c, fmt.Sprintf("网关地址 http://127.0.0.1:%d · 令牌自动生成（不在本页展示）", st.Port)).TextColor(t.TextMuted)
 
 			ui.Text(c, "配置 JSON（最终写入 Agent 的完整文档；网关地址/令牌/模型三键自动锁定）").TextColor(t.TextMuted)
-			ui.TextArea(c, &u.accessForm.docJSON).Height(320).Grow(1)
+			ta := ui.TextArea(c, &u.accessForm.docJSON).Height(320).Grow(1)
+			if ta.Changed() {
+				u.accessSyncRolesFromDoc()
+			}
 			ui.Text(c, "与全局/默认值相同的键保存时自动视为未定制（保持继承）；要覆盖请改成不同值").TextColor(t.TextMuted)
 
 			if u.accessForm.msg != "" {

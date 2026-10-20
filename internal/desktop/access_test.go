@@ -123,3 +123,52 @@ func TestAccessParseOneM(t *testing.T) {
 		}
 	}
 }
+
+func TestAccessRoleRoundTrip(t *testing.T) {
+	// 补丁：选模型+1M+显示名
+	raw, err := accessDocSetEnv(`{"env":{}}`, "ANTHROPIC_DEFAULT_SONNET_MODEL", "fast[1M]")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err = accessDocSetEnv(raw, "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME", "极速")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := accessDocEnvStrings(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name, oneM := accessParseOneM(env["ANTHROPIC_DEFAULT_SONNET_MODEL"])
+	if name != "fast" || !oneM || env["ANTHROPIC_DEFAULT_SONNET_MODEL_NAME"] != "极速" {
+		t.Fatal(raw)
+	}
+	// 回填：Subagent 无显示名键；空键 = 跟随主模型
+	env2, err := accessDocEnvStrings(`{"env":{}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name2, oneM2 := accessParseOneM(env2["CLAUDE_CODE_SUBAGENT_MODEL"])
+	if name2 != "" || oneM2 {
+		t.Fatal("空值应回落跟随主模型")
+	}
+}
+
+func TestAccessSyncRolesAndPatch(t *testing.T) {
+	u := &uiState{}
+	u.accessApp = "claude"
+	u.accessForm = accessForm{docJSON: `{"env":{"ANTHROPIC_DEFAULT_HAIKU_MODEL":"fast[1M]"}}`}
+	u.accessSyncRolesFromDoc()
+	i := accessRoleIndexByEnvKey("ANTHROPIC_DEFAULT_HAIKU_MODEL")
+	if u.accessForm.roleModels[i] != "fast" || !u.accessForm.roleOneM[i] {
+		t.Fatalf("%v %v", u.accessForm.roleModels, u.accessForm.roleOneM)
+	}
+	u.accessForm.roleOneM[i] = false
+	u.accessPatchRole(i)
+	env, err := accessDocEnvStrings(u.accessForm.docJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] != "fast" {
+		t.Fatal(u.accessForm.docJSON)
+	}
+}
