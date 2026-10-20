@@ -23,6 +23,16 @@ import (
 // responseHeaderWhitelist：回传给客户端的上游响应头。
 var responseHeaderWhitelist = []string{"Content-Type", "Retry-After", "Anthropic-Request-Id"}
 
+// stripOneM 剥离模型名尾部 "[1M]"（大小写不敏感，Claude Code 1M 上下文声明
+// 字面量，spec 2026-10-19 §3.3）：接入配置角色行可带该标记，网关路由匹配前
+// 剥离，使 my-code[1M] 命中逻辑模型 my-code。
+func stripOneM(model string) string {
+	if len(model) >= 4 && strings.EqualFold(model[len(model)-4:], "[1M]") {
+		return model[:len(model)-4]
+	}
+	return model
+}
+
 func writeErr(w http.ResponseWriter, status int, errType, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -143,6 +153,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, protocol.ErrTypeInvalidRequest, "invalid body: model and valid JSON required")
 		return
 	}
+	cr.Model = stripOneM(cr.Model)
 	rec.Model, rec.Streaming = cr.Model, cr.Stream
 
 	cands, err := s.deps.Candidates(cr.Model)
@@ -306,6 +317,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeErrOpenAI(w, 400, protocol.ErrTypeInvalidRequest, "invalid body: model and valid JSON required")
 		return
 	}
+	oar.Model = stripOneM(oar.Model)
 	rec.Model, rec.Streaming = oar.Model, oar.Stream
 
 	cands, err := s.deps.Candidates(oar.Model)

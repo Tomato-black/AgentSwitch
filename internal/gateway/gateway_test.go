@@ -1290,3 +1290,76 @@ func TestSlowBodyUploadTimesOut(t *testing.T) {
 		t.Fatalf("only 4xx allowed for slow body, got: %q", s)
 	}
 }
+
+func TestMessagesStripsOneMSuffix(t *testing.T) {
+	var calls int
+	var lastModel string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		b, _ := io.ReadAll(r.Body)
+		m := map[string]any{}
+		json.Unmarshal(b, &m)
+		lastModel, _ = m["model"].(string)
+		w.Write([]byte(`{"id":"ok","type":"message"}`))
+	}))
+	defer up.Close()
+	s := newGW(t, up.URL, nil)
+	// pub-1[1M] 应命中公开模型 pub-1（Candidates 只对 pub-1 返回候选）
+	for _, model := range []string{"pub-1[1M]", "pub-1[1m]"} {
+		calls = 0
+		resp := post(t, s, `{"model":"`+model+`","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`, "tok")
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("model=%s status %d body %s", model, resp.StatusCode, b)
+		}
+		if calls != 1 || lastModel != "up-1" {
+			t.Fatalf("model=%s calls=%d lastModel=%s", model, calls, lastModel)
+		}
+	}
+}
+
+func TestOpenAIChatStripsOneMSuffix(t *testing.T) {
+	var calls int
+	var lastModel string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		b, _ := io.ReadAll(r.Body)
+		m := map[string]any{}
+		json.Unmarshal(b, &m)
+		lastModel, _ = m["model"].(string)
+		w.Write([]byte(`{"id":"chatcmpl-ok","object":"chat.completion","choices":[]}`))
+	}))
+	defer up.Close()
+	s := newGW(t, up.URL, nil)
+	req, _ := http.NewRequest("POST", "/v1/chat/completions",
+		strings.NewReader(`{"model":"pub-1[1M]","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer tok")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	resp := w.Result()
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status %d body %s", resp.StatusCode, b)
+	}
+	if calls != 1 || lastModel != "up-1" {
+		t.Fatalf("calls=%d lastModel=%s", calls, lastModel)
+	}
+}
+
+func TestStripOneM(t *testing.T) {
+	cases := map[string]string{
+		"pub-1[1M]": "pub-1",
+		"pub-1[1m]": "pub-1",
+		"pub-1":     "pub-1",
+		"[]":        "[]",
+		"[1M]":      "",       // 纯后缀也剥（随后未登记模型 404，行为明确）
+		"a[1M]x":    "a[1M]x", // 非尾部不动
+	}
+	for in, want := range cases {
+		if got := stripOneM(in); got != want {
+			t.Fatalf("stripOneM(%q)=%q want %q", in, got, want)
+		}
+	}
+}
