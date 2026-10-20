@@ -29,59 +29,104 @@ type AccessConfigs struct {
 	Home string
 }
 
-// composeAccessEnv 合成应写入 Agent 的 env（spec「配置合成规则」）：
-// 先置网关派生基础键，再依次合并 global 与 overrides（后者优先），
-// 最后重新写回不可篡改基础键，保证路由关键键（网关地址、令牌、模型名）
-// 无法被用户配置篡改。注意：claude 的 ANTHROPIC_SMALL_FAST_MODEL 只作
-// 默认值，允许被 overrides 覆盖（简报测试钉死）；不可篡改集为
-// BASE_URL / AUTH_TOKEN / MODEL 三键（codex 为两键全锁定）。
-func composeAccessEnv(appType string, st Status, modelName string, global, overrides map[string]string) (map[string]string, error) {
+// baseAccessEnv 返回网关派生基础键（claude 含 SMALL_FAST 默认值）。
+func baseAccessEnv(appType string, st Status, modelName string) (map[string]string, error) {
 	if modelName == "" {
 		return nil, fmt.Errorf("请先选择逻辑模型")
 	}
 	if err := validateAccessAppType(appType); err != nil {
 		return nil, err
 	}
-	var base, locked map[string]string
 	switch appType {
 	case "claude":
-		baseURL := fmt.Sprintf("http://127.0.0.1:%d", st.Port)
-		base = map[string]string{
-			"ANTHROPIC_BASE_URL":         baseURL,
+		return map[string]string{
+			"ANTHROPIC_BASE_URL":         fmt.Sprintf("http://127.0.0.1:%d", st.Port),
 			"ANTHROPIC_AUTH_TOKEN":       st.Token,
 			"ANTHROPIC_MODEL":            modelName,
 			"ANTHROPIC_SMALL_FAST_MODEL": modelName,
-		}
-		locked = map[string]string{
-			"ANTHROPIC_BASE_URL":   baseURL,
-			"ANTHROPIC_AUTH_TOKEN": st.Token,
-			"ANTHROPIC_MODEL":      modelName,
+		}, nil
+	case "codex":
+		return map[string]string{
+			"OPENAI_BASE_URL": fmt.Sprintf("http://127.0.0.1:%d/v1", st.Port),
+			"OPENAI_API_KEY":  st.Token,
+		}, nil
+	}
+	return nil, fmt.Errorf("不支持的接入类型: %q（仅支持 claude、codex）", appType)
+}
+
+// lockedAccessEnv 返回不可篡改基础键子集（composeAccessEnv 第 4 步回写、
+// normalizeAccessEnv 保存剔除共用）。
+func lockedAccessEnv(appType string, st Status, modelName string) map[string]string {
+	base, err := baseAccessEnv(appType, st, modelName)
+	if err != nil {
+		return nil
+	}
+	switch appType {
+	case "claude":
+		return map[string]string{
+			"ANTHROPIC_BASE_URL":   base["ANTHROPIC_BASE_URL"],
+			"ANTHROPIC_AUTH_TOKEN": base["ANTHROPIC_AUTH_TOKEN"],
+			"ANTHROPIC_MODEL":      base["ANTHROPIC_MODEL"],
 		}
 	case "codex":
-		baseURL := fmt.Sprintf("http://127.0.0.1:%d/v1", st.Port)
-		base = map[string]string{
-			"OPENAI_BASE_URL": baseURL,
-			"OPENAI_API_KEY":  st.Token,
-		}
-		locked = map[string]string{
-			"OPENAI_BASE_URL": baseURL,
-			"OPENAI_API_KEY":  st.Token,
-		}
+		return base // codex 两键全锁
 	}
-	env := make(map[string]string, len(base)+len(global)+len(overrides))
+	return nil
+}
+
+// composeAccessEnv 合成应写入 Agent 的 env：base → global → docEnv → 锁定回写。
+// 语义与拆分前完全一致（测试钉死）；claude 的 ANTHROPIC_SMALL_FAST_MODEL 只作
+// 默认值，允许被 docEnv 覆盖。
+func composeAccessEnv(appType string, st Status, modelName string, global, docEnv map[string]string) (map[string]string, error) {
+	base, err := baseAccessEnv(appType, st, modelName)
+	if err != nil {
+		return nil, err
+	}
+	locked := lockedAccessEnv(appType, st, modelName)
+	env := make(map[string]string, len(base)+len(global)+len(docEnv))
 	for k, v := range base { // 1. 网关派生基础键
 		env[k] = v
 	}
 	for k, v := range global { // 2. 全局 env（access.global.<app_type>）
 		env[k] = v
 	}
-	for k, v := range overrides { // 3. 配置级覆盖（最高优先，但动不了锁定键）
+	for k, v := range docEnv { // 3. 配置文档 env（最高优先，但动不了锁定键）
 		env[k] = v
 	}
 	for k, v := range locked { // 4. 重新写回不可篡改基础键（恒定）
 		env[k] = v
 	}
 	return env, nil
+}
+
+// normalizeAccessEnv 保存归一化（spec 2026-10-19 §5.2）：1) 锁定键恒剔除
+// （网关自动生成，改了无效）；2) 值与「无文档层合成结果」（基础键+全局）相同
+// 的键剔除——视为未定制、保持继承语义，防止编辑器展示的合成结果在直接保存时
+// 把全局键与默认值冻结成覆盖项。
+func normalizeAccessEnv(appType string, st Status, modelName string, global, docEnv map[string]string) (map[string]string, error) {
+	base, err := baseAccessEnv(appType, st, modelName)
+	if err != nil {
+		return nil, err
+	}
+	baseline := make(map[string]string, len(base)+len(global))
+	for k, v := range base {
+		baseline[k] = v
+	}
+	for k, v := range global {
+		baseline[k] = v
+	}
+	locked := lockedAccessEnv(appType, st, modelName)
+	out := map[string]string{}
+	for k, v := range docEnv {
+		if _, isLocked := locked[k]; isLocked {
+			continue
+		}
+		if bv, ok := baseline[k]; ok && bv == v {
+			continue
+		}
+		out[k] = v
+	}
+	return out, nil
 }
 
 // composeFor 解析 c 绑定的逻辑模型名与全局配置，合成应写入 Agent 的 env。

@@ -195,6 +195,83 @@ func TestComposeAccessEnvRejectsUnknownAppType(t *testing.T) {
 	}
 }
 
+func TestNormalizeAccessEnvStripsLockedAndUnchanged(t *testing.T) {
+	st := Status{Port: 17890, Token: "tok"}
+	global := map[string]string{"HTTPS_PROXY": "http://p:1"}
+	docEnv := map[string]string{
+		"ANTHROPIC_BASE_URL":             "http://evil:9", // 锁定键→剔除
+		"ANTHROPIC_AUTH_TOKEN":           "steal",         // 锁定键→剔除
+		"ANTHROPIC_MODEL":                "other",         // 锁定键→剔除
+		"ANTHROPIC_SMALL_FAST_MODEL":     "my-code",       // 与默认相同→剔除
+		"HTTPS_PROXY":                    "http://p:1",    // 与全局相同→剔除
+		"ANTHROPIC_DEFAULT_SONNET_MODEL": "fast",          // 定制→保留
+		"API_TIMEOUT_MS":                 "3000000",       // 新增→保留
+	}
+	got, err := normalizeAccessEnv("claude", st, "my-code", global, docEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"ANTHROPIC_DEFAULT_SONNET_MODEL": "fast", "API_TIMEOUT_MS": "3000000"}
+	if len(got) != len(want) {
+		t.Fatalf("got=%v", got)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Fatalf("got=%v", got)
+		}
+	}
+}
+
+func TestNormalizeAccessEnvCodex(t *testing.T) {
+	st := Status{Port: 17890, Token: "tok"}
+	got, err := normalizeAccessEnv("codex", st, "my-code", nil, map[string]string{
+		"OPENAI_BASE_URL": "http://evil/v1",
+		"OPENAI_API_KEY":  "steal",
+		"RUST_LOG":        "debug",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got["OPENAI_BASE_URL"]; ok {
+		t.Fatal("OPENAI_BASE_URL 应剔除")
+	}
+	if _, ok := got["OPENAI_API_KEY"]; ok {
+		t.Fatal("OPENAI_API_KEY 应剔除")
+	}
+	if got["RUST_LOG"] != "debug" {
+		t.Fatalf("got=%v", got)
+	}
+}
+
+func TestNormalizeAccessEnvRejectsBadInput(t *testing.T) {
+	if _, err := normalizeAccessEnv("gemini", Status{}, "m", nil, nil); err == nil {
+		t.Fatal("非法 appType 应报错")
+	}
+	if _, err := normalizeAccessEnv("claude", Status{}, "", nil, nil); err == nil {
+		t.Fatal("空模型名应报错")
+	}
+}
+
+func TestComposeAccessEnvBehaviorUnchangedAfterRefactor(t *testing.T) {
+	// 重构后 composeAccessEnv 行为必须与旧实现一致：基础键+全局+docEnv+锁定回写
+	st := Status{Port: 17890, Token: "tok"}
+	got, err := composeAccessEnv("claude", st, "my-code",
+		map[string]string{"HTTPS_PROXY": "http://p:1"},
+		map[string]string{"ANTHROPIC_BASE_URL": "http://evil:9", "API_TIMEOUT_MS": "1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["ANTHROPIC_BASE_URL"] != "http://127.0.0.1:17890" {
+		t.Fatal(got)
+	}
+	if got["ANTHROPIC_AUTH_TOKEN"] != "tok" || got["ANTHROPIC_MODEL"] != "my-code" || got["ANTHROPIC_SMALL_FAST_MODEL"] != "my-code" {
+		t.Fatal(got)
+	}
+	if got["HTTPS_PROXY"] != "http://p:1" || got["API_TIMEOUT_MS"] != "1" {
+		t.Fatal(got)
+	}
+}
+
 func TestComposeForCodexResolvesModelAndErrorsOnMissing(t *testing.T) {
 	a := tempApp(t)
 	acc := AccessConfigs{A: a, Home: t.TempDir()}
