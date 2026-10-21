@@ -6,6 +6,7 @@ import (
 	"context"
 	_ "embed"
 	"log"
+	"runtime"
 	"sync/atomic"
 	"time"
 
@@ -19,6 +20,21 @@ import (
 
 //go:embed tray.png
 var trayIcon []byte
+
+//go:embed appicon.png
+var appIcon []byte
+
+// appTray 持有托盘对象的强引用，必须活到进程结束。
+//
+// MyGo 的菜单项注册表（menu.go menuItems.byID）只存 weak.Pointer：*Tray
+// 一旦被 GC，Tray.menu → Menu.items → MenuItem 全部不可达，而 native GTK
+// 菜单仍挂在 appindicator 上照常显示；此时点击会在 menuItemClicked 的
+// lookupMenuItem 处拿到 nil 并静默返回——托盘所有菜单项（含「退出」）
+// 点了都没反应。NewTray 不会在框架内部保留引用，所有权在调用方。
+var appTray *mygo.Tray
+
+// keepTray 记录托盘强引用（见 appTray）。
+func keepTray(t *mygo.Tray) { appTray = t }
 
 type Services struct {
 	Gateway  bridge.Gateway
@@ -39,8 +55,11 @@ type uiState struct {
 	settingsMsg    string       // 设置保存结果提示
 	confirmRegen   bool         // 重新生成令牌的 AlertDialog open 位（选定后框架自关）
 	table          ui.ListState // 最近请求表状态
-	closeNotice    bool         // 首关教育提示
-	closeConfirmed bool         // 用户已知晓，允许关闭
+	closeNotice    bool         // 首关驻留模态 open 位
+	closeConfirmed bool         // 用户已确认驻留；之后的关窗直接隐藏
+	quitting       bool         // 退出流程中：放行窗口关闭（OnBeforeQuit 置位）
+	hideWindow     func()       // 隐藏当前主窗（openWindow 注入；测试可为 nil）
+	schedule       func(func()) // 把窗口操作推迟出 GTK 事件回调（默认 afterEvent）
 	// 模型聚合页（Task 8 重写：搜索 + 每行开关）：
 	modelList  ui.ListState // 聚合表状态；Selected 经 modelSel 指向当前行
 	modelSel   int          // 聚合表当前行（-1=无）
@@ -78,7 +97,8 @@ func newUIState(svc Services, a *app.App) *uiState {
 		logPath:  a.LogPath(),
 		page:     "logical",
 		chForm:   channelForm{protocol: "openai", enabled: true},
-		modelSel: -1}
+		modelSel: -1,
+		schedule: afterEvent}
 	// 表格行选择：Selected 必须非 nil 点击才选行（mygo ui.ListState.Selected
 	// 注释：*Selected 是所选行，-1 为无），这里指向状态字段（-1=无），
 	// "载入所选/停用·启用/测试"才落得到所选行。
@@ -116,27 +136,13 @@ func (u *uiState) view(c *ui.Context) {
 			ui.Box(c).Grow(1)
 			gatewayStatusBar(c, u)
 		})
-		// 右列：首关横条（全页可见，I4）+ 当前页
+		// 右列：当前页
 		ui.Column(c).Gap(12).Padding(16).Grow(1).FillHeight().Children(func() {
-			if u.closeNotice && !u.closeConfirmed {
-				card(c, t, func() {
-					ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-						ui.Text(c, "窗口关闭后应用将驻留托盘，网关继续运行。").Grow(1)
-						if pillButton(c, t, "继续关闭窗口").Clicked() {
-							u.closeConfirmed = true
-							if w := mygo.FocusedWindow(); w != nil {
-								w.Close()
-							}
-						}
-						if ui.Button(c, "取消").Clicked() {
-							u.closeNotice = false
-						}
-					})
-				})
-			}
 			u.pageView(c)
 		})
 	})
+	// 首关驻留模态挂在根层：任意页点 X 都可见，且遮罩挡住页面交互。
+	u.closeModal(c)
 }
 
 func Run(a *app.App) error {
@@ -157,14 +163,24 @@ func Run(a *app.App) error {
 	var win atomic.Pointer[mygo.Window]
 
 	mygo.App.WhenReady(func() {
-		if tray, err := mygo.NewTray(mygo.TrayOptions{
-			Icon:    trayIcon,
-			ToolTip: "AgentSwitch",
+		// 必须在建窗前：MyGo 在窗口宿主初始化时读一次 GTK 的字体渲染设置。
+		// 关闭子像素抗锯齿以绕开其 Linux 字形着色缺陷（见 fontrender_linux.go）。
+		disableSubpixelAA()
+		if tray, err := newTray(mygo.TrayOptions{
+			Icon:           trayIcon,
+			IconIsTemplate: runtime.GOOS == "darwin",
+			ToolTip:        "AgentSwitch",
 			Menu: mygo.NewMenu([]*mygo.MenuItem{
 				{Label: "打开主窗口", Click: func(*mygo.MenuItem, *mygo.Window) {
 					if w := win.Load(); !needsReopen(w) {
-						w.Restore()
-						w.Focus()
+						// 隐藏型窗口要先 Show 才会回来；Restore 兼顾最小化态。
+						// 必须推迟出菜单点击事件，否则 Show 触发的帧会提交到
+						// 隐藏时已失效的 GL 表面（实测 SIGABRT）。
+						afterEvent(func() {
+							w.Show()
+							w.Restore()
+							w.Focus()
+						})
 					} else {
 						openWindow(u, &win)
 					}
@@ -175,7 +191,8 @@ func Run(a *app.App) error {
 		}); err != nil {
 			a.Log().Info("tray unavailable (继续运行)", "err", err.Error())
 		} else {
-			_ = tray
+			// 必须保留强引用：见 appTray。
+			keepTray(tray)
 		}
 		openWindow(u, &win)
 		a.OnState(func(si app.StateInfo) {
@@ -202,7 +219,8 @@ func Run(a *app.App) error {
 		}
 	})
 
-	// 关窗不退出：最后一个窗口关闭时保持运行（托盘驻留）
+	// 关窗不退出：最后一个窗口关闭时保持运行（托盘驻留）。正常关窗走
+	// Hide，不走销毁；本监听仍保留作兜底（例如 WM 强制销毁时）。
 	mygo.App.OnWindowAllClosed(func() { /* 故意为空 */ })
 
 	mygo.App.OnBeforeQuit(func(e *mygo.QuitEvent) {
@@ -212,6 +230,7 @@ func Run(a *app.App) error {
 		// 中止退出。若不在第一行放行，托盘 RoleQuit/Ctrl+Q 在"窗口开着且
 		// 未确认过教育提示"（最常见态）下：清理已做、退出被拦、UI 停在
 		// 已关闭 DB 的尸体上。
+		u.quitting = true
 		u.closeConfirmed = true
 		ctx, cancel := context.WithTimeout(context.Background(),
 			time.Duration(graceSeconds(a))*time.Second)
@@ -231,21 +250,30 @@ func Run(a *app.App) error {
 // Restore/Focus 是 no-op，重建分支才可达）。
 func needsReopen(w *mygo.Window) bool { return w == nil || w.IsDestroyed() }
 
-// openWindow 建主窗、登记进 win 并挂首关拦截。OnClose 挂在这里而非仅挂
+// openWindow 建主窗、登记进 win 并挂关窗拦截。OnClose 挂在这里而非仅挂
 // 首窗：托盘重开的每个窗口都自带拦截，不依赖"销毁过 ⇒ closeConfirmed"
 // 这条跨模块不变式。
+//
+// 交互关窗一律 PreventDefault 后 Hide：Linux 上在 WebView 点击回调里同步
+// 销毁窗口会让 GTK 在事件派发未结束时释放窗口对象（实测 SIGSEGV：
+// gdk_window_get_display assertion + Backend.Run 中崩溃），整个进程与网关
+// 一起消失。隐藏既绕开析构路径，也让托盘唤回保留界面状态。
 func openWindow(u *uiState, win *atomic.Pointer[mygo.Window]) *mygo.Window {
 	w := mygo.NewWindow(mygo.WindowOptions{
 		Title: "AgentSwitch", Width: 1080, Height: 720, StateKey: "main",
 		Content: ui.View(u.view),
 	})
+	// 窗口/任务栏图标（Linux、Windows）；macOS 窗口无自身图标，由打包
+	// 的 .car 决定。失败只影响观感，不阻断窗口。
+	_ = w.SetIcon(appIcon)
 	win.Store(w)
+	u.hideWindow = w.Hide
 	w.OnClose(func(e *mygo.CloseEvent) {
-		if !u.closeConfirmed {
-			e.PreventDefault()
-			u.closeNotice = true
-			w.Update(func() {}) // 触发重绘显示提示
+		if u.quitting {
+			return
 		}
+		e.PreventDefault()
+		u.requestClose(w.Hide, func() { w.Update(func() {}) })
 	})
 	return w
 }

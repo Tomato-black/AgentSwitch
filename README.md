@@ -15,7 +15,12 @@ Agent 指向 `127.0.0.1:17890` 并调用**逻辑模型名**（如 `my-code`）�
 - 依赖：Go 1.27+（`GOTOOLCHAIN=auto` 会自动拉取）、原生 UI 在 Linux 仅需 GTK3，不需要 WebKitGTK
 - 运行（开发模式，热重载）：`go tool mygo dev`
 - 打包：`go tool mygo build`（产物在 `build/`，含 .deb 与 install.sh）
+- Linux 用户级安装：`sh build/linux-amd64/install.sh && sh scripts/linux-desktop.sh`——第二个脚本修正桌面入口（反向域名 id + hicolor 主题图标），规避 GNOME Shell 42 按应用 id 永久缓存图标加载失败的问题；只跑 install.sh 时，重装后应用网格可能显示灰色齿轮直到注销
 - 测试：`go test ./...`（全部离线，Fake Provider）
+
+### 已知问题（Linux）
+
+- **亮色主题下窗口文字全白**：MyGo v0.5.1 在 Linux 子像素抗锯齿（`font-antialiasing=rgba`）下的字形着色有缺陷——文字颜色不生效、一律画成白色；深色主题正文本就接近白色，因此不易察觉。应用启动时对本进程把 GTK 的 `gtk-xft-rgba` 设为 `none`（`internal/desktop/fontrender_linux.go`），改用灰度抗锯齿绕开，**不影响系统设置与其他应用**。升级 MyGo 后若上游已修复，可去掉该规避。
 
 ## 首次使用
 

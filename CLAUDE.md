@@ -18,6 +18,8 @@ AgentSwitch：面向本地 AI Agent 的**模型 API 网关**——为 Claude Cod
 python3 -c "import zipfile,re,html,sys; x=zipfile.ZipFile(sys.argv[1]).read('word/document.xml').decode().replace('</w:p>','\n'); print(html.unescape(re.sub(r'<[^>]+>','',x)))" <file.docx>
 ```
 
+**Linux 字体渲染规避（2026-10-21）**：MyGo v0.5.1 的 Linux 子像素字形着色有缺陷——Pango 以白色栅格化字形、GPU 着色未正确应用文字颜色，所有文字实际画成白色（深色主题正文本就近白，不易察觉；亮色主题下整窗不可读）。`internal/desktop/fontrender_linux.go` 在 `WhenReady` 建窗前用 purego 对本进程 GTK 设 `gtk-xft-rgba=none`，改走灰度抗锯齿；**不改系统设置、不影响其他应用**。升级 MyGo 时先复查上游是否已修复，再决定是否移除该规避。
+
 ## 常用命令
 
 ```bash

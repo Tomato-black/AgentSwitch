@@ -2,7 +2,9 @@ package desktop
 
 import (
 	"path/filepath"
+	"runtime"
 	"testing"
+	"time"
 
 	"AgentSwitch/internal/app"
 	"AgentSwitch/internal/bridge"
@@ -49,30 +51,113 @@ func TestUnknownPageFallsBackToLogical(t *testing.T) {
 	}
 }
 
-// TestCloseNoticeBlocksFirstClose 覆盖首关教育提示（I4）：提示必须在**所有页**
-// 可见（提示块挂在 view 层——停在任意页点 X 时提示都出现、拦截都生效），
-// 且点"继续关闭窗口"记录 closeConfirmed 放行关闭。
-func TestCloseNoticeBlocksFirstClose(t *testing.T) {
+// TestCloseNoticeShowsModalOnAnyPage 覆盖首关驻留模态：模态挂在 view 根层，
+// 停在任意页点 X 都能看到「网关继续运行 / 最小化到托盘」。
+func TestCloseNoticeShowsModalOnAnyPage(t *testing.T) {
 	u, _ := testUI(t)
 	u.closeNotice = true
-	tt := ui.NewTester(u.view, 800, 600)
-	if !tt.HasText("驻留托盘") {
-		t.Fatalf("notice missing on logical page: %v", tt.Texts())
+	for _, page := range []string{"logical", "channels", "access", "settings"} {
+		u.page = page
+		tt := ui.NewTester(u.view, 900, 700)
+		if !tt.HasText("网关继续运行") || !tt.HasText("最小化到托盘") {
+			t.Fatalf("modal missing on %s: %v", page, tt.Texts())
+		}
 	}
-	if err := tt.Click("继续关闭窗口"); err != nil {
+}
+
+// TestCloseNoticeConfirmHidesWindow 覆盖确认分支：点「最小化到托盘」必须
+// **推迟**隐藏窗口（不能在 GTK 点击事件里同步 Hide——实测会让 MyGo 的 GPU
+// Presenter 在失效表面上提交帧，SIGABRT），并记录 closeConfirmed、收起模态。
+func TestCloseNoticeConfirmHidesWindow(t *testing.T) {
+	u, _ := testUI(t)
+	hidden := false
+	u.hideWindow = func() { hidden = true }
+	var scheduled func()
+	u.schedule = func(fn func()) { scheduled = fn }
+	u.closeNotice = true
+	tt := ui.NewTester(u.view, 900, 700)
+	if err := tt.Click("最小化到托盘"); err != nil {
 		t.Fatal(err)
+	}
+	if hidden {
+		t.Fatal("hide must be deferred out of the GTK event handler")
+	}
+	if scheduled == nil {
+		t.Fatal("hide was not scheduled")
+	}
+	scheduled()
+	if !hidden {
+		t.Fatal("confirm must hide the window once scheduled")
 	}
 	if !u.closeConfirmed {
 		t.Fatal("confirm not recorded")
 	}
-	// 非默认页同样必须渲染（提示块挂在 view 导航之后、页面分发之前）。
-	for _, page := range []string{"channels", "access", "settings"} {
-		u.closeConfirmed = false
-		u.page = page
-		tt.Frame()
-		if !tt.HasText("驻留托盘") {
-			t.Fatalf("notice missing on %s page: %v", page, tt.Texts())
-		}
+	if u.closeNotice {
+		t.Fatal("modal must close after confirm")
+	}
+}
+
+// TestAfterEventRuns 覆盖默认调度器：窗口操作必须异步执行（经 timer
+// goroutine 投递回主线程），而不是在调用栈里同步执行。
+func TestAfterEventRuns(t *testing.T) {
+	done := make(chan struct{})
+	afterEvent(func() { close(done) })
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("scheduled window operation never ran")
+	}
+}
+
+// TestCloseNoticeCancelKeepsWindow 覆盖取消分支：点「取消」只收起模态，
+// 不隐藏、不记录已确认。
+func TestCloseNoticeCancelKeepsWindow(t *testing.T) {
+	u, _ := testUI(t)
+	hidden := false
+	u.hideWindow = func() { hidden = true }
+	u.closeNotice = true
+	tt := ui.NewTester(u.view, 900, 700)
+	if err := tt.Click("取消"); err != nil {
+		t.Fatal(err)
+	}
+	if hidden {
+		t.Fatal("cancel must not hide the window")
+	}
+	if u.closeConfirmed {
+		t.Fatal("cancel must not record confirmation")
+	}
+	if u.closeNotice {
+		t.Fatal("modal must close on cancel")
+	}
+}
+
+// TestRequestCloseEducatesOnceThenHides 覆盖关窗主路径：首次关窗只弹模态
+// （不隐藏）；确认后的后续关窗直接隐藏。隐藏而非销毁是 Linux 上避免
+// GTK 在事件派发中析构窗口导致 SIGSEGV 的关键。
+func TestRequestCloseEducatesOnceThenHides(t *testing.T) {
+	u, _ := testUI(t)
+	hidden, redraw := 0, 0
+	var scheduled func()
+	u.schedule = func(fn func()) { scheduled = fn }
+	u.requestClose(func() { hidden++ }, func() { redraw++ })
+	if !u.closeNotice || hidden != 0 || redraw != 1 {
+		t.Fatalf("first close: notice=%v hidden=%d redraw=%d", u.closeNotice, hidden, redraw)
+	}
+	u.closeConfirmed = true
+	u.closeNotice = false
+	u.requestClose(func() { hidden++ }, func() { redraw++ })
+	if hidden != 0 {
+		t.Fatalf("acknowledged close must not hide inside the close event, hidden=%d", hidden)
+	}
+	if scheduled == nil {
+		t.Fatal("acknowledged close did not schedule the hide")
+	}
+	scheduled()
+	if hidden != 1 {
+		t.Fatalf("scheduled hide did not run, hidden=%d", hidden)
+	}
+	if u.closeNotice {
+		t.Fatal("acknowledged close must not reopen the notice")
 	}
 }
 
@@ -126,5 +211,21 @@ func TestNeedsReopen(t *testing.T) {
 	}
 	if needsReopen(&mygo.Window{}) {
 		t.Fatal("live window should be reused")
+	}
+}
+
+// TestTrayReferenceRetained 覆盖托盘强引用：MyGo 的菜单项注册表用
+// weak.Pointer 指向 MenuItem，*Tray 被 GC 后 native 菜单仍在、点击却会在
+// lookupMenuItem 拿到 nil 并静默丢弃——托盘「退出」因此点了没反应。
+// keepTray 记录的引用必须在 GC 后仍然可达。
+func TestTrayReferenceRetained(t *testing.T) {
+	prev := appTray
+	t.Cleanup(func() { appTray = prev })
+	tr := &mygo.Tray{}
+	keepTray(tr)
+	runtime.GC()
+	runtime.GC()
+	if appTray != tr {
+		t.Fatal("tray reference was not retained; tray menu clicks would silently stop working")
 	}
 }

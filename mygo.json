@@ -2,6 +2,7 @@
   "name": "AgentSwitch",
   "identifier": "com.agentswitch.app",
   "version": "0.1.0",
+  "icon": "resources/icon.png",
   "main": "./cmd/agentswitch",
   "out": "build"
 }

@@ -5,6 +5,7 @@ go 1.27.2
 tool github.com/egoist/mygo/cmd/mygo
 
 require (
+	github.com/ebitengine/purego v0.11.1
 	github.com/egoist/mygo v0.5.1
 	github.com/pelletier/go-toml/v2 v2.4.3
 	modernc.org/sqlite v1.60.1
@@ -12,7 +13,6 @@ require (
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/ebitengine/purego v0.11.1 // indirect
 	github.com/go-text/typesetting v0.3.5 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect

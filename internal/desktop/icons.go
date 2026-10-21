@@ -25,4 +25,7 @@ var (
 		`<circle cx="5.5" cy="8" r="3"/><path d="M8.5 8H15M12.5 8v2.5M14.5 8v2"/></svg>`)
 	iconSettings = mustSVG(svgHead +
 		`<circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2.2M8 12.3v2.2M1.5 8h2.2M12.3 8h2.2M3.4 3.4l1.6 1.6M11 11l1.6 1.6M12.6 3.4L11 5M5 11l-1.6 1.6"/></svg>`)
+	// iconTray 是「收进托盘」提示图形：向下箭头落到托盘横线。
+	iconTray = mustSVG(svgHead +
+		`<path d="M8 1.5v8M4.8 6.3L8 9.5l3.2-3.2M2 12.8h12"/></svg>`)
 )
