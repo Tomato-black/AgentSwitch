@@ -71,7 +71,7 @@ go tool mygo build    # 打包（产物在 build/）
 
 ### 存储与测试（文档 §8、§13）
 
-- SQLite 存非秘密配置与状态：`channels`（**单 Key**，`credential_ref` 仅作引用；密文在 `channel_secrets`，主密钥 `master.key` 分离；`channel_keys` 已删除）+ `channel_models`（仅模型建议列表，非路由主体）+ `logical_models`/`logical_model_targets`（路由主体目标链）。docx §8/§13 转述保留 Provider/Account/ModelMapping/RoutePolicy 原文名。事件遥测沿用内存环 + 文件日志，**不落 SQLite**。经 Repository + `migrations/`。
+- SQLite 存非秘密配置与状态：`channels`（**单 Key**，`credential_ref` 仅作引用；密文在 `channel_secrets`，主密钥 `master.key` 分离；`channel_keys` 已删除）+ `channel_models`（仅模型建议列表，非路由主体）+ `logical_models`/`logical_model_targets`（路由主体目标链）。docx §8/§13 转述保留 Provider/Account/ModelMapping/RoutePolicy 原文名。事件遥测沿用内存环 + 文件日志，**不落 SQLite**；文件日志由 `internal/telemetry` 的 `rotatingWriter` 按 5 MiB 轮转、gzip 归档保留 2 份（磁盘占用长期稳定在 ~6 MB 量级）。经 Repository + `migrations/`。
 - 测试以 **Fake Provider** 为主（稳定复现额度耗尽、429/Retry-After、5xx、流式中断），不依赖真实供应商；真实 Agent 兼容性验证只作受控测试，常规 CI 不打真实上游。
 - 必测边界：首字节前可切换、首字节后不重放、客户端取消、并发 429 冷却原子性（`-race`，冷却键 ChannelID）、停止期间请求收尾；多逻辑模型并存互不串扰、目标顺序生效。
 
