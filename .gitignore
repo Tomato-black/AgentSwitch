@@ -13,3 +13,6 @@
 /.mygo/
 node_modules/
 .superpowers/
+
+# Claude Code worktrees (嵌套仓库的 .git 指针，不是源码)
+.claude/worktrees/
