@@ -76,6 +76,13 @@ type Store interface {
 	AccessConfigs() AccessConfigRepo
 	Secrets() SecretRepo
 	Settings() SettingsRepo
+
+	// RouteVersion 是路由配置的单调版本号：channels / channel_models /
+	// logical_models / logical_model_targets 任一写操作成功后递增，只读不变。
+	// app 层路由缓存以它作失效键——失效由写入方（存储层）负责，任何写入口
+	// （桥接、测试夹具、未来 CLI）都不需要记得手动清缓存。
+	RouteVersion() uint64
+
 	Close() error
 }
 

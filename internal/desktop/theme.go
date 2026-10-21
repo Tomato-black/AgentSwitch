@@ -9,8 +9,6 @@
 package desktop
 
 import (
-	"time"
-
 	"github.com/egoist/mygo/ui"
 )
 
@@ -164,14 +162,11 @@ func stateColor(t *ui.Theme, state string) ui.Color {
 	}
 }
 
-// ledDot 画状态 LED：10px 圆点，色由 stateColor 决定；running 时用 Loop
-// 做缓慢呼吸。preferences.go 语义：Animate 在 ReduceMotion 下直达目标，
-// 而 Loop「shows that something is going on」继续走——呼吸恰属后者，无需
-// 分支。人工验收若呼吸表现异常，删掉 Loop 块退化为静态点（spec §8.4）。
+// ledDot 画状态 LED：10px 圆点，色由 stateColor 决定，常亮不呼吸。
+// spec §8.4 的降级路径已启用：Loop 会调 c.AnimationFrame()，让**整个视图**
+// 按显示刷新率重建（不只是这个点），实测常驻约 20% 单核——对一个 10px 装
+// 饰点不划算。状态由颜色 + 底条「运行中/已降级」文字表达，不靠动效传递。
+// 不要加回 Loop/Animate：需要动效时先测空闲 CPU。
 func ledDot(c *ui.Context, t *ui.Theme, state string) {
-	b := ui.Box(c).Width(10).Height(10).Radius(5).Background(stateColor(t, state))
-	if state == "running" {
-		v := b.Loop("gw-led", 2100*time.Millisecond, ui.EaseInOut)
-		b.Opacity(0.55 + 0.45*v)
-	}
+	ui.Box(c).Width(10).Height(10).Radius(5).Background(stateColor(t, state))
 }

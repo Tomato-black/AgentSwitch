@@ -3,8 +3,17 @@ package storage
 import (
 	"database/sql"
 	"errors"
+	"sync/atomic"
 	"time"
 )
+
+// bumpRoute 推进路由配置版本号（见 Store.RouteVersion）。ver 为 nil 时是
+// 无操作——测试可直接构造只读 repo，不必关心计数。
+func bumpRoute(ver *atomic.Uint64) {
+	if ver != nil {
+		ver.Add(1)
+	}
+}
 
 func mapNotFound(err error) error {
 	if errors.Is(err, sql.ErrNoRows) {
@@ -42,7 +51,10 @@ func (r *settingsRepo) Set(key, value string) error {
 	return err
 }
 
-type channelRepo struct{ db *sql.DB }
+type channelRepo struct {
+	db  *sql.DB
+	ver *atomic.Uint64
+}
 
 const channelCols = `id,name,protocol,base_url,credential_ref,preset_id,enabled,allow_private_upstream,created_at,updated_at`
 
@@ -106,16 +118,23 @@ func (r *channelRepo) Save(c Channel) (Channel, error) {
 	if err != nil {
 		return Channel{}, err
 	}
+	bumpRoute(r.ver)
 	return c, nil
 }
 
 func (r *channelRepo) Delete(id string) error {
 	_, err := r.db.Exec(`DELETE FROM channels WHERE id=?`, id)
+	if err == nil {
+		bumpRoute(r.ver)
+	}
 	return err
 }
 
 func (r *channelRepo) SetEnabled(id string, on bool) error {
 	_, err := r.db.Exec(`UPDATE channels SET enabled=? WHERE id=?`, boolInt(on), id)
+	if err == nil {
+		bumpRoute(r.ver)
+	}
 	return err
 }
 
@@ -126,7 +145,10 @@ func (r *channelRepo) HasUsableKey() (bool, error) {
 	return n == 1, err
 }
 
-type channelModelRepo struct{ db *sql.DB }
+type channelModelRepo struct {
+	db  *sql.DB
+	ver *atomic.Uint64
+}
 
 const modelCols = `id,channel_id,model_name,created_at`
 
@@ -182,16 +204,23 @@ func (r *channelModelRepo) Save(m ChannelModel) (ChannelModel, error) {
 	if err != nil {
 		return ChannelModel{}, err
 	}
+	bumpRoute(r.ver)
 	return m, nil
 }
 
 func (r *channelModelRepo) Delete(id string) error {
 	_, err := r.db.Exec(`DELETE FROM channel_models WHERE id=?`, id)
+	if err == nil {
+		bumpRoute(r.ver)
+	}
 	return err
 }
 
 func (r *channelModelRepo) DeleteByChannel(channelID string) error {
 	_, err := r.db.Exec(`DELETE FROM channel_models WHERE channel_id=?`, channelID)
+	if err == nil {
+		bumpRoute(r.ver)
+	}
 	return err
 }
 
@@ -215,7 +244,10 @@ func (r *channelModelRepo) Suggestions(channelID string) ([]string, error) {
 
 // ---- logical_models / logical_model_targets ----
 
-type logicalModelRepo struct{ db *sql.DB }
+type logicalModelRepo struct {
+	db  *sql.DB
+	ver *atomic.Uint64
+}
 
 const logicalModelCols = `id,name,description,enabled,created_at,updated_at`
 
@@ -286,20 +318,30 @@ func (r *logicalModelRepo) Save(m LogicalModel) (LogicalModel, error) {
 	if err != nil {
 		return LogicalModel{}, err
 	}
+	bumpRoute(r.ver)
 	return m, nil
 }
 
 func (r *logicalModelRepo) Delete(id string) error {
 	_, err := r.db.Exec(`DELETE FROM logical_models WHERE id=?`, id)
+	if err == nil {
+		bumpRoute(r.ver)
+	}
 	return err
 }
 
 func (r *logicalModelRepo) SetEnabled(id string, on bool) error {
 	_, err := r.db.Exec(`UPDATE logical_models SET enabled=? WHERE id=?`, boolInt(on), id)
+	if err == nil {
+		bumpRoute(r.ver)
+	}
 	return err
 }
 
-type logicalModelTargetRepo struct{ db *sql.DB }
+type logicalModelTargetRepo struct {
+	db  *sql.DB
+	ver *atomic.Uint64
+}
 
 const targetCols = `id,logical_model_id,channel_id,model_name,priority`
 
@@ -342,16 +384,23 @@ func (r *logicalModelTargetRepo) Save(t LogicalModelTarget) (LogicalModelTarget,
 	if err != nil {
 		return LogicalModelTarget{}, err
 	}
+	bumpRoute(r.ver)
 	return t, nil
 }
 
 func (r *logicalModelTargetRepo) Delete(id string) error {
 	_, err := r.db.Exec(`DELETE FROM logical_model_targets WHERE id=?`, id)
+	if err == nil {
+		bumpRoute(r.ver)
+	}
 	return err
 }
 
 func (r *logicalModelTargetRepo) DeleteByModel(modelID string) error {
 	_, err := r.db.Exec(`DELETE FROM logical_model_targets WHERE logical_model_id=?`, modelID)
+	if err == nil {
+		bumpRoute(r.ver)
+	}
 	return err
 }
 

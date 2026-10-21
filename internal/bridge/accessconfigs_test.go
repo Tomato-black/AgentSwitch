@@ -57,7 +57,7 @@ func TestClaudeLiveWritesDocTopLevelKeys(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "settings.json"),
 		[]byte(`{"permissions":{"allow":["Bash"]},"language":"en-US","env":{"FOO":"bar"}}`), 0o600)
 	doc := map[string]any{
-		"language": "zh-CN",
+		"language":   "zh-CN",
 		"mcpServers": map[string]any{"x": map[string]any{"command": "c"}},
 	}
 	if err := acc.writeClaudeLive(doc, map[string]string{"ANTHROPIC_MODEL": "new"}); err != nil {
@@ -802,7 +802,7 @@ func TestParseAccessDocValid(t *testing.T) {
 	}
 }
 
-func TestPreviewDocMasksTokenAndComposes(t *testing.T) {
+func TestPreviewDocRendersTokenAndComposes(t *testing.T) {
 	a := tempApp(t)
 	acc := AccessConfigs{A: a, Home: t.TempDir()}
 	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
@@ -820,8 +820,15 @@ func TestPreviewDocMasksTokenAndComposes(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := doc["env"].(map[string]any)
-	if env["ANTHROPIC_AUTH_TOKEN"] != gatewayTokenPlaceholder {
-		t.Fatalf("令牌应遮蔽: %v", env["ANTHROPIC_AUTH_TOKEN"])
+	wantToken := Gateway{A: a}.Status().Token
+	if wantToken == "" {
+		t.Fatal("前提不成立：网关令牌应已生成")
+	}
+	if env["ANTHROPIC_AUTH_TOKEN"] != wantToken {
+		t.Fatalf("预览应渲染真实网关令牌: %v", env["ANTHROPIC_AUTH_TOKEN"])
+	}
+	if strings.Contains(raw, "__GATEWAY_TOKEN__") {
+		t.Fatalf("预览不应再出现遮蔽占位符: %s", raw)
 	}
 	if env["ANTHROPIC_MODEL"] != "my-code" || env["ANTHROPIC_BASE_URL"] == "" {
 		t.Fatalf("锁定键应就位: %v", env)
@@ -962,6 +969,52 @@ func TestParseAccessDocPreservesLargeIntegers(t *testing.T) {
 		if _, _, err := parseAccessDoc("claude", raw); err == nil ||
 			!strings.Contains(err.Error(), "配置 JSON 格式错误") {
 			t.Fatalf("raw=%q 应报格式错误: %v", raw, err)
+		}
+	}
+}
+
+// 主模型 1M 声明（2026-10-21）：文档 env 的 ANTHROPIC_MODEL 允许
+// 「绑定模型名[1M]」——合成保留后缀（小写规范为 [1M]），基名不匹配回写纯名。
+func TestComposeAccessEnvMainModelOneM(t *testing.T) {
+	st := Status{Port: 17890, Token: "tok"}
+	cases := []struct{ doc, want string }{
+		{"my-code[1M]", "my-code[1M]"},
+		{"my-code[1m]", "my-code[1M]"},
+		{"my-code", "my-code"},
+		{"other[1M]", "my-code"},
+	}
+	for _, c := range cases {
+		env, err := composeAccessEnv("claude", st, "my-code", nil,
+			map[string]string{"ANTHROPIC_MODEL": c.doc})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if env["ANTHROPIC_MODEL"] != c.want {
+			t.Fatalf("doc=%q got=%q want=%q", c.doc, env["ANTHROPIC_MODEL"], c.want)
+		}
+	}
+}
+
+// 保存归一化：半锁定主模型保留「绑定模型名[1M]」（规范为 [1M]），纯名视作
+// 未定制剔除，基名不匹配剔除。
+func TestNormalizeAccessEnvKeepsMainModelOneM(t *testing.T) {
+	st := Status{Port: 17890, Token: "tok"}
+	got, err := normalizeAccessEnv("claude", st, "my-code", nil,
+		map[string]string{"ANTHROPIC_MODEL": "my-code[1m]"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["ANTHROPIC_MODEL"] != "my-code[1M]" {
+		t.Fatalf("got=%v", got)
+	}
+	for _, v := range []string{"my-code", "other[1M]"} {
+		got, err := normalizeAccessEnv("claude", st, "my-code", nil,
+			map[string]string{"ANTHROPIC_MODEL": v})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := got["ANTHROPIC_MODEL"]; ok {
+			t.Fatalf("doc=%q 应剔除，got=%v", v, got)
 		}
 	}
 }

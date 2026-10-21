@@ -72,6 +72,12 @@ type App struct {
 	state       StateInfo
 	onState     []func(StateInfo)
 	onRecord    []func(telemetry.RequestRecord)
+
+	// routeCache 缓存逻辑模型名→候选装配结果，避免每请求 N+1 查库。
+	// 只缓存静态部分（模型/目标/渠道），冷却状态每次叠加，见 candidates。
+	routeCacheMu  sync.Mutex
+	routeCacheVer uint64
+	routeCache    map[string]cachedRoutes
 }
 
 // Open 开库、迁移、建日志与加密凭据存储，确保网关令牌存在（空则生成并持久化）。
@@ -196,12 +202,69 @@ func (a *App) currentToken() string {
 // Cooldowns 暴露冷却存储（bridge PoolStatus 读取用）。
 func (a *App) Cooldowns() *router.Cooldowns { return a.cooldowns }
 
-// candidates 按逻辑模型名装配目标链候选（spec 2026-10-17-logical-models）：
+// candidates 返回逻辑模型名对应的候选链，结果经 a.routeCache 缓存：缓存命中
+// 时零查库。返回的切片是副本，调用方可随意修改。
+//
+// 失效键是 Store.RouteVersion：缓存有效 = 版本号与装配时相同。版本号由存储层
+// 在每次写后递增，所以任何写入口（桥接、测试夹具、未来 CLI）都无需手动清缓存，
+// 「运行中改配置下一次请求即生效」不变量不受缓存影响。
+func (a *App) candidates(logicalName string) ([]router.Candidate, error) {
+	ver := a.store.RouteVersion()
+	a.routeCacheMu.Lock()
+	e, ok := a.routeCache[logicalName]
+	a.routeCacheMu.Unlock()
+	if ok && e.ver == ver {
+		return a.withCooldowns(e.cands), nil
+	}
+	base, err := a.buildCandidates(logicalName)
+	if err != nil {
+		return nil, err
+	}
+	a.routeCacheMu.Lock()
+	if a.routeCache == nil || a.routeCacheVer != ver {
+		// 版本变化即整表重建：残留条目（改名的旧模型）一并清掉，
+		// 缓存大小随当前配置规模而非历史模型数增长。
+		a.routeCache = make(map[string]cachedRoutes)
+		a.routeCacheVer = ver
+	}
+	a.routeCache[logicalName] = cachedRoutes{ver: ver, cands: base}
+	a.routeCacheMu.Unlock()
+	return a.withCooldowns(base), nil
+}
+
+// cachedRoutes 是 candidates 的缓存条目：ver 为装配时的路由版本号，cands 只含
+// 静态字段（不含冷却）。
+type cachedRoutes struct {
+	ver   uint64
+	cands []router.Candidate
+}
+
+// withCooldowns 返回 base 的副本，并按当前冷却快照叠加 CoolingUntil/CoolingReason。
+// 冷却在内存里、按渠道跨逻辑模型共享且随错误迁移实时变化，绝不能进缓存。
+func (a *App) withCooldowns(base []router.Candidate) []router.Candidate {
+	out := make([]router.Candidate, len(base))
+	copy(out, base)
+	if len(out) == 0 || a.cooldowns == nil {
+		return out
+	}
+	cool := map[string]router.CooldownEntry{}
+	for _, e := range a.cooldowns.Snapshot(time.Now()) {
+		cool[e.ChannelID] = e
+	}
+	for i := range out {
+		if e, ok := cool[out[i].ChannelID]; ok {
+			out[i].CoolingUntil, out[i].CoolingReason = e.Until, e.Reason
+		}
+	}
+	return out
+}
+
+// buildCandidates 按逻辑模型名装配目标链候选（spec 2026-10-17-logical-models）：
 // GetByName → enabled 检查 → ListByModel（priority 升序）→ join channel。
 // 不可用目标（渠道 disabled / 缺 credential_ref）跳过并记日志——candidates
 // 只返回可用候选。未登记或 disabled：返回空切片，gateway 走「无候选」路径。
-// 冷却快照按 ChannelID 注入（冷却跨逻辑模型共享）。
-func (a *App) candidates(logicalName string) ([]router.Candidate, error) {
+// 结果进缓存，因此这里只装静态字段；冷却由 withCooldowns 每次调用现叠。
+func (a *App) buildCandidates(logicalName string) ([]router.Candidate, error) {
 	lm, err := a.store.LogicalModels().GetByName(logicalName)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
@@ -215,10 +278,6 @@ func (a *App) candidates(logicalName string) ([]router.Candidate, error) {
 	targets, err := a.store.LogicalModelTargets().ListByModel(lm.ID)
 	if err != nil {
 		return nil, err
-	}
-	cool := map[string]router.CooldownEntry{}
-	for _, e := range a.cooldowns.Snapshot(time.Now()) {
-		cool[e.ChannelID] = e
 	}
 	out := make([]router.Candidate, 0, len(targets))
 	for _, t := range targets {
@@ -241,9 +300,6 @@ func (a *App) candidates(logicalName string) ([]router.Candidate, error) {
 			Protocol: ch.Protocol, BaseURL: ch.BaseURL,
 			SecretKey: ch.CredentialRef, AllowPrivate: ch.AllowPrivateUpstream,
 			UpstreamModel: t.ModelName, Priority: t.Priority,
-		}
-		if e, ok := cool[ch.ID]; ok {
-			c.CoolingUntil, c.CoolingReason = e.Until, e.Reason
 		}
 		out = append(out, c)
 	}

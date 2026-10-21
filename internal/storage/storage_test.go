@@ -789,3 +789,70 @@ func TestOpenRejectsV1MissingAccessConfigs(t *testing.T) {
 		t.Fatalf("缺 access_configs 的已记 v1 库应拒绝，got %v", err)
 	}
 }
+
+// TestRouteVersionBumpsOnRouteWrites：路由相关四表（channels / channel_models /
+// logical_models / logical_model_targets）的任何写操作都必须推进 RouteVersion——
+// app 层路由缓存靠它判断失效，漏一个写入口就会静默走旧配置。只读不推进。
+func TestRouteVersionBumpsOnRouteWrites(t *testing.T) {
+	s := tempStore(t)
+	last := s.RouteVersion()
+	bump := func(name string, fn func() error) {
+		t.Helper()
+		if err := fn(); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if v := s.RouteVersion(); v <= last {
+			t.Fatalf("%s: RouteVersion 未推进（%d → %d）", name, last, v)
+		} else {
+			last = v
+		}
+	}
+
+	var ch Channel
+	bump("channel save", func() error {
+		c, err := s.Channels().Save(Channel{Name: "c1", Protocol: "anthropic", BaseURL: "http://u1"})
+		ch = c
+		return err
+	})
+	var lm LogicalModel
+	bump("logical model save", func() error {
+		m, err := s.LogicalModels().Save(LogicalModel{Name: "m1", Enabled: true})
+		lm = m
+		return err
+	})
+	bump("target save", func() error {
+		_, err := s.LogicalModelTargets().Save(LogicalModelTarget{
+			LogicalModelID: lm.ID, ChannelID: ch.ID, ModelName: "model-a", Priority: 1,
+		})
+		return err
+	})
+	bump("channel model save", func() error {
+		_, err := s.ChannelModels().Save(ChannelModel{ChannelID: ch.ID, ModelName: "model-a"})
+		return err
+	})
+	bump("channel setEnabled", func() error { return s.Channels().SetEnabled(ch.ID, false) })
+	bump("logical model setEnabled", func() error { return s.LogicalModels().SetEnabled(lm.ID, false) })
+	bump("targets deleteByModel", func() error { return s.LogicalModelTargets().DeleteByModel(lm.ID) })
+
+	// 只读查询不得推进版本号（否则缓存永不命中）。
+	before := s.RouteVersion()
+	if _, err := s.Channels().List(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.LogicalModels().Get(lm.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.RouteVersion(); got != before {
+		t.Fatalf("只读操作推进了 RouteVersion：%d → %d", before, got)
+	}
+
+	bump("logical model delete", func() error { return s.LogicalModels().Delete(lm.ID) })
+	bump("channel model delete", func() error {
+		ms, err := s.ChannelModels().ListByChannel(ch.ID)
+		if err != nil || len(ms) == 0 {
+			return err
+		}
+		return s.ChannelModels().Delete(ms[0].ID)
+	})
+	bump("channel delete", func() error { return s.Channels().Delete(ch.ID) })
+}

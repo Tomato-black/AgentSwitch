@@ -19,13 +19,15 @@
 
 **附带规则（本次新定）**：**状态绿与操作橙分离**。旧档 §2.3「一个颜色想法：Success = Accent」废除——Accent 变橙后，运行/健康状态若沿用 Accent 会与主操作同色（「运行中」看着像警告）。`Success` 改为独立绿色；LED 语义改为 running=绿、degraded/cooling=琥珀、failed=红、stopped=弱灰。
 
+**已知偏离（2026-10-21 用户决策，实测后定）**：LED 呼吸动画取消，running 改为**常亮静态点**——对 §2 非目标「保留 LED 呼吸」、§4 组件表「`ledDot`（保留）」、§5.3「大 LED（12px，绿呼吸）」与 §6「LED 呼吸、ReduceMotion 语义不变」的明示偏离。理由：`ui.Element.Loop` 会调 `c.AnimationFrame()` 让**整个视图**按显示刷新率重建（不只是那个点），实测空转常驻约 20% 单核、与网关流量无关；取消后空闲 CPU 为 0%（内存同时降约 20 MB）。状态语义由颜色 + 标签文字承载，不依赖动效；`ledDot` 头部注释已记录「不要加回 Loop/Animate」。
+
 **与旧档关系**：本文档**取代** `2026-10-17-desktop-ui-mygo-native-design.md` 的视觉系统（其 §2 设计原则第 3 条、§3 token 表、§5 各页视觉构成）与 `internal/desktop/theme.go` 现行 token 值；旧档的**交互语义与安全不变量全部保留**（令牌掩码、两段式删除确认、确认位绑定渠道、首关教育、状态来自实际服务状态等，见 §8）。实现落地时同步更新 `CLAUDE.md` 中对旧档的指称。UI 决策不变：全部 MyGo 原生视图，无前端工程。
 
 ## 2. 目标 / 非目标 / 反目标
 
 **目标**：三页（概览/渠道/模型）+ 侧栏全部按新视觉系统重做；渠道页信息架构重构为列表+详情页；明暗两套主题同步交付；所有现有功能与安全语义不丢。
 
-**非目标**：不加新业务功能（配额查询、用量统计、拖拽排序等 cc-switch 有而 AgentSwitch 没有的能力，一律不做）；不改 SQLite schema 与 bridge API（例外见 §5.3 的只读统计）；不做多语言；不引入动画堆砌（保留 LED 呼吸）。
+**非目标**：不加新业务功能（配额查询、用量统计、拖拽排序等 cc-switch 有而 AgentSwitch 没有的能力，一律不做）；不改 SQLite schema 与 bridge API（例外见 §5.3 的只读统计）；不做多语言；不引入动画堆砌（保留 LED 呼吸——2026-10-21 起改为常亮静态点，见 §1 已知偏离）。
 
 **反目标**（出现即算失败）：密钥/令牌明文出现在无遮蔽的位置；橙绿不分（状态色当操作色用）；卡片信息密度低到一屏放不下三个渠道；为好看牺牲既有二次确认流程。
 
@@ -85,7 +87,7 @@
 |---|---|---|
 | 卡片 | `Box.Radius(12).Background(Surface).Border(1, Border)` | 各页容器 |
 | 软徽章 | `Box.Radius(999)` + 软色板 bg/text | 首选/启用/冷却/停用/计数 |
-| LED | `ledDot`（保留），色改走 Success/Warning/Danger/TextMuted | 状态位、池状态 |
+| LED | `ledDot`（保留），色改走 Success/Warning/Danger/TextMuted；2026-10-21 起常亮不呼吸，见 §1 已知偏离 | 状态位、池状态 |
 | Switch | `ui.Switch`（开态=Accent，框架行为吻合） | 渠道启停、模型启停 |
 | Segmented | `SegmentedBase` 自组，选中片显式上 `Selected` 灰 | 详情页三段。**不可直接用 `ui.Segmented`**：其选中片取 `pressedColor()`=浅色 `Background`（toggle.go:45-54），白底白片会隐身 |
 | MenuButton | `ui.MenuButton` | 卡片「⋯」（测试/编辑/删除） |
@@ -123,7 +125,7 @@
 
 ### 5.3 概览页 — 四卡
 
-1. **状态 hero 卡**：大 LED（12px，绿呼吸）+ 状态词（16 粗体）+ 等宽 `http://127.0.0.1:port · 超时 Ns`；日志路径恒显为卡内第二行 mono（可诊断性照旧，**不做「日志」按钮**——无既有打开日志能力，按非目标不新增）；右侧「近 100 条 · N 失败」（内存环统计，中性徽章）+「停止网关」（danger 软底胶囊）/「启动网关」（Accent 主钮，仅 stopped/failed）。degraded/failed 时 hero 卡下出琥珀横幅（DegradedReason，语义照旧）。
+1. **状态 hero 卡**：大 LED（12px，绿呼吸；2026-10-21 起常亮，见 §1 已知偏离）+ 状态词（16 粗体）+ 等宽 `http://127.0.0.1:port · 超时 Ns`；日志路径恒显为卡内第二行 mono（可诊断性照旧，**不做「日志」按钮**——无既有打开日志能力，按非目标不新增）；右侧「近 100 条 · N 失败」（内存环统计，中性徽章）+「停止网关」（danger 软底胶囊）/「启动网关」（Accent 主钮，仅 stopped/failed）。degraded/failed 时 hero 卡下出琥珀横幅（DegradedReason，语义照旧）。
 2. **接入卡**：「接入 Claude Code」标题 + 片段代码块（`#FAFAFA`/深色 `#232327` 底、Radius 9、等宽 11.5，令牌行掩码不变量照旧）+ 按钮行（显示/隐藏、复制片段、重新生成——重新生成走 AlertDialog 确认）。
 3. **密钥池 + 设置** 并排两小卡：池卡 = `Success` 点「全部就绪 · n 把可用」或冷却 chips（渠道/密钥+剩余秒，琥珀）；设置卡 = 端口/超时输入 + 保存（现为 Collapsible，改常开小卡，保存语义与回显逻辑照旧）。
 4. **最近请求卡**：`ui.Table` 包进卡片；列改为 时间/模型/**渠道/密钥**（现 Account 列升级为 `Channel/Account` 两段显示）/状态/耗时/错误；状态码染 Success/Warning/Danger；错误列显示 ErrorClass + 「→ 已切换」类迁移标记（数据已有则显）。
@@ -134,7 +136,7 @@
 
 ## 6. 明暗主题
 
-`view` 根按 `c.Theme().Dark` 选边照旧；§3.2/§3.3 两套值成对实现。LED 呼吸、ReduceMotion 语义不变。深色下 Focus/Accent 微调值照表。
+`view` 根按 `c.Theme().Dark` 选边照旧；§3.2/§3.3 两套值成对实现。LED 呼吸、ReduceMotion 语义不变（2026-10-21 起 LED 改常亮静态点、不再有呼吸动效，见 §1 已知偏离；ReduceMotion 对 LED 不再适用）。深色下 Focus/Accent 微调值照表。
 
 ## 7. 验收标准
 

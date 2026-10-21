@@ -75,9 +75,25 @@ func lockedAccessEnv(appType string, st Status, modelName string) map[string]str
 	return nil
 }
 
+// accessSplitOneM 剥离值尾部 "[1M]"（大小写不敏感，返回基名与是否带标记）。
+func accessSplitOneM(v string) (string, bool) {
+	if len(v) >= 4 && strings.EqualFold(v[len(v)-4:], "[1M]") {
+		return v[:len(v)-4], true
+	}
+	return v, false
+}
+
+// mainModelOneM 判断文档 env 的主模型是否为「当前绑定模型名[1M]」的合法
+// 1M 声明（半锁定：模型名不可改，仅允许追加 [1M] 后缀）。
+func mainModelOneM(modelName string, docEnv map[string]string) bool {
+	base, oneM := accessSplitOneM(docEnv["ANTHROPIC_MODEL"])
+	return oneM && base == modelName
+}
+
 // composeAccessEnv 合成应写入 Agent 的 env：base → global → docEnv → 锁定回写。
 // 语义与拆分前完全一致（测试钉死）；claude 的 ANTHROPIC_SMALL_FAST_MODEL 只作
-// 默认值，允许被 docEnv 覆盖。
+// 默认值，允许被 docEnv 覆盖。ANTHROPIC_MODEL 为半锁定键：文档中的
+// 「模型名[1M]」声明在回写时保留后缀（2026-10-21 主模型 1M）。
 func composeAccessEnv(appType string, st Status, modelName string, global, docEnv map[string]string) (map[string]string, error) {
 	base, err := baseAccessEnv(appType, st, modelName)
 	if err != nil {
@@ -97,13 +113,17 @@ func composeAccessEnv(appType string, st Status, modelName string, global, docEn
 	for k, v := range locked { // 4. 重新写回不可篡改基础键（恒定）
 		env[k] = v
 	}
+	if appType == "claude" && mainModelOneM(modelName, docEnv) { // 5. 半锁定主模型的 1M 声明
+		env["ANTHROPIC_MODEL"] = modelName + "[1M]"
+	}
 	return env, nil
 }
 
 // normalizeAccessEnv 保存归一化（spec 2026-10-19 §5.2）：1) 锁定键恒剔除
-// （网关自动生成，改了无效）；2) 值与「无文档层合成结果」（基础键+全局）相同
-// 的键剔除——视为未定制、保持继承语义，防止编辑器展示的合成结果在直接保存时
-// 把全局键与默认值冻结成覆盖项。
+// （网关自动生成，改了无效）——例外：claude 的 ANTHROPIC_MODEL 为半锁定，
+// 「绑定模型名[1M]」合法保留（2026-10-21 主模型 1M）；2) 值与「无文档层合成结果」
+// （基础键+全局）相同的键剔除——视为未定制、保持继承语义，防止编辑器展示的合成
+// 结果在直接保存时把全局键与默认值冻结成覆盖项。
 func normalizeAccessEnv(appType string, st Status, modelName string, global, docEnv map[string]string) (map[string]string, error) {
 	base, err := baseAccessEnv(appType, st, modelName)
 	if err != nil {
@@ -120,6 +140,11 @@ func normalizeAccessEnv(appType string, st Status, modelName string, global, doc
 	out := map[string]string{}
 	for k, v := range docEnv {
 		if _, isLocked := locked[k]; isLocked {
+			// 半锁定主模型：仅保留「绑定模型名[1M]」的能力声明（规范为
+			// [1M]）；纯名视为未定制、基名不匹配视为篡改，均剔除。
+			if appType == "claude" && k == "ANTHROPIC_MODEL" && mainModelOneM(modelName, docEnv) {
+				out[k] = modelName + "[1M]"
+			}
 			continue
 		}
 		if bv, ok := baseline[k]; ok && bv == v {
@@ -165,13 +190,10 @@ func (s AccessConfigs) composeFor(c storage.AccessConfig) (map[string]string, ma
 	return env, doc, lm.Name, nil
 }
 
-// gatewayTokenPlaceholder 是合成预览中网关令牌的遮蔽占位符（spec 2026-10-19
-// §3.4：UI 永不展示令牌真值；保存路径剔除锁定键，占位符永不落库）。
-const gatewayTokenPlaceholder = "__GATEWAY_TOKEN__"
-
 // PreviewDoc 返回「应用该文档后 Agent env 的样子」：base → global → 文档 env →
-// 锁定回写，令牌键遮蔽为占位符；文档顶层键原样保留。编辑器打开与主模型切换时
-// 调用。逻辑模型必须存在。
+// 锁定回写；文档顶层键原样保留。编辑器打开与主模型切换时调用。逻辑模型必须
+// 存在。令牌键渲染真实网关令牌（2026-10-21 用户裁定，取代 spec 2026-10-19
+// §3.4 的遮蔽占位符）；保存路径仍剔除锁定键，令牌永不落库。
 func (s AccessConfigs) PreviewDoc(appType, logicalModelID, settingsJSON string) (string, error) {
 	lm, err := s.A.Store().LogicalModels().Get(logicalModelID)
 	if err != nil {
@@ -192,12 +214,6 @@ func (s AccessConfigs) PreviewDoc(appType, logicalModelID, settingsJSON string) 
 	composed, err := composeAccessEnv(appType, st, lm.Name, global, env)
 	if err != nil {
 		return "", err
-	}
-	switch appType {
-	case "claude":
-		composed["ANTHROPIC_AUTH_TOKEN"] = gatewayTokenPlaceholder
-	case "codex":
-		composed["OPENAI_API_KEY"] = gatewayTokenPlaceholder
 	}
 	envAny := make(map[string]any, len(composed))
 	for k, v := range composed {
@@ -323,7 +339,7 @@ func parseAccessDoc(appType, raw string) (map[string]any, map[string]string, err
 // 不猜测修复）；文档顶层键逐键写入（env 键除外——env 走合成结果；同键替换，
 // live 中不在文档的键保留，spec 2026-10-19 §4.1 只增改不删除）；确保 env
 // 子对象存在，同键替换写入合成 env 全部键；文件里不在本次合成 env 中的键
-//（用户其他 env）与非受管顶层键原样保留；0600 原子写回（同目录 CreateTemp
+// （用户其他 env）与非受管顶层键原样保留；0600 原子写回（同目录 CreateTemp
 // → chmod → write → close → rename）。本方法不写任何日志——写入值含网关
 // 令牌（spec §9 脱敏）。
 func (s AccessConfigs) writeClaudeLive(doc map[string]any, env map[string]string) error {

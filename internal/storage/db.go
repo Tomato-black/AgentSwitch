@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 
 	"AgentSwitch/internal/credential"
 	_ "modernc.org/sqlite"
@@ -84,6 +85,8 @@ var migrations = []struct {
 type dbStore struct {
 	db  *sql.DB
 	key *credential.MasterKey
+	// routeVer 见 Store.RouteVersion；四个路由相关 repo 共享同一计数。
+	routeVer atomic.Uint64
 }
 
 func Open(path string) (Store, error) {
@@ -281,13 +284,18 @@ func NewID() string {
 	return hex.EncodeToString(b)
 }
 
-func (s *dbStore) Channels() ChannelRepo           { return &channelRepo{s.db} }
-func (s *dbStore) ChannelModels() ChannelModelRepo { return &channelModelRepo{s.db} }
-func (s *dbStore) LogicalModels() LogicalModelRepo { return &logicalModelRepo{s.db} }
+func (s *dbStore) Channels() ChannelRepo { return &channelRepo{db: s.db, ver: &s.routeVer} }
+func (s *dbStore) ChannelModels() ChannelModelRepo {
+	return &channelModelRepo{db: s.db, ver: &s.routeVer}
+}
+func (s *dbStore) LogicalModels() LogicalModelRepo {
+	return &logicalModelRepo{db: s.db, ver: &s.routeVer}
+}
 func (s *dbStore) LogicalModelTargets() LogicalModelTargetRepo {
-	return &logicalModelTargetRepo{s.db}
+	return &logicalModelTargetRepo{db: s.db, ver: &s.routeVer}
 }
 func (s *dbStore) AccessConfigs() AccessConfigRepo { return &accessConfigRepo{s.db} }
 func (s *dbStore) Secrets() SecretRepo             { return &secretStore{db: s.db, key: s.key} }
 func (s *dbStore) Settings() SettingsRepo          { return &settingsRepo{s.db} }
+func (s *dbStore) RouteVersion() uint64            { return s.routeVer.Load() }
 func (s *dbStore) Close() error                    { return s.db.Close() }

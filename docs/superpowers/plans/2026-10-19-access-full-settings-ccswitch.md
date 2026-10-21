@@ -2,6 +2,10 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **2026-10-21 修订**：本计划中「令牌遮蔽为 `__GATEWAY_TOKEN__`」的全局约束与
+> `PreviewDoc`/桌面测试条目已被用户裁定取代——预览与编辑器默认渲染真实网关
+> 令牌（保存路径仍剔除锁定键、令牌永不落库）。以 spec §3.4 修订版为准。
+
 **Goal:** 接入配置从「env 覆盖项」升级为「完整 settings JSON 文档」，编辑器重做为 cc-switch 式「角色映射表 + 配置 JSON 双向同步」，网关三键锁定、令牌遮蔽、`[1M]` 后缀路由剥离。
 
 **Architecture:** 删库重建（schema 合并单一 v1，`access_configs.settings` 列取代 `overrides`）；bridge 层新增文档解析/保存归一化/合成预览（`PreviewDoc` 令牌遮蔽）；写 live 升级为「env 合成合并 + 文档顶层键逐键写入」；router 入口剥离 `[1M]`；desktop 编辑器卡以 JSON 文本为唯一共享存储、表单为双向同步视图。

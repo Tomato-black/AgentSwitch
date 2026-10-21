@@ -202,6 +202,28 @@ func TestAccessRepreviewForm(t *testing.T) {
 	}
 }
 
+// TestAccessPreloadFormRendersGatewayToken 回归（2026-10-21 用户裁定）：编辑器
+// 打开时默认渲染真实网关令牌，不再显示 __GATEWAY_TOKEN__ 遮蔽占位符。
+func TestAccessPreloadFormRendersGatewayToken(t *testing.T) {
+	u, a := testUI(t)
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	u.accessApp = "claude"
+	u.accessForm = accessForm{open: true}
+	u.accessPreloadForm(u.accessSvc())
+	token := u.svc.Gateway.Status().Token
+	if token == "" {
+		t.Fatal("前提不成立：网关令牌应已生成")
+	}
+	if !strings.Contains(u.accessForm.docJSON, token) {
+		t.Fatalf("编辑器应默认渲染真实令牌: %s", u.accessForm.docJSON)
+	}
+	if strings.Contains(u.accessForm.docJSON, "__GATEWAY_TOKEN__") {
+		t.Fatalf("编辑器不应再出现遮蔽占位符: %s", u.accessForm.docJSON)
+	}
+}
+
 func TestAccessParseOneM(t *testing.T) {
 	cases := map[string][2]any{
 		"my-code[1M]": {"my-code", true},
@@ -242,6 +264,36 @@ func TestAccessRoleRoundTrip(t *testing.T) {
 	name2, oneM2 := accessParseOneM(env2["CLAUDE_CODE_SUBAGENT_MODEL"])
 	if name2 != "" || oneM2 {
 		t.Fatal("空值应回落跟随主模型")
+	}
+}
+
+// 主模型 1M（2026-10-21）：文档 env 的 ANTHROPIC_MODEL 带 [1M] 时回填勾选；
+// 勾选/取消把「逻辑模型名[1M]」/纯名写回文档（保存归一化再剔除纯名）。
+func TestAccessMainModelOneMPatchAndSync(t *testing.T) {
+	u := &uiState{}
+	u.accessApp = "claude"
+	u.accessForm = accessForm{modelLabel: "my-code", docJSON: `{"env":{"ANTHROPIC_MODEL":"my-code[1M]"}}`}
+	u.accessSyncRolesFromDoc()
+	if !u.accessForm.mainOneM {
+		t.Fatal("应从文档回填 1M 勾选")
+	}
+	u.accessForm.mainOneM = false
+	u.accessPatchMainModel()
+	env, err := accessDocEnvStrings(u.accessForm.docJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env["ANTHROPIC_MODEL"] != "my-code" {
+		t.Fatal(u.accessForm.docJSON)
+	}
+	u.accessForm.mainOneM = true
+	u.accessPatchMainModel()
+	env, err = accessDocEnvStrings(u.accessForm.docJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env["ANTHROPIC_MODEL"] != "my-code[1M]" {
+		t.Fatal(u.accessForm.docJSON)
 	}
 }
 

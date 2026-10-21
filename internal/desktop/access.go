@@ -2,8 +2,9 @@
 // （Claude Code / Codex CLI）多实际配置 + 全局配置（合并进所有实际配置），
 // 「应用」即受管键投影写入 agent 真实配置文件；未应用的配置经持久文件 +
 // 启动命令 / 「打开终端」在启动 Agent 时手动指定。取代旧「片段复制」页
-// （旧 bridge.Access 已删除）。令牌展示不落本页（命令复制给真值、文件由
-// bridge 层写），审计与错误经 bridge 方法返回的中文文案内联显示。
+// （旧 bridge.Access 已删除）。编辑器默认渲染真实网关令牌（2026-10-21 用户
+// 裁定）；保存时锁定键仍由 bridge 剔除、令牌永不落库。审计与错误经 bridge
+// 方法返回的中文文案内联显示。
 package desktop
 
 import (
@@ -20,8 +21,8 @@ import (
 )
 
 // accessForm 是接入配置新建/编辑表单状态（open 非空即编辑）。docJSON 是唯一
-// 共享存储（spec 2026-10-19 §5.2）：编辑器显示 PreviewDoc 合成结果（令牌已
-// 遮蔽），保存原文送 bridge 归一化。
+// 共享存储（spec 2026-10-19 §5.2）：编辑器显示 PreviewDoc 合成结果（含真实
+// 网关令牌），保存原文送 bridge 归一化。
 type accessForm struct {
 	open       bool
 	editID     string // 非空 = 编辑该配置
@@ -33,6 +34,8 @@ type accessForm struct {
 	roleModels []string
 	roleNames  []string
 	roleOneM   []bool
+	// mainOneM 是主模型 1M 勾选（ANTHROPIC_MODEL 半锁定后缀，由 docJSON 回填）
+	mainOneM bool
 }
 
 // accessTabTitles 返回两个 Agent tab 的标题（字符串快照锚点）。
@@ -167,6 +170,7 @@ func (u *uiState) accessSyncRolesFromDoc() {
 		return
 	}
 	f := &u.accessForm
+	_, f.mainOneM = accessParseOneM(env["ANTHROPIC_MODEL"])
 	for len(f.roleModels) < len(accessClaudeRoles) {
 		f.roleModels = append(f.roleModels, accessRoleFollow)
 		f.roleNames = append(f.roleNames, "")
@@ -205,6 +209,21 @@ func (u *uiState) accessPatchRole(i int) {
 		if raw, err := accessDocSetEnv(f.docJSON, r.nameKey, strings.TrimSpace(f.roleNames[i])); err == nil {
 			f.docJSON = raw
 		}
+	}
+}
+
+// accessPatchMainModel 主模型 1M 勾选 → 文档 env 补丁（ANTHROPIC_MODEL =
+// 逻辑模型名[1M]；未勾选写纯名，保存时被归一化剔除、保持继承）。
+func (u *uiState) accessPatchMainModel() {
+	val := u.accessForm.modelLabel
+	if val == "" {
+		return
+	}
+	if u.accessForm.mainOneM {
+		val += "[1M]"
+	}
+	if raw, err := accessDocSetEnv(u.accessForm.docJSON, "ANTHROPIC_MODEL", val); err == nil {
+		u.accessForm.docJSON = raw
 	}
 }
 
@@ -518,7 +537,7 @@ func (u *uiState) accessConfigRow(c *ui.Context, t *ui.Theme, s softPalette, acc
 }
 
 // accessEditorCard 渲染新建/编辑表单（spec 2026-10-19 §5.1）：名称、逻辑模型
-// 下拉（主模型，锁定键）、网关只读行、配置 JSON（TextArea，令牌已遮蔽）。
+// 下拉（主模型，锁定键）、网关只读行、配置 JSON（TextArea，令牌渲染真值）。
 // 保存原文送 bridge（校验+归一化在 bridge）。
 func (u *uiState) accessEditorCard(c *ui.Context, t *ui.Theme, s softPalette, acc bridge.AccessConfigs, gateOK bool) {
 	card(c, t, func() {
@@ -555,8 +574,19 @@ func (u *uiState) accessEditorCard(c *ui.Context, t *ui.Theme, s softPalette, ac
 								map[string]string{"ANTHROPIC_SMALL_FAST_MODEL": prev}); err == nil {
 								u.accessForm.docJSON = rebased
 							}
+							if u.accessForm.mainOneM {
+								u.accessPatchMainModel() // 1M 声明跟随新模型名
+							}
 						}
 						u.accessRepreviewForm(acc)
+					}
+					if u.accessApp == "claude" {
+						beforeM := u.accessForm.mainOneM
+						cb := ui.Checkbox(c, &u.accessForm.mainOneM, "1M")
+						if cb.Changed() && u.accessForm.mainOneM != beforeM {
+							u.accessPatchMainModel()
+							u.accessRepreviewForm(acc)
+						}
 					}
 				}
 			})
@@ -591,9 +621,9 @@ func (u *uiState) accessEditorCard(c *ui.Context, t *ui.Theme, s softPalette, ac
 			}
 
 			st := u.svc.Gateway.Status()
-			ui.Text(c, fmt.Sprintf("网关地址 http://127.0.0.1:%d · 令牌自动生成（不在本页展示）", st.Port)).TextColor(t.TextMuted)
+			ui.Text(c, fmt.Sprintf("网关地址 http://127.0.0.1:%d · 令牌自动生成并填入下方 JSON（保存时自动剔除，不落库）", st.Port)).TextColor(t.TextMuted)
 
-			ui.Text(c, "配置 JSON（最终写入 Agent 的完整文档；网关地址/令牌/模型三键自动锁定）").TextColor(t.TextMuted)
+			ui.Text(c, "配置 JSON（最终写入 Agent 的完整文档；网关地址/令牌自动锁定，模型名仅可追加 1M 声明）").TextColor(t.TextMuted)
 			ta := ui.TextArea(c, &u.accessForm.docJSON).Height(320).Grow(1)
 			if ta.Changed() {
 				u.accessSyncRolesFromDoc()
