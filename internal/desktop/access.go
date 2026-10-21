@@ -271,114 +271,118 @@ func (u *uiState) accessPage(c *ui.Context) {
 	claudeTitle, codexTitle := accessTabTitles()
 	gateOK, gateReason := u.accessGatewayGate()
 
-	ui.Column(c).Gap(12).Children(func() {
-		// Agent tab 行（切 tab 重置编辑态，避免表单跨 Agent 误存）
-		ui.Row(c).Gap(8).Children(func() {
-			if softButton(c, t, s, tabKind(u.accessApp == "claude"), claudeTitle).Clicked() {
-				u.accessApp = "claude"
-				u.accessMsg = ""
-				u.accessForm = accessForm{}
+	// 内容列包 Scroll（同 channels/logicalmodels 的长页面）：编辑器（角色表 +
+	// 320 高 TextArea）会让页面超出视口，没有滚动容器时底部内容不可达。
+	ui.Scroll(c).Grow(1).Children(func() {
+		ui.Column(c).Gap(12).Children(func() {
+			// Agent tab 行（切 tab 重置编辑态，避免表单跨 Agent 误存）
+			ui.Row(c).Gap(8).Children(func() {
+				if softButton(c, t, s, tabKind(u.accessApp == "claude"), claudeTitle).Clicked() {
+					u.accessApp = "claude"
+					u.accessMsg = ""
+					u.accessForm = accessForm{}
+					u.accessReloadGlobal(acc)
+				}
+				if softButton(c, t, s, tabKind(u.accessApp == "codex"), codexTitle).Clicked() {
+					u.accessApp = "codex"
+					u.accessMsg = ""
+					u.accessForm = accessForm{}
+					u.accessReloadGlobal(acc)
+				}
+			})
+			if u.accessGlob == nil {
 				u.accessReloadGlobal(acc)
 			}
-			if softButton(c, t, s, tabKind(u.accessApp == "codex"), codexTitle).Clicked() {
-				u.accessApp = "codex"
-				u.accessMsg = ""
-				u.accessForm = accessForm{}
-				u.accessReloadGlobal(acc)
-			}
-		})
-		if u.accessGlob == nil {
-			u.accessReloadGlobal(acc)
-		}
 
-		// 全局配置卡
-		card(c, t, func() {
-			ui.Column(c).Gap(10).Children(func() {
-				ui.Text(c, "全局配置").Bold()
-				ui.Text(c, "以下环境变量会应用到本 Agent 的所有实际配置（实际配置的同名覆盖项优先）").TextColor(t.TextMuted)
-				// 行内删除只记下标，循环结束后统一应用——构建中改切片会
-				// 越界（logicalmodels.go 同款注释与模式）。
-				globDel := -1
-				for i := range u.accessGlob {
-					row := &u.accessGlob[i]
-					ui.Row(c).Gap(8).Children(func() {
-						ui.TextInput(c, &row[0]).Width(220).Placeholder("键")
-						ui.TextInput(c, &row[1]).Grow(1).Placeholder("值")
-						if softButton(c, t, s, "danger", "删除").Clicked() {
-							globDel = i
-						}
-					})
-				}
-				if globDel >= 0 {
-					u.accessGlob = append(u.accessGlob[:globDel], u.accessGlob[globDel+1:]...)
-				}
-				ui.Row(c).Gap(8).Children(func() {
-					if softButton(c, t, s, "gray", "＋ 添加一项").Clicked() {
-						u.accessGlob = append(u.accessGlob, [2]string{})
+			// 全局配置卡
+			card(c, t, func() {
+				ui.Column(c).Gap(10).Children(func() {
+					ui.Text(c, "全局配置").Bold()
+					ui.Text(c, "以下环境变量会应用到本 Agent 的所有实际配置（实际配置的同名覆盖项优先）").TextColor(t.TextMuted)
+					// 行内删除只记下标，循环结束后统一应用——构建中改切片会
+					// 越界（logicalmodels.go 同款注释与模式）。
+					globDel := -1
+					for i := range u.accessGlob {
+						row := &u.accessGlob[i]
+						ui.Row(c).Gap(8).Children(func() {
+							ui.TextInput(c, &row[0]).Width(220).Placeholder("键")
+							ui.TextInput(c, &row[1]).Grow(1).Placeholder("值")
+							if softButton(c, t, s, "danger", "删除").Clicked() {
+								globDel = i
+							}
+						})
 					}
-					if softButton(c, t, s, "act", "保存全局配置").Clicked() {
-						// 行绑定随输入即时更新，此处 u.accessGlob 已是待保存
-						// 的新值；重定位旧派生值需要保存前的持久基线。
-						oldGlobal, _ := acc.GlobalConfig(u.accessApp)
-						if err := acc.SaveGlobalConfig(u.accessApp, accessOverridesFromRows(u.accessGlob)); err != nil {
-							u.accessGlobMsg = err.Error()
-						} else {
-							u.accessGlobMsg = "已保存"
-							// 编辑器打开时全局基线变了：删除旧基线派生值并
-							// 按新基线与当前表单模型重预览（Important#1）。
-							if u.accessForm.open {
-								if rebased, err := bridge.RebaseAccessDoc(u.accessApp, u.accessForm.docJSON, oldGlobal); err == nil {
-									u.accessForm.docJSON = rebased
+					if globDel >= 0 {
+						u.accessGlob = append(u.accessGlob[:globDel], u.accessGlob[globDel+1:]...)
+					}
+					ui.Row(c).Gap(8).Children(func() {
+						if softButton(c, t, s, "gray", "＋ 添加一项").Clicked() {
+							u.accessGlob = append(u.accessGlob, [2]string{})
+						}
+						if softButton(c, t, s, "act", "保存全局配置").Clicked() {
+							// 行绑定随输入即时更新，此处 u.accessGlob 已是待保存
+							// 的新值；重定位旧派生值需要保存前的持久基线。
+							oldGlobal, _ := acc.GlobalConfig(u.accessApp)
+							if err := acc.SaveGlobalConfig(u.accessApp, accessOverridesFromRows(u.accessGlob)); err != nil {
+								u.accessGlobMsg = err.Error()
+							} else {
+								u.accessGlobMsg = "已保存"
+								// 编辑器打开时全局基线变了：删除旧基线派生值并
+								// 按新基线与当前表单模型重预览（Important#1）。
+								if u.accessForm.open {
+									if rebased, err := bridge.RebaseAccessDoc(u.accessApp, u.accessForm.docJSON, oldGlobal); err == nil {
+										u.accessForm.docJSON = rebased
+									}
+									u.accessRepreviewForm(acc)
 								}
-								u.accessRepreviewForm(acc)
 							}
 						}
-					}
-				})
-				if u.accessGlobMsg != "" {
-					ui.Text(c, u.accessGlobMsg).TextColor(t.TextMuted)
-				}
-			})
-		})
-
-		// 实际配置列表卡
-		card(c, t, func() {
-			ui.Column(c).Gap(10).Children(func() {
-				ui.Text(c, "实际配置").Bold()
-				if !gateOK {
-					ui.Text(c, gateReason).TextColor(t.TextMuted)
-				}
-				list := acc.List(u.accessApp)
-				if len(list) == 0 {
-					ui.Text(c, "还没有配置——点击下方「新建配置」创建").TextColor(t.TextMuted)
-				}
-				hasCurrent := false
-				for _, v := range list {
-					if v.IsCurrent {
-						hasCurrent = true
-					}
-					u.accessConfigRow(c, t, s, acc, v, gateOK)
-				}
-				if len(list) > 0 && !hasCurrent {
-					ui.Text(c, "当前没有配置被应用，Agent 仍使用其原配置文件").TextColor(t.TextMuted)
-				}
-				if u.accessMsg != "" {
-					ui.Text(c, u.accessMsg).TextColor(t.TextMuted)
-				}
-				ui.Row(c).Children(func() {
-					ui.Box(c).Grow(1)
-					if pillButton(c, t, "＋ 新建配置").Clicked() {
-						u.accessForm = accessForm{open: true}
-						u.accessPreloadForm(acc)
+					})
+					if u.accessGlobMsg != "" {
+						ui.Text(c, u.accessGlobMsg).TextColor(t.TextMuted)
 					}
 				})
 			})
-		})
 
-		// 编辑器卡（Task 15 表单）
-		if u.accessForm.open {
-			u.accessEditorCard(c, t, s, acc, gateOK)
-		}
+			// 实际配置列表卡
+			card(c, t, func() {
+				ui.Column(c).Gap(10).Children(func() {
+					ui.Text(c, "实际配置").Bold()
+					if !gateOK {
+						ui.Text(c, gateReason).TextColor(t.TextMuted)
+					}
+					list := acc.List(u.accessApp)
+					if len(list) == 0 {
+						ui.Text(c, "还没有配置——点击下方「新建配置」创建").TextColor(t.TextMuted)
+					}
+					hasCurrent := false
+					for _, v := range list {
+						if v.IsCurrent {
+							hasCurrent = true
+						}
+						u.accessConfigRow(c, t, s, acc, v, gateOK)
+					}
+					if len(list) > 0 && !hasCurrent {
+						ui.Text(c, "当前没有配置被应用，Agent 仍使用其原配置文件").TextColor(t.TextMuted)
+					}
+					if u.accessMsg != "" {
+						ui.Text(c, u.accessMsg).TextColor(t.TextMuted)
+					}
+					ui.Row(c).Children(func() {
+						ui.Box(c).Grow(1)
+						if pillButton(c, t, "＋ 新建配置").Clicked() {
+							u.accessForm = accessForm{open: true}
+							u.accessPreloadForm(acc)
+						}
+					})
+				})
+			})
+
+			// 编辑器卡（Task 15 表单）
+			if u.accessForm.open {
+				u.accessEditorCard(c, t, s, acc, gateOK)
+			}
+		})
 	})
 }
 
@@ -403,7 +407,7 @@ func (u *uiState) accessReloadGlobal(acc bridge.AccessConfigs) {
 }
 
 // accessPreloadForm 打开编辑器：预填名称/模型，加载 PreviewDoc 合成预览
-//（新建以 "{}" 为底；预览失败回退原文并内联报错）。
+// （新建以 "{}" 为底；预览失败回退原文并内联报错）。
 func (u *uiState) accessPreloadForm(acc bridge.AccessConfigs) {
 	f := &u.accessForm
 	var models []bridge.ModelView

@@ -65,6 +65,30 @@ func TestAccessPageRenders(t *testing.T) {
 	}
 }
 
+// TestAccessPageScrollsWhenEditorOpen 回归：编辑器打开后接入页内容超出视口，
+// 页面必须可纵向滚动到底部的保存按钮（此前缺 Scroll 容器，底部内容不可达）。
+func TestAccessPageScrollsWhenEditorOpen(t *testing.T) {
+	u, _ := testUI(t)
+	u.page = "access"
+	u.accessForm = accessForm{open: true}
+	tt := ui.NewTester(u.view, 900, 600)
+	before, ok := tt.Find("保存")
+	if !ok {
+		t.Fatalf("编辑器卡未渲染：%v", tt.Texts())
+	}
+	if before.Y < 600 {
+		t.Fatalf("前置条件不成立：保存按钮已在视口内 y=%v", before.Y)
+	}
+	tt.Scroll(450, 300, 0, 1000)
+	after, ok := tt.Find("保存")
+	if !ok {
+		t.Fatal("滚动后保存按钮从标签树消失")
+	}
+	if after.Y >= 600 {
+		t.Fatalf("接入页不可滚动：保存按钮滚动前后 y=%v → %v", before.Y, after.Y)
+	}
+}
+
 // TestAccessGlobalRowsOrdered 覆盖全局配置编辑行的键序稳定（字典序）。
 func TestAccessGlobalRowsOrdered(t *testing.T) {
 	rows := accessGlobalRows(map[string]string{"b": "2", "a": "1"})
