@@ -12,6 +12,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"AgentSwitch/internal/protocol"
 )
 
 func TestValidateBaseURL(t *testing.T) {
@@ -624,12 +626,83 @@ func TestWrapPassthroughStreamTerminalAcrossChunks(t *testing.T) {
 			t.Fatalf("out = %q", out)
 		}
 	})
-	t.Run("truncated marker still appends error", func(t *testing.T) {
+	t.Run("truncated marker still appends error on fresh event boundary", func(t *testing.T) {
 		const stream = "data: a\n\ndata: [DON"
 		out, _ := io.ReadAll(WrapPassthroughStream(context.Background(),
 			&oneByteReader{data: stream}, []byte("ERR\n\n"), "[DONE]"))
-		if string(out) != stream+"ERR\n\n" {
+		// 残块停在事件中途：error 事件前必须补 \n\n，不能与残缺事件粘连。
+		if string(out) != stream+"\n\nERR\n\n" {
 			t.Fatalf("out = %q", out)
+		}
+	})
+}
+
+// TestWrapPassthroughStreamEventAware 锁定两件事：终止标记只在完整 SSE 事件内
+// 匹配（正文中的同名字面量不算正常结束）；追加错误事件前补齐事件边界。
+func TestWrapPassthroughStreamEventAware(t *testing.T) {
+	t.Run("openai truncation mid-event gets fresh boundary", func(t *testing.T) {
+		const prefix = `data: {"choices":[{"delta":{"content":"par"}`
+		errChunk := protocol.OpenAIStreamErrorChunk("upstream stream interrupted")
+		out, _ := io.ReadAll(WrapPassthroughStream(context.Background(),
+			io.NopCloser(strings.NewReader(prefix)), errChunk, "[DONE]"))
+		if !strings.HasPrefix(string(out), prefix) {
+			t.Fatalf("prefix must be unchanged:\n%s", out)
+		}
+		if !strings.Contains(string(out), "\n\ndata: {\"error\"") {
+			t.Fatalf("error event must start on a fresh SSE boundary:\n%s", out)
+		}
+	})
+
+	t.Run("anthropic truncation mid-event gets fresh boundary", func(t *testing.T) {
+		const prefix = "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"par\""
+		errEvent := protocol.AnthropicErrorEvent("upstream stream interrupted")
+		out, _ := io.ReadAll(WrapPassthroughStream(context.Background(),
+			io.NopCloser(strings.NewReader(prefix)), errEvent,
+			"event: message_stop", "event: error"))
+		if !strings.HasPrefix(string(out), prefix) {
+			t.Fatalf("prefix must be unchanged:\n%s", out)
+		}
+		if !strings.Contains(string(out), "\n\nevent: error") {
+			t.Fatalf("error event must start on a fresh SSE boundary:\n%s", out)
+		}
+	})
+
+	t.Run("terminal literals inside JSON content are not terminal", func(t *testing.T) {
+		const stream = `data: {"choices":[{"delta":{"content":"discuss [DONE] and event: message_stop"}}]}` + "\n\n"
+		errChunk := protocol.OpenAIStreamErrorChunk("upstream stream interrupted")
+		out, _ := io.ReadAll(WrapPassthroughStream(context.Background(),
+			io.NopCloser(strings.NewReader(stream)), errChunk, "[DONE]", "event: message_stop"))
+		if string(out) != stream+string(errChunk) {
+			t.Fatalf("literal terminal text in content must not suppress truncation:\n%s", out)
+		}
+	})
+
+	t.Run("read error after terminal marker appends nothing", func(t *testing.T) {
+		const stream = "data: [DONE]\n\n"
+		src := &errAfterReader{data: stream}
+		out, _ := io.ReadAll(WrapPassthroughStream(context.Background(), src, []byte("ERR\n\n"), "[DONE]"))
+		if string(out) != stream {
+			t.Fatalf("terminal seen: later read error must not append a second error:\n%s", out)
+		}
+	})
+
+	t.Run("finish_reason-only stream is normal", func(t *testing.T) {
+		const stream = `data: {"choices":[{"delta":{},"finish_reason":"stop"}]}` + "\n\n"
+		out, _ := io.ReadAll(WrapPassthroughStream(context.Background(),
+			io.NopCloser(strings.NewReader(stream)), []byte("ERR\n\n"),
+			"[DONE]", `"finish_reason":"`))
+		if string(out) != stream {
+			t.Fatalf("finish_reason-only stream must pass through unchanged:\n%s", out)
+		}
+	})
+
+	t.Run("null finish_reason is not terminal", func(t *testing.T) {
+		const stream = `data: {"choices":[{"delta":{},"finish_reason":null}]}` + "\n\n"
+		out, _ := io.ReadAll(WrapPassthroughStream(context.Background(),
+			io.NopCloser(strings.NewReader(stream)), []byte("ERR\n\n"),
+			"[DONE]", `"finish_reason":"`))
+		if string(out) != stream+"ERR\n\n" {
+			t.Fatalf("null finish_reason must still count as truncation:\n%s", out)
 		}
 	})
 }
