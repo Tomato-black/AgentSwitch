@@ -420,23 +420,29 @@ func (t *OpenAIStreamTransformer) closeText() {
 }
 
 // emitTools 收口一次性发累积中的 tool_use 块（spec §5.3.3：按 index 累积、
-// 收口整块发出）。按上游 index 升序，Anthropic 块 index 用 t.blockIdx 单调
-// 分配；参数 JSON 解析失败的块整块丢弃并计入 DroppedTools。
-func (t *OpenAIStreamTransformer) emitTools() {
+// 收口整块发出），返回实际发出的块数。按上游 index 升序，Anthropic 块 index
+// 用 t.blockIdx 单调分配；参数 JSON 解析失败的块整块丢弃并计入 DroppedTools。
+func (t *OpenAIStreamTransformer) emitTools() int {
 	if len(t.tools) == 0 {
-		return
+		return 0
 	}
 	idxs := make([]int, 0, len(t.tools))
 	for i := range t.tools {
 		idxs = append(idxs, i)
 	}
 	sort.Ints(idxs)
+	emitted := 0
 	for _, i := range idxs {
 		acc := t.tools[i]
+		args := acc.args.String()
+		if args == "" {
+			// 空 arguments 是「无参工具」的合法表示，按 {} 下发。
+			args = "{}"
+		}
 		// 参数 JSON 不完整的块（上游 bug 或截断）不能下发：退化成 {} 会让
 		// 客户端以空参数执行工具，丢弃并计数由上层告警。
 		var input map[string]any
-		if err := json.Unmarshal([]byte(acc.args.String()), &input); err != nil {
+		if err := json.Unmarshal([]byte(args), &input); err != nil {
 			t.droppedTools++
 			continue
 		}
@@ -453,8 +459,10 @@ func (t *OpenAIStreamTransformer) emitTools() {
 		})
 		t.emit("content_block_stop", map[string]any{"type": "content_block_stop", "index": t.blockIdx})
 		t.blockIdx++
+		emitted++
 	}
 	t.tools = map[int]*toolAcc{}
+	return emitted
 }
 
 // close 收口全部打开块（text 即时块 + 累积中的 tool 块）并发
@@ -465,7 +473,12 @@ func (t *OpenAIStreamTransformer) close(reason string) {
 	}
 	t.finished = true
 	t.closeText()
-	t.emitTools()
+	emitted := t.emitTools()
+	// 全部工具块因参数残缺被丢弃时，声明 tool_use 会让客户端等待一个不存在的
+	// 工具块；降级为 end_turn（droppedTools 已计数，由上层告警）。
+	if reason == "tool_use" && emitted == 0 {
+		reason = "end_turn"
+	}
 	t.emit("message_delta", map[string]any{
 		"type":  "message_delta",
 		"delta": map[string]any{"stop_reason": reason, "stop_sequence": nil},

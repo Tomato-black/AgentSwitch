@@ -400,6 +400,50 @@ func TestStreamTransformerDropsIncompleteToolArgs(t *testing.T) {
 	}
 }
 
+// 空 arguments 是「无参工具」的合法表示，必须按 {} 下发，不算丢弃。
+func TestStreamTransformerEmptyToolArgsKept(t *testing.T) {
+	tu := NewOpenAIStreamTransformer()
+	var acc []byte
+	acc = append(acc, tu.Feed([]byte(
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"Noop","arguments":""}}]}}]}`+"\n\n"))...)
+	acc = append(acc, tu.Feed([]byte(
+		`data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`+"\n\n"))...)
+	out := string(acc)
+	if !strings.Contains(out, `"name":"Noop"`) {
+		t.Fatalf("empty-args tool block must be emitted:\n%s", out)
+	}
+	if !strings.Contains(out, `"partial_json":"{}"`) {
+		t.Fatalf("empty args must be delivered as {}:\n%s", out)
+	}
+	if tu.DroppedTools() != 0 {
+		t.Fatalf("DroppedTools = %d, want 0", tu.DroppedTools())
+	}
+}
+
+// 全部工具块参数残缺：不得声明 stop_reason tool_use（客户端会等一个
+// 不存在的工具块），降级为 end_turn。
+func TestStreamTransformerAllToolsDroppedDowngradesStopReason(t *testing.T) {
+	tu := NewOpenAIStreamTransformer()
+	var acc []byte
+	acc = append(acc, tu.Feed([]byte(
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"Write","arguments":"{\"file_path\":"}}]}}]}`+"\n\n"))...)
+	acc = append(acc, tu.Feed([]byte(
+		`data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`+"\n\n"))...)
+	out := string(acc)
+	if strings.Contains(out, `"type":"tool_use"`) {
+		t.Fatalf("dropped tool blocks must not be emitted:\n%s", out)
+	}
+	if strings.Contains(out, `"stop_reason":"tool_use"`) {
+		t.Fatalf("stop_reason must not claim tool_use without tool blocks:\n%s", out)
+	}
+	if !strings.Contains(out, `"stop_reason":"end_turn"`) {
+		t.Fatalf("stop_reason must downgrade to end_turn:\n%s", out)
+	}
+	if tu.DroppedTools() == 0 {
+		t.Fatal("DroppedTools must be > 0")
+	}
+}
+
 // usage-only 尾块（choices 为空）不得产生空事件或 panic。
 func TestStreamTransformerUsageOnlyTail(t *testing.T) {
 	tu := NewOpenAIStreamTransformer()
