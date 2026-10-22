@@ -510,6 +510,7 @@ type anthropicToOpenAIStream struct {
 	toolIdx        map[int]int // anthropic block index → OpenAI tool_calls index
 	nextTool       int
 	stopReason     string
+	sawTerminal    bool
 }
 
 func (t *anthropicToOpenAIStream) emitChunk(delta oaiInboundChunkDelta, finish string) {
@@ -559,6 +560,19 @@ func (t *anthropicToOpenAIStream) close() {
 	t.out.WriteString("data: [DONE]\n\n")
 }
 
+// SawTerminal 报告上游是否给出 message_stop 或 error。
+func (t *anthropicToOpenAIStream) SawTerminal() bool { return t.sawTerminal }
+
+// Abort 以 error chunk 终止截断流：不写 finish_reason、不写 [DONE]。幂等。
+func (t *anthropicToOpenAIStream) Abort(msg string) []byte {
+	if t.finished {
+		return nil
+	}
+	t.finished = true
+	t.out.Write(OpenAIStreamErrorChunk(msg))
+	return t.drain()
+}
+
 func (t *anthropicToOpenAIStream) handleData(payload []byte) {
 	var p anthxStreamPayload
 	if json.Unmarshal(payload, &p) != nil {
@@ -604,6 +618,7 @@ func (t *anthropicToOpenAIStream) handleData(payload []byte) {
 			t.stopReason = p.Delta.StopReason
 		}
 	case "message_stop", "error":
+		t.sawTerminal = true
 		// error 事件亦收口：客户端拿得到 finish 而非悬空流。
 		t.close()
 	}

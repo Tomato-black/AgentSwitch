@@ -396,3 +396,29 @@ func TestAnthropicStreamToOpenAIStreamToolCall(t *testing.T) {
 		t.Fatalf("arguments not accumulated: %q\n%s", args.String(), s)
 	}
 }
+
+func TestAnthropicToOpenAIStreamAbort(t *testing.T) {
+	tu := &anthropicToOpenAIStream{requestedModel: "logical-1", toolIdx: map[int]int{}, created: 1}
+	tu.Feed([]byte("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"))
+	out := string(tu.Abort("upstream stream interrupted"))
+	if !strings.Contains(out, `"error"`) || !strings.Contains(out, "upstream stream interrupted") {
+		t.Fatalf("missing error chunk:\n%s", out)
+	}
+	if strings.Contains(out, "[DONE]") {
+		t.Fatalf("Abort must not emit [DONE]:\n%s", out)
+	}
+	if again := tu.Abort("again"); len(again) != 0 {
+		t.Fatalf("Abort must be idempotent, got %q", again)
+	}
+}
+
+func TestAnthropicToOpenAIStreamSawTerminal(t *testing.T) {
+	tu := &anthropicToOpenAIStream{requestedModel: "m", toolIdx: map[int]int{}, created: 1}
+	if tu.SawTerminal() {
+		t.Fatal("fresh stream must not report terminal")
+	}
+	tu.Feed([]byte("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
+	if !tu.SawTerminal() {
+		t.Fatal("message_stop must mark terminal")
+	}
+}
