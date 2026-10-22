@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"AgentSwitch/internal/protocol"
 	"AgentSwitch/internal/provider"
@@ -230,6 +231,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 			snippet, _ := io.ReadAll(io.LimitReader(res.Body, 64<<10))
 			res.Body.Close()
 			class := provider.Classify(res.StatusCode, res.RetryAfterSec, snippet)
+			s.logUpstreamError(rec.ID, c, res.StatusCode, class, snippet)
 			if class == provider.ClassParam {
 				// 400 类=客户端自身问题：不冷却、不转移，原样回传（docx §6.3）
 				rec.Status, rec.ErrorClass = res.StatusCode, string(class)
@@ -405,6 +407,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			snippet, _ := io.ReadAll(io.LimitReader(res.Body, 64<<10))
 			res.Body.Close()
 			class := provider.Classify(res.StatusCode, res.RetryAfterSec, snippet)
+			s.logUpstreamError(rec.ID, c, res.StatusCode, class, snippet)
 			if class == provider.ClassParam {
 				// 400 类=客户端自身问题：不冷却、不转移，原样回传（docx §6.3）。
 				rec.Status, rec.ErrorClass = res.StatusCode, string(class)
@@ -676,6 +679,35 @@ func upstreamErrorBodyOpenAI(snippet []byte, status int) []byte {
 		msg = http.StatusText(status)
 	}
 	return protocol.OpenAIErrorBody(upstreamErrType(status), msg)
+}
+
+// upstreamErrorLogMaxBytes 限制诊断日志里上游错误体的长度。400 类错误的真实原因
+// 只在响应体里（param 分类不足以定位），但错误体可能回显请求内容——按 docx §8/§10
+// 只记截断片段，绝不记完整请求体。
+const upstreamErrorLogMaxBytes = 512
+
+// logUpstreamError 为每次被上游拒绝的尝试落一行 "upstream error" 诊断日志。
+func (s *Server) logUpstreamError(requestID string, c router.Candidate, status int,
+	class provider.ErrorClass, snippet []byte) {
+	if s.deps.Log == nil {
+		return
+	}
+	s.deps.Log.Info("upstream error", "request_id", requestID,
+		"upstream_model", c.UpstreamModel, "channel", c.ChannelName,
+		"status", status, "error_class", string(class),
+		"upstream_body", truncateForLog(snippet))
+}
+
+// truncateForLog 截断错误体到 upstreamErrorLogMaxBytes 并回退到合法 UTF-8 边界。
+func truncateForLog(b []byte) string {
+	b = bytes.TrimSpace(b)
+	if len(b) > upstreamErrorLogMaxBytes {
+		b = b[:upstreamErrorLogMaxBytes]
+	}
+	for len(b) > 0 && !utf8.Valid(b) {
+		b = b[:len(b)-1]
+	}
+	return string(b)
 }
 
 // copyStream 逐块转发并 flush；客户端断开由上游 ctx 取消收尾。

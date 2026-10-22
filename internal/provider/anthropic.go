@@ -13,6 +13,21 @@ import (
 	"strings"
 )
 
+// anthropicEndpoint 按 Anthropic 生态约定拼接端点：厂商文档的 base_url 是 API 根
+// （官方 SDK / Claude Code 的 ANTHROPIC_BASE_URL 语义），请求路径固定为
+// /v1/messages。base 路径为空时由 JoinAPIPath 补默认 /v1；已带 /v1 时不重复
+// （2026-10-22 小米 /anthropic/messages 404 修复）。
+func anthropicEndpoint(baseURL string) (string, error) {
+	suffix := "/v1/messages"
+	if u, err := url.Parse(baseURL); err == nil {
+		p := strings.TrimRight(u.Path, "/")
+		if p == "" || strings.HasSuffix(p, "/v1") {
+			suffix = "/messages"
+		}
+	}
+	return JoinAPIPath(baseURL, suffix)
+}
+
 // ValidateBaseURL 校验上游 base_url：仅 https（回环 http 或显式 allowPrivate 放行），
 // 拒绝 userinfo 与非 http(s) scheme。
 func ValidateBaseURL(raw string, allowPrivate bool) error {
@@ -58,7 +73,7 @@ func (a *AnthropicAdapter) Do(ctx context.Context, r DoRequest) (ChatResult, err
 	if err := ValidateBaseURL(r.BaseURL, r.AllowPrivate); err != nil {
 		return ChatResult{}, err
 	}
-	endpoint, err := JoinAPIPath(r.BaseURL, "/messages")
+	endpoint, err := anthropicEndpoint(r.BaseURL)
 	if err != nil {
 		return ChatResult{}, err
 	}

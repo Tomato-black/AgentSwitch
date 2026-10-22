@@ -15,6 +15,7 @@ const (
 	CooldownQuota            = 30 * time.Minute
 	CooldownServer           = 15 * time.Second
 	CooldownConnect          = 15 * time.Second
+	CooldownEndpoint         = 15 * time.Second // 404/405：端点配错
 	CooldownAuth             = time.Hour
 )
 
@@ -53,6 +54,8 @@ func cooldownFor(class provider.ErrorClass, retryAfterSec int) (time.Duration, s
 		return CooldownServer, string(class)
 	case provider.ClassConnect:
 		return CooldownConnect, string(class)
+	case provider.ClassEndpoint:
+		return CooldownEndpoint, string(class)
 	case provider.ClassAuth:
 		return CooldownAuth, string(class)
 	default:

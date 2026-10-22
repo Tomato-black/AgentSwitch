@@ -51,8 +51,13 @@ func TestClassifyConservative(t *testing.T) {
 	if Classify(400, 0, nil) != ClassParam {
 		t.Fatal("400")
 	}
-	if Classify(404, 0, nil) != ClassParam {
-		t.Fatal("404→param（保守，不转移）")
+	// 404/405 = 端点路径不存在/方法不对（渠道 base_url 或协议配错），不是客户端
+	// 参数问题：归 endpoint，允许冷却并转移到下一目标（2026-10-22 决策）。
+	if Classify(404, 0, []byte("<html>404 Not Found</html>")) != ClassEndpoint {
+		t.Fatal("404→endpoint（允许转移）")
+	}
+	if Classify(405, 0, nil) != ClassEndpoint {
+		t.Fatal("405→endpoint")
 	}
 }
 
@@ -83,6 +88,40 @@ func TestAnthropicAdapterHeadersAndNoLocalTokenLeak(t *testing.T) {
 	}
 	if gotKey != "sk-upstream" || gotVer == "" {
 		t.Fatalf("auth headers wrong: key=%q ver=%q", gotKey, gotVer)
+	}
+}
+
+// Anthropic 协议的 base_url 按厂商文档语义解释：文档给的是 API 根
+// （如 https://token-plan-cn.xiaomimimo.com/anthropic），端点路径是 /v1/messages
+// ——与官方 Anthropic SDK / Claude Code 的 ANTHROPIC_BASE_URL 约定一致。
+// base 已带 /v1 时不得重复（/v1/v1/messages），裸主机仍补默认 /v1。
+func TestAnthropicAdapterDocumentedBaseURLPath(t *testing.T) {
+	cases := []struct{ name, basePath, wantPath string }{
+		{"documented-base", "/anthropic", "/anthropic/v1/messages"},
+		{"base-already-v1", "/anthropic/v1", "/anthropic/v1/messages"},
+		{"bare-host", "", "/v1/messages"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotPath string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPath = r.URL.Path
+				w.Write([]byte(`{}`))
+			}))
+			defer srv.Close()
+			a := NewAnthropicAdapter()
+			res, err := a.Do(context.Background(), DoRequest{
+				BaseURL: srv.URL + tc.basePath, AllowPrivate: true, APIKey: "k",
+				RawBody: []byte(`{}`),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			res.Body.Close()
+			if gotPath != tc.wantPath {
+				t.Fatalf("path = %q, want %q", gotPath, tc.wantPath)
+			}
+		})
 	}
 }
 

@@ -10,6 +10,7 @@ const (
 	ClassAuth      ErrorClass = "auth"
 	ClassServer    ErrorClass = "server"
 	ClassParam     ErrorClass = "param"
+	ClassEndpoint  ErrorClass = "endpoint"
 	ClassConnect   ErrorClass = "connect"
 	ClassUnknown   ErrorClass = "unknown"
 )
@@ -31,6 +32,10 @@ func Classify(status, retryAfterSec int, body []byte) ErrorClass {
 			return ClassQuota
 		}
 		return ClassAuth
+	case status == 404 || status == 405:
+		// 路径不存在/方法不对 = 渠道 base_url 或协议配错（不是请求参数问题）：
+		// 允许冷却并转移到下一目标（2026-10-22 小米 /anthropic/messages 404 决策）。
+		return ClassEndpoint
 	case status >= 500:
 		return ClassServer
 	case status >= 400:

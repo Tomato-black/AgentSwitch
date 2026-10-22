@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"AgentSwitch/internal/credential"
 	"AgentSwitch/internal/provider"
@@ -257,6 +258,93 @@ func TestRequestLogLineCarriesMetadata(t *testing.T) {
 	if !found {
 		t.Fatalf("no \"request\" log line emitted: %q", buf.String())
 	}
+}
+
+// TestUpstreamErrorLogCarriesBody 覆盖 400 诊断：上游回 400 时，除 request 行外
+// 还必须落一行 "upstream error"，带上截断后的上游错误体——否则 param 类透传
+// 在日志里只剩分类，无法知道上游到底拒了什么（2026-10-22 mimo 400 排查需求）。
+func TestUpstreamErrorLogCarriesBody(t *testing.T) {
+	const upstreamBody = `{"error":{"message":"context_length_exceeded: too many tokens","type":"invalid_request_error"}}`
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(400)
+		w.Write([]byte(upstreamBody))
+	}))
+	defer up.Close()
+	var buf bytes.Buffer // handler 同步跑在测试 goroutine，无需加锁
+	s := newGW(t, up.URL, func(d *Deps) {
+		d.Log = slog.New(slog.NewJSONHandler(&buf, nil))
+	})
+	resp := post(t, s, `{"model":"pub-1","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`, "tok")
+	defer resp.Body.Close()
+	if resp.StatusCode != 400 {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	found := false
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			t.Fatalf("log line not JSON: %q", line)
+		}
+		if m["msg"] != "upstream error" {
+			continue
+		}
+		found = true
+		if m["request_id"] == "" || m["channel"] != "main" || m["upstream_model"] != "up-1" {
+			t.Errorf("upstream error line identity: %v", m)
+		}
+		if st, ok := m["status"].(float64); !ok || int(st) != 400 {
+			t.Errorf("status = %v, want 400", m["status"])
+		}
+		if m["error_class"] != "param" {
+			t.Errorf("error_class = %v, want param", m["error_class"])
+		}
+		if body, _ := m["upstream_body"].(string); !strings.Contains(body, "context_length_exceeded") {
+			t.Errorf("upstream_body = %q, want it to contain upstream message", body)
+		}
+		if strings.Contains(line, "sk-test") {
+			t.Fatalf("secret leaked into upstream error log: %s", line)
+		}
+	}
+	if !found {
+		t.Fatalf("no \"upstream error\" log line emitted: %q", buf.String())
+	}
+}
+
+// TestUpstreamErrorLogTruncatesBody：错误体可能回显请求内容，诊断日志只留前
+// upstreamErrorLogMaxBytes 字节，且截断点不得切坏多字节字符（JSON 日志要合法）。
+func TestUpstreamErrorLogTruncatesBody(t *testing.T) {
+	bigMsg := strings.Repeat("上下文超限", 500) // 5 个字符 ×3 字节 ×500 = 7500 字节
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(400)
+		w.Write([]byte(`{"error":{"message":"` + bigMsg + `"}}`))
+	}))
+	defer up.Close()
+	var buf bytes.Buffer
+	s := newGW(t, up.URL, func(d *Deps) {
+		d.Log = slog.New(slog.NewJSONHandler(&buf, nil))
+	})
+	resp := post(t, s, `{"model":"pub-1","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`, "tok")
+	defer resp.Body.Close()
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			t.Fatalf("log line not JSON: %q", line)
+		}
+		if m["msg"] != "upstream error" {
+			continue
+		}
+		body, _ := m["upstream_body"].(string)
+		if len(body) > upstreamErrorLogMaxBytes {
+			t.Errorf("upstream_body = %d bytes, want <= %d", len(body), upstreamErrorLogMaxBytes)
+		}
+		if !utf8.ValidString(body) {
+			t.Errorf("upstream_body truncated mid-rune: %q", body)
+		}
+		return
+	}
+	t.Fatalf("no \"upstream error\" log line emitted: %q", buf.String())
 }
 
 // TestBodyTooLargeRejected：超 MaxBodyBytes（fixture 固定 1<<20）→ 413，且不触达上游。
@@ -782,6 +870,36 @@ func Test400NoSwitchNoCooldown(t *testing.T) {
 	}
 	if calls2 != 0 {
 		t.Fatal("400 must not switch")
+	}
+}
+
+// 404/405 = 端点不存在/方法不对（渠道 base_url 或协议配错），不是客户端参数问题：
+// 冷却该渠道并转移到下一目标（2026-10-22 小米 /anthropic/messages openresty 404）。
+func Test404EndpointFailureFailsOver(t *testing.T) {
+	var calls2 int
+	good := fakeUpstream(t, 200, `{"id":"ok"}`, &calls2)
+	defer good.Close()
+	notFound := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(404)
+		w.Write([]byte("<html><head><title>404 Not Found</title></head><body><center>openresty</center></body></html>"))
+	}))
+	defer notFound.Close()
+	tw, cds := twoCands(t, notFound.URL, good.URL)
+	s := newGW(t, notFound.URL, tw)
+	resp := post(t, s, `{"model":"pub-1","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`, "tok")
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 || calls2 != 1 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("404 must fail over: status %d calls2 %d body %s", resp.StatusCode, calls2, b)
+	}
+	// 端点配错的渠道必须被冷却，避免后续请求继续撞同一个 404。
+	if _, ok := cds.TryAcquire("c1", time.Now()); ok {
+		t.Fatal("404 endpoint failure must cool c1")
+	}
+	// 接管的 c2 不被连坐。
+	if _, ok := cds.TryAcquire("c2", time.Now()); !ok {
+		t.Fatal("c2 served fine and must not be cooled")
 	}
 }
 
