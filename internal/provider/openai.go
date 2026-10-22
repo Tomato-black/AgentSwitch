@@ -72,13 +72,15 @@ func (a *OpenAIAdapter) Do(ctx context.Context, r DoRequest) (ChatResult, error)
 		res.Body = io.NopCloser(bytes.NewReader(out))
 		return res, nil
 	}
-	res.Body = a.streamBody(res.Body)
+	res.Body = a.streamBody(ctx, res.Body)
 	return res, nil
 }
 
 // streamBody 把 OpenAI chunk 流泵过转换器变成 Anthropic SSE 流（逐事件 flush）。
 // src 由泵 goroutine 关闭：EOF/写失败/读错所有路径都经 defer 收口。
-func (a *OpenAIAdapter) streamBody(src io.ReadCloser) io.ReadCloser {
+// 收尾区分三种情况：ctx 取消静默关闭；EOF 且见过终止标记才 Finish；
+// 其余（EOF 无终止标记、非 EOF 读错）一律 Abort 以 error 事件收口，绝不伪装正常结束。
+func (a *OpenAIAdapter) streamBody(ctx context.Context, src io.ReadCloser) io.ReadCloser {
 	pr, pw := io.Pipe()
 	t := protocol.NewOpenAIStreamTransformer()
 	go func() {
@@ -93,13 +95,29 @@ func (a *OpenAIAdapter) streamBody(src io.ReadCloser) io.ReadCloser {
 					}
 				}
 			}
-			if rerr != nil {
-				if out := t.Finish(); len(out) > 0 {
-					_, _ = pw.Write(out)
-				}
-				pw.Close()
-				return
+			if rerr == nil {
+				continue
 			}
+			var out []byte
+			switch {
+			case ctx.Err() != nil:
+				// 客户端/网关取消：静默收尾
+			case rerr == io.EOF && t.SawTerminal():
+				out = t.Finish()
+			default:
+				if a.Log != nil {
+					a.Log.Warn("upstream stream interrupted", "error", rerr.Error())
+				}
+				out = t.Abort("upstream stream interrupted")
+			}
+			if len(out) > 0 {
+				_, _ = pw.Write(out)
+			}
+			if a.Log != nil && t.DroppedTools() > 0 {
+				a.Log.Warn("dropped incomplete tool call", "count", t.DroppedTools())
+			}
+			pw.Close()
+			return
 		}
 	}()
 	return pr

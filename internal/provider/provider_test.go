@@ -381,3 +381,38 @@ func TestProbeBothProtocols(t *testing.T) {
 		t.Fatal("anthropic probe against dead port must fail")
 	}
 }
+
+func TestOpenAIAdapterStreamInterruptedEmitsError(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		f := w.(http.Flusher)
+		w.Write([]byte(`data: {"id":"c","choices":[{"delta":{"tool_calls":[{"index":0,"id":"t1","function":{"name":"Write","arguments":"{\"file_path\":\"/tmp/a\""}}]}}]}` + "\n\n"))
+		f.Flush()
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Fatal("no hijacker")
+		}
+		conn, _, _ := hj.Hijack()
+		conn.Close() // 上游中断：无 finish_reason/[DONE]
+	}))
+	defer up.Close()
+	res, err := NewOpenAIAdapter(nil).Do(context.Background(), DoRequest{
+		BaseURL: up.URL, AllowPrivate: true, APIKey: "sk-x", UpstreamModel: "up-1", Stream: true,
+		RawBody: []byte(`{"model":"up-1","max_tokens":8,"stream":true,"messages":[{"role":"user","content":"q"}]}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	b, _ := io.ReadAll(res.Body)
+	out := string(b)
+	if !strings.Contains(out, "event: error") || !strings.Contains(out, "upstream stream interrupted") {
+		t.Fatalf("missing error event:\n%s", out)
+	}
+	if strings.Contains(out, "message_stop") {
+		t.Fatalf("truncated stream must not emit message_stop:\n%s", out)
+	}
+	if strings.Contains(out, `"name":"Write"`) {
+		t.Fatalf("incomplete tool block leaked:\n%s", out)
+	}
+}
