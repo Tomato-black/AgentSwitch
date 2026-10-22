@@ -20,7 +20,7 @@ Agent 指向 `127.0.0.1:17890` 并调用**逻辑模型名**（如 `my-code`）�
 
 ### 已知问题（Linux）
 
-- **亮色主题下窗口文字全白**：MyGo v0.5.1 在 Linux 子像素抗锯齿（`font-antialiasing=rgba`）下的字形着色有缺陷——文字颜色不生效、一律画成白色；深色主题正文本就接近白色，因此不易察觉。应用启动时对本进程把 GTK 的 `gtk-xft-rgba` 设为 `none`（`internal/desktop/fontrender_linux.go`），改用灰度抗锯齿绕开，**不影响系统设置与其他应用**。升级 MyGo 后若上游已修复，可去掉该规避。
+- **亮色主题下窗口文字全白**：MyGo v0.5.1 在 Linux 子像素抗锯齿（`font-antialiasing=rgba`）下的字形着色有缺陷——文字颜色不生效、一律画成白色；深色主题正文本就接近白色，因此不易察觉。应用启动时对本进程把 GTK 的 `gtk-xft-rgba` 设为 `none`（`internal/desktop/fontrender_linux.go`），改用灰度抗锯齿绕开，**不影响系统设置与其他应用**。升级 MyGo 后若上游已修复，可去掉该规避。（v0.6.2 复查无对口修复，规避保留）
 
 ## 首次使用
 
