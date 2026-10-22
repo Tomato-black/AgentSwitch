@@ -38,8 +38,8 @@ type accessForm struct {
 	mainOneM bool
 }
 
-// accessTabTitles 返回两个 Agent tab 的标题（字符串快照锚点）。
-func accessTabTitles() (claude, codex string) { return "Claude Code", "Codex CLI" }
+// accessTabTitles 返回三个 Agent tab 的标题（字符串快照锚点）。
+func accessTabTitles() (claude, codex, desktop string) { return "Claude Code", "Codex CLI", "Claude Desktop" }
 
 // accessRowBadge 返回配置行「使用中」徽标文本（非 current 为空串）。
 func accessRowBadge(isCurrent bool) string {
@@ -287,7 +287,7 @@ func (u *uiState) accessPage(c *ui.Context) {
 	if u.accessApp == "" {
 		u.accessApp = "claude"
 	}
-	claudeTitle, codexTitle := accessTabTitles()
+	claudeTitle, codexTitle, desktopTitle := accessTabTitles()
 	gateOK, gateReason := u.accessGatewayGate()
 
 	// 内容列包 Scroll（同 channels/logicalmodels 的长页面）：编辑器（角色表 +
@@ -306,15 +306,23 @@ func (u *uiState) accessPage(c *ui.Context) {
 					u.accessApp = "codex"
 					u.accessMsg = ""
 					u.accessForm = accessForm{}
+					u.desktopForm = desktopForm{}
 					u.accessReloadGlobal(acc)
+				}
+				if softButton(c, t, s, tabKind(u.accessApp == "claude_desktop"), desktopTitle).Clicked() {
+					u.accessApp = "claude_desktop"
+					u.accessMsg = ""
+					u.accessForm = accessForm{}
+					u.desktopForm = desktopForm{}
 				}
 			})
 			if u.accessGlob == nil {
 				u.accessReloadGlobal(acc)
 			}
 
-			// 全局配置卡
-			card(c, t, func() {
+			// 全局配置卡（Desktop 无 env 合成层，不显示）
+			if u.accessApp != "claude_desktop" {
+				card(c, t, func() {
 				ui.Column(c).Gap(10).Children(func() {
 					ui.Text(c, "全局配置").Bold()
 					ui.Text(c, "以下环境变量会应用到本 Agent 的所有实际配置（实际配置的同名覆盖项优先）").TextColor(t.TextMuted)
@@ -362,6 +370,7 @@ func (u *uiState) accessPage(c *ui.Context) {
 					}
 				})
 			})
+			}
 
 			// 实际配置列表卡
 			card(c, t, func() {
@@ -379,7 +388,11 @@ func (u *uiState) accessPage(c *ui.Context) {
 						if v.IsCurrent {
 							hasCurrent = true
 						}
-						u.accessConfigRow(c, t, s, acc, v, gateOK)
+						if u.accessApp == "claude_desktop" {
+							u.accessDesktopConfigRow(c, t, s, acc, v, gateOK)
+						} else {
+							u.accessConfigRow(c, t, s, acc, v, gateOK)
+						}
 					}
 					if len(list) > 0 && !hasCurrent {
 						ui.Text(c, "当前没有配置被应用，Agent 仍使用其原配置文件").TextColor(t.TextMuted)
@@ -390,15 +403,23 @@ func (u *uiState) accessPage(c *ui.Context) {
 					ui.Row(c).Children(func() {
 						ui.Box(c).Grow(1)
 						if pillButton(c, t, "＋ 新建配置").Clicked() {
-							u.accessForm = accessForm{open: true}
-							u.accessPreloadForm(acc)
+							if u.accessApp == "claude_desktop" {
+								u.desktopForm = desktopForm{open: true}
+							} else {
+								u.accessForm = accessForm{open: true}
+								u.accessPreloadForm(acc)
+							}
 						}
 					})
 				})
 			})
 
-			// 编辑器卡（Task 15 表单）
-			if u.accessForm.open {
+			// 编辑器卡（Task 15 表单 / Desktop 角色映射表单）
+			if u.accessApp == "claude_desktop" {
+				if u.desktopForm.open {
+					u.desktopEditorCard(c, t, s, acc, gateOK)
+				}
+			} else if u.accessForm.open {
 				u.accessEditorCard(c, t, s, acc, gateOK)
 			}
 		})

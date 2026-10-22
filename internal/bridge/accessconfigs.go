@@ -234,6 +234,15 @@ func (s AccessConfigs) prepareDoc(appType, modelName, settingsJSON string) (stri
 	if err != nil {
 		return "", err
 	}
+	if appType == "claude_desktop" {
+		// Desktop 无 env 合成/归一化层：结构校验通过即原样规范化入库
+		//（引用的逻辑模型存在性在 Apply 时校验，与 composeFor 口径一致）。
+		b, err := json.MarshalIndent(doc, "", "  ")
+		if err != nil {
+			return "", err
+		}
+		return string(b), nil
+	}
 	global, err := s.GlobalConfig(appType)
 	if err != nil {
 		return "", err
@@ -273,8 +282,8 @@ func RebaseAccessDoc(appType, settingsJSON string, baseline map[string]string) (
 
 // validateAccessAppType 校验接入类型白名单 {claude, codex}。
 func validateAccessAppType(appType string) error {
-	if appType != "claude" && appType != "codex" {
-		return fmt.Errorf("不支持的接入类型: %q（仅支持 claude、codex）", appType)
+	if appType != "claude" && appType != "codex" && appType != "claude_desktop" {
+		return fmt.Errorf("不支持的接入类型: %q（仅支持 claude、codex、claude_desktop）", appType)
 	}
 	return nil
 }
@@ -287,6 +296,12 @@ func validateAccessAppType(appType string) error {
 func parseAccessDoc(appType, raw string) (map[string]any, map[string]string, error) {
 	if err := validateAccessAppType(appType); err != nil {
 		return nil, nil, err
+	}
+	if appType == "claude_desktop" {
+		// Desktop 文档是角色映射（无 env 层、无自由键），解析与校验见
+		// parseDesktopAccessDoc；env 恒空。
+		doc, err := parseDesktopAccessDoc(raw)
+		return doc, nil, err
 	}
 	doc := map[string]any{}
 	if trimmed := strings.TrimSpace(raw); trimmed != "" {
@@ -504,6 +519,10 @@ func liveBackupFiles(appType string) []string {
 		return []string{filepath.Join(".claude", "settings.json")}
 	case "codex":
 		return []string{filepath.Join(".codex", "config.toml"), filepath.Join(".codex", "auth.json")}
+	case "claude_desktop":
+		// Desktop 配置在 config 目录而非 home 直下，由 backupLive 以
+		// desktopLivePath(home) 单独补入，这里返回空。
+		return nil
 	}
 	return nil
 }
@@ -530,8 +549,15 @@ func (s AccessConfigs) backupLive(appType string) error {
 		mode os.FileMode
 	}
 	var srcs []srcFile
+	paths := make([]string, 0, len(liveBackupFiles(appType))+1)
 	for _, rel := range liveBackupFiles(appType) {
-		path := filepath.Join(home, rel)
+		paths = append(paths, filepath.Join(home, rel))
+	}
+	if appType == "claude_desktop" {
+		// Desktop 配置在 config 目录（绝对路径），不随 home 拼接。
+		paths = append(paths, desktopLivePath(home))
+	}
+	for _, path := range paths {
 		b, err := os.ReadFile(path)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
@@ -755,6 +781,20 @@ func (s AccessConfigs) Apply(id string) error {
 	c, err := s.A.Store().AccessConfigs().Get(id)
 	if err != nil {
 		return err
+	}
+	if c.AppType == "claude_desktop" {
+		// Desktop 无 env 合成层，独立分流（composeFor 不适用）。
+		if err := s.backupLive(c.AppType); err != nil {
+			return err
+		}
+		if err := s.applyDesktop(c); err != nil {
+			return err
+		}
+		if err := s.A.Store().AccessConfigs().SetCurrent(c.AppType, id); err != nil {
+			return err
+		}
+		s.A.Log().Info("access config applied", "id", id, "app", c.AppType, "actor", "ui", "result", "ok")
+		return nil
 	}
 	env, doc, model, err := s.composeFor(c)
 	if err != nil {

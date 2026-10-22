@@ -209,6 +209,9 @@ func (a *App) Cooldowns() *router.Cooldowns { return a.cooldowns }
 // 在每次写后递增，所以任何写入口（桥接、测试夹具、未来 CLI）都无需手动清缓存，
 // 「运行中改配置下一次请求即生效」不变量不受缓存影响。
 func (a *App) candidates(logicalName string) ([]router.Candidate, error) {
+	if target := a.resolveDesktopAlias(logicalName); target != "" {
+		logicalName = target
+	}
 	ver := a.store.RouteVersion()
 	a.routeCacheMu.Lock()
 	e, ok := a.routeCache[logicalName]
@@ -264,6 +267,17 @@ func (a *App) withCooldowns(base []router.Candidate) []router.Candidate {
 // 不可用目标（渠道 disabled / 缺 credential_ref）跳过并记日志——candidates
 // 只返回可用候选。未登记或 disabled：返回空切片，gateway 走「无候选」路径。
 // 结果进缓存，因此这里只装静态字段；冷却由 withCooldowns 每次调用现叠。
+// resolveDesktopAlias 把 Claude Desktop 入站名（claude-sonnet-5 等角色路由
+// ID）解析回对应逻辑模型名；未命中返回空串。别名表每次请求现读（本地 SQLite
+// 微秒级），保证 Apply 后即时生效；缓存按解析后的逻辑模型名，不受别名变更
+// 污染。
+func (a *App) resolveDesktopAlias(name string) string {
+	if aliases := storage.DesktopAliases(a.store); aliases != nil {
+		return aliases[name]
+	}
+	return ""
+}
+
 func (a *App) buildCandidates(logicalName string) ([]router.Candidate, error) {
 	lm, err := a.store.LogicalModels().GetByName(logicalName)
 	if err != nil {
@@ -313,9 +327,18 @@ func (a *App) publicModels() []string {
 		return nil
 	}
 	out := make([]string, 0, len(ms))
+	enabled := map[string]bool{}
 	for _, m := range ms {
 		if m.Enabled {
 			out = append(out, m.Name)
+			enabled[m.Name] = true
+		}
+	}
+	// 桌面别名（claude-* 角色路由 ID）跟随目标逻辑模型的启用态追加，
+	// Desktop 靠 /v1/models 校验路由 ID 白名单。
+	for alias, target := range storage.DesktopAliases(a.store) {
+		if enabled[target] {
+			out = append(out, alias)
 		}
 	}
 	return out

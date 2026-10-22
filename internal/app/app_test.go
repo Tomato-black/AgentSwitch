@@ -412,3 +412,55 @@ func TestSettingsConcurrencyConsistency(t *testing.T) {
 		t.Fatalf("settings not persisted: port=%d timeout=%d", s.Port, s.RequestTimeoutSeconds)
 	}
 }
+
+// TestCandidatesResolveDesktopAlias：入站名命中桌面别名表时解析回逻辑模型
+// （Claude Desktop 接入只接受 claude-* 角色路由 ID，网关侧按
+// storage.DesktopAliasesSettingsKey 别名表转回逻辑模型）。
+func TestCandidatesResolveDesktopAlias(t *testing.T) {
+	a := newTestApp(t, "http://u", true) // 逻辑模型 "alias"
+	if err := a.Store().Settings().Set(storage.DesktopAliasesSettingsKey,
+		`{"claude-sonnet-5":"alias"}`); err != nil {
+		t.Fatal(err)
+	}
+	cands, err := a.candidates("claude-sonnet-5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cands) != 1 || cands[0].LogicalModel != "alias" || cands[0].UpstreamModel != "model-v1" {
+		t.Fatalf("别名未解析: %+v", cands)
+	}
+	// 未命中别名的逻辑模型直查不受影响。
+	direct, err := a.candidates("alias")
+	if err != nil || len(direct) != 1 {
+		t.Fatalf("直查被影响: %v %v", direct, err)
+	}
+	// 别名指向已删模型 → 空候选（404 unknown model）。
+	a.Store().Settings().Set(storage.DesktopAliasesSettingsKey, `{"claude-sonnet-5":"gone"}`)
+	gone, err := a.candidates("claude-sonnet-5")
+	if err != nil || len(gone) != 0 {
+		t.Fatalf("失效别名应空候选: %v %v", gone, err)
+	}
+}
+
+// TestPublicModelsIncludeDesktopAliases：/v1/models 公开列表在逻辑模型名之外
+// 追加别名（Desktop 靠模型列表校验角色路由 ID）。
+func TestPublicModelsIncludeDesktopAliases(t *testing.T) {
+	a := newTestApp(t, "http://u", true)
+	a.Store().Settings().Set(storage.DesktopAliasesSettingsKey, `{"claude-sonnet-5":"alias"}`)
+	got := map[string]bool{}
+	for _, m := range a.publicModels() {
+		got[m] = true
+	}
+	if !got["alias"] || !got["claude-sonnet-5"] {
+		t.Fatalf("公开模型列表缺别名: %v", got)
+	}
+	// 禁用的逻辑模型不出现，但其别名也不出现（别名跟随逻辑模型启用态）。
+	a.Store().LogicalModels().SetEnabled("lm1", false)
+	got = map[string]bool{}
+	for _, m := range a.publicModels() {
+		got[m] = true
+	}
+	if got["alias"] || got["claude-sonnet-5"] {
+		t.Fatalf("禁用模型与其别名不得出现: %v", got)
+	}
+}

@@ -18,6 +18,8 @@ AgentSwitch：面向本地 AI Agent 的**模型 API 网关**——为 Claude Cod
 python3 -c "import zipfile,re,html,sys; x=zipfile.ZipFile(sys.argv[1]).read('word/document.xml').decode().replace('</w:p>','\n'); print(html.unescape(re.sub(r'<[^>]+>','',x)))" <file.docx>
 ```
 
+**Claude Desktop 接入（2026-10-22）**：接入页第三种 Agent 类型 `claude_desktop`——配置为角色映射（sonnet/opus/haiku/fable → 逻辑模型，无 env 层）；「应用」把网关 profile（`inferenceProvider=gateway`、`inferenceGatewayBaseUrl/ApiKey`、`inferenceGatewayAuthScheme=bearer`、`inferenceModels`）patch 合并进 `~/.config/Claude/claude_desktop_config.json`（MCP 等键原样保留、写前备份），并把「claude-sonnet-5 → 逻辑模型」别名表持久化到 settings（`access.desktop_aliases`，last-applied-wins）；网关 candidates 解析入站名前先查别名表、`/v1/models` 追加别名（跟随逻辑模型启用态）。Desktop 只接受 claude-* 角色路由 ID（白名单参照 cc-switch：sonnet/opus/haiku/fable）。参考 cc-switch 的 inferenceGateway 方案。
+
 **Linux 字体渲染规避（2026-10-21）**：MyGo v0.5.1 的 Linux 子像素字形着色有缺陷——Pango 以白色栅格化字形、GPU 着色未正确应用文字颜色，所有文字实际画成白色（深色主题正文本就近白，不易察觉；亮色主题下整窗不可读）。`internal/desktop/fontrender_linux.go` 在 `WhenReady` 建窗前用 purego 对本进程 GTK 设 `gtk-xft-rgba=none`，改走灰度抗锯齿；**不改系统设置、不影响其他应用**。升级 MyGo 时先复查上游是否已修复，再决定是否移除该规避。**v0.6.2 复查（2026-10-22）**：上游 issue/changelog 无对口修复记录，保守保留；若亮色主题下实测文字颜色正常可移除。
 
 ## 常用命令

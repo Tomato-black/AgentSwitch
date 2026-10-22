@@ -11,10 +11,10 @@ import (
 	"AgentSwitch/internal/storage"
 )
 
-// TestAccessTabTitles 覆盖接入页两个 Agent tab 标题快照。
+// TestAccessTabTitles 覆盖接入页三个 Agent tab 标题快照。
 func TestAccessTabTitles(t *testing.T) {
-	if a, b := accessTabTitles(); a != "Claude Code" || b != "Codex CLI" {
-		t.Fatal(a, b)
+	if a, b, d := accessTabTitles(); a != "Claude Code" || b != "Codex CLI" || d != "Claude Desktop" {
+		t.Fatal(a, b, d)
 	}
 }
 
@@ -314,5 +314,31 @@ func TestAccessSyncRolesAndPatch(t *testing.T) {
 	}
 	if env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] != "fast" {
 		t.Fatal(u.accessForm.docJSON)
+	}
+}
+
+// TestDesktopFormDocRoundTrip：表单行 ↔ 角色映射文档双向转换（UI 层唯一
+// 业务逻辑；空角色不落键、oneM 只在启用时生效）。
+func TestDesktopFormDocRoundTrip(t *testing.T) {
+	f := desktopForm{models: [4]string{"my-code", "", "mimo", ""}, oneM: [4]bool{true, false, false, false}}
+	raw, err := f.desktopDocFromForm()
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := &uiState{}
+	u.desktopFormFromDoc(raw)
+	if u.desktopForm.models[0] != "my-code" || !u.desktopForm.oneM[0] {
+		t.Fatalf("sonnet 回填: %+v", u.desktopForm)
+	}
+	if u.desktopForm.models[1] != "" || u.desktopForm.models[3] != "" {
+		t.Fatalf("未启用角色不得回填: %+v", u.desktopForm)
+	}
+	if u.desktopForm.models[2] != "mimo" || u.desktopForm.oneM[2] {
+		t.Fatalf("haiku 回填: %+v", u.desktopForm)
+	}
+	// 全空必须拒绝保存语义（docFromForm 报错）。
+	empty := desktopForm{}
+	if _, err := empty.desktopDocFromForm(); err == nil {
+		t.Fatal("全空角色应报错")
 	}
 }
