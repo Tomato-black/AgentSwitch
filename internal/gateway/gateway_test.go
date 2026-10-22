@@ -1594,3 +1594,55 @@ func TestCopyStreamPassesData(t *testing.T) {
 		t.Fatalf("body = %q", w.Body.String())
 	}
 }
+
+func TestMessagesStreamLongerThanTimeoutNotCut(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		f := w.(http.Flusher)
+		w.WriteHeader(200)
+		for i := 0; i < 6; i++ {
+			w.Write([]byte("event: message_start\ndata: {}\n\n"))
+			f.Flush()
+			time.Sleep(40 * time.Millisecond)
+		}
+		w.Write([]byte("event: message_stop\ndata: {}\n\n"))
+		f.Flush()
+	}))
+	defer up.Close()
+	s := newGW(t, up.URL, func(d *Deps) {
+		d.Limits = func() Limits { return Limits{MaxBodyBytes: 1 << 20, RequestTimeout: 100 * time.Millisecond} }
+	})
+	body := `{"model":"pub-1","max_tokens":8,"stream":true,"messages":[{"role":"user","content":"q"}]}`
+	resp := post(t, s, body, "tok")
+	b, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(b), "message_stop") {
+		t.Fatalf("long active stream was cut at total timeout:\n%s", b)
+	}
+}
+
+func TestMessagesStreamIdleTimeoutEmitsError(t *testing.T) {
+	release := make(chan struct{})
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		f := w.(http.Flusher)
+		w.WriteHeader(200)
+		w.Write([]byte("event: message_start\ndata: {}\n\n"))
+		f.Flush()
+		<-release // 此后不再输出
+	}))
+	defer up.Close()
+	defer close(release)
+	s := newGW(t, up.URL, func(d *Deps) {
+		d.Limits = func() Limits { return Limits{MaxBodyBytes: 1 << 20, RequestTimeout: 50 * time.Millisecond} }
+	})
+	body := `{"model":"pub-1","max_tokens":8,"stream":true,"messages":[{"role":"user","content":"q"}]}`
+	resp := post(t, s, body, "tok")
+	b, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(b), "upstream stream idle timeout") {
+		t.Fatalf("missing idle error event:\n%s", b)
+	}
+	recs := s.deps.Ring.List()
+	if len(recs) == 0 || recs[len(recs)-1].ErrorClass != "stream" {
+		t.Fatalf("request record must carry error_class=stream: %+v", recs)
+	}
+}

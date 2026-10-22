@@ -177,11 +177,24 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	decision := s.deps.Router.Resolve(cr.Model, cands)
 
+	// 超时语义（spec 2026-10-22）：非流式为总时长上限；流式的 RequestTimeout 只
+	// 约束等待响应头，2xx 提交点即停表，其后由 copyStream 的空闲 watchdog 接管。
 	ctx := r.Context()
+	var cancel context.CancelFunc
+	var headerTimer *time.Timer
 	if lim.RequestTimeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, lim.RequestTimeout)
+		if cr.Stream {
+			ctx, cancel = context.WithCancel(ctx)
+			headerTimer = time.AfterFunc(lim.RequestTimeout, cancel)
+		} else {
+			ctx, cancel = context.WithTimeout(ctx, lim.RequestTimeout)
+		}
 		defer cancel()
+		defer func() {
+			if headerTimer != nil {
+				headerTimer.Stop()
+			}
+		}()
 	}
 
 	lastClass := provider.ClassUnknown
@@ -255,9 +268,17 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
+		// 提交点：响应头即将下发，头部等待计时器必须停表——否则活跃长流会被
+		// 总超时切断（首字节后绝不转移/重放，故此处只能停止，不能换候选）。
+		if cr.Stream && headerTimer != nil {
+			headerTimer.Stop()
+		}
 		w.WriteHeader(res.StatusCode)
 		if cr.Stream {
-			copyStream(w, res.Body, 0, nil)
+			onIdle := protocol.AnthropicErrorEvent("upstream stream idle timeout")
+			if copyStream(w, res.Body, lim.RequestTimeout, onIdle) {
+				rec.ErrorClass = "stream"
+			}
 		} else {
 			io.Copy(w, res.Body)
 		}
@@ -745,13 +766,16 @@ func copyStream(w http.ResponseWriter, src io.ReadCloser, idle time.Duration, on
 			}
 		}
 		if err != nil {
-			if timedOut.Load() && len(onIdle) > 0 {
+			// 单次读取超时状态：写入 onIdle 与返回值必须基于同一快照，
+			// 避免两次 Load 之间 watchdog 翻转造成「写了事件却报未超时」。
+			to := timedOut.Load()
+			if to && len(onIdle) > 0 {
 				w.Write(onIdle)
 				if flusher != nil {
 					flusher.Flush()
 				}
 			}
-			return timedOut.Load()
+			return to
 		}
 	}
 }
