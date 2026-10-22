@@ -521,7 +521,7 @@ func liveBackupFiles(appType string) []string {
 		return []string{filepath.Join(".codex", "config.toml"), filepath.Join(".codex", "auth.json")}
 	case "claude_desktop":
 		// Desktop 配置在 config 目录而非 home 直下，由 backupLive 以
-		// desktopLivePath(home) 单独补入，这里返回空。
+		// desktopPathsFor(home) 的 4 个文件由 backupLive 单独补入，这里返回空。
 		return nil
 	}
 	return nil
@@ -554,8 +554,8 @@ func (s AccessConfigs) backupLive(appType string) error {
 		paths = append(paths, filepath.Join(home, rel))
 	}
 	if appType == "claude_desktop" {
-		// Desktop 配置在 config 目录（绝对路径），不随 home 拼接。
-		paths = append(paths, desktopLivePath(home))
+		// Desktop 的 4 个文件在 config 目录（绝对路径），不随 home 拼接。
+		paths = append(paths, desktopPathsFor(home).all()...)
 	}
 	for _, path := range paths {
 		b, err := os.ReadFile(path)

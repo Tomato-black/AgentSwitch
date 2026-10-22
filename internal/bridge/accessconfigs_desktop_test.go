@@ -13,11 +13,15 @@ import (
 
 // --- Task 5：Apply 投影与别名持久化 ---
 
+// TestWriteClaudeDesktopLiveMergesManagedKeys：Desktop 3P 网关模式需要写
+// 4 个文件（参照 cc-switch）——两个配置文件设 deploymentMode=3p、
+// configLibrary 下的 profile 文件放网关五键、_meta.json 登记 appliedId；
+// 普通配置的 MCP 等键原样保留。
 func TestWriteClaudeDesktopLiveMergesManagedKeys(t *testing.T) {
 	acc := AccessConfigs{A: tempApp(t), Home: t.TempDir()}
-	path := desktopLivePath(acc.Home)
-	os.MkdirAll(filepath.Dir(path), 0o755)
-	os.WriteFile(path, []byte(`{"mcpServers":{"x":{"command":"c"}},"inferenceGatewayApiKey":"old-token"}`), 0o600)
+	p := desktopPathsFor(acc.Home)
+	os.MkdirAll(filepath.Dir(p.normalConfig), 0o755)
+	os.WriteFile(p.normalConfig, []byte(`{"mcpServers":{"x":{"command":"c"}}}`), 0o600)
 	plan := desktopPlan{Routes: []DesktopRoute{
 		{Role: "sonnet", RouteID: "claude-sonnet-5", Model: "my-code", OneM: true},
 		{Role: "haiku", RouteID: "claude-haiku-4-5", Model: "mimo"},
@@ -25,23 +29,41 @@ func TestWriteClaudeDesktopLiveMergesManagedKeys(t *testing.T) {
 	if err := acc.writeClaudeDesktopLive(plan, "http://127.0.0.1:17890", "new-token"); err != nil {
 		t.Fatal(err)
 	}
-	b, _ := os.ReadFile(path)
-	var got map[string]any
-	if err := json.Unmarshal(b, &got); err != nil {
-		t.Fatal(err)
+	readJSON := func(path string) map[string]any {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("读 %s: %v", path, err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(b, &got); err != nil {
+			t.Fatalf("解析 %s: %v", path, err)
+		}
+		return got
 	}
-	if got["inferenceProvider"] != "gateway" || got["inferenceGatewayAuthScheme"] != "bearer" {
-		t.Fatalf("受管键未写入: %s", b)
+	// 1+2: 两个配置文件只设 deploymentMode，其余键保留。
+	for _, path := range []string{p.normalConfig, p.threepConfig} {
+		got := readJSON(path)
+		if got["deploymentMode"] != "3p" {
+			t.Fatalf("deploymentMode 未设（%s）: %v", path, got)
+		}
 	}
-	if got["inferenceGatewayBaseUrl"] != "http://127.0.0.1:17890" || got["inferenceGatewayApiKey"] != "new-token" {
-		t.Fatalf("网关键未替换: %s", b)
+	if readJSON(p.normalConfig)["mcpServers"] == nil {
+		t.Fatal("普通配置的 mcpServers 必须保留")
 	}
-	if got["mcpServers"] == nil {
-		t.Fatalf("非受管键（mcpServers）必须保留: %s", b)
+	// 3: profile 文件 = 网关 profile 五键 + 网关出口/模式开关。
+	prof := readJSON(p.profile)
+	if prof["inferenceProvider"] != "gateway" || prof["inferenceGatewayAuthScheme"] != "bearer" {
+		t.Fatalf("profile 受管键: %v", prof)
 	}
-	models, _ := got["inferenceModels"].([]any)
+	if prof["inferenceGatewayBaseUrl"] != "http://127.0.0.1:17890" || prof["inferenceGatewayApiKey"] != "new-token" {
+		t.Fatalf("profile 网关键: %v", prof)
+	}
+	if prof["disableDeploymentModeChooser"] != true {
+		t.Fatalf("disableDeploymentModeChooser: %v", prof)
+	}
+	models, _ := prof["inferenceModels"].([]any)
 	if len(models) != 2 {
-		t.Fatalf("inferenceModels: %s", b)
+		t.Fatalf("inferenceModels: %v", prof)
 	}
 	m0, _ := models[0].(map[string]any)
 	if m0["name"] != "claude-sonnet-5" || m0["supports1m"] != true || m0["prefer1m"] != true {
@@ -50,8 +72,23 @@ func TestWriteClaudeDesktopLiveMergesManagedKeys(t *testing.T) {
 	if models[1] != "claude-haiku-4-5" {
 		t.Fatalf("非 1M 角色应为纯字符串名: %v", models[1])
 	}
+	// 4: _meta.json 登记 appliedId 与 entries。
+	meta := readJSON(p.meta)
+	if meta["appliedId"] != desktopProfileID {
+		t.Fatalf("appliedId: %v", meta)
+	}
+	entries, _ := meta["entries"].([]any)
+	found := false
+	for _, e := range entries {
+		if m, ok := e.(map[string]any); ok && m["id"] == desktopProfileID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("entries 缺 profile: %v", meta)
+	}
 	// 0600 权限
-	fi, _ := os.Stat(path)
+	fi, _ := os.Stat(p.profile)
 	if fi.Mode().Perm() != 0o600 {
 		t.Fatalf("perm %v, want 0600", fi.Mode().Perm())
 	}
@@ -59,7 +96,7 @@ func TestWriteClaudeDesktopLiveMergesManagedKeys(t *testing.T) {
 
 func TestWriteClaudeDesktopLiveInvalidJSONAborts(t *testing.T) {
 	acc := AccessConfigs{A: tempApp(t), Home: t.TempDir()}
-	path := desktopLivePath(acc.Home)
+	path := desktopPathsFor(acc.Home).normalConfig
 	os.MkdirAll(filepath.Dir(path), 0o755)
 	os.WriteFile(path, []byte(`{broken`), 0o600)
 	err := acc.writeClaudeDesktopLive(desktopPlan{}, "http://x", "tok")
@@ -87,8 +124,8 @@ func TestDesktopApplyEndToEnd(t *testing.T) {
 	if err := acc.Apply(v.ID); err != nil {
 		t.Fatal(err)
 	}
-	// Desktop 配置文件
-	b, err := os.ReadFile(desktopLivePath(acc.Home))
+	// Desktop profile 文件（3P 网关模式核心）
+	b, err := os.ReadFile(desktopPathsFor(acc.Home).profile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,6 +137,24 @@ func TestDesktopApplyEndToEnd(t *testing.T) {
 	}
 	if got["inferenceGatewayApiKey"] != st.Token {
 		t.Fatalf("apiKey 应为网关令牌")
+	}
+	// 两个配置文件与 _meta 登记
+	for _, path := range []string{desktopPathsFor(acc.Home).normalConfig, desktopPathsFor(acc.Home).threepConfig} {
+		mb, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		json.Unmarshal(mb, &m)
+		if m["deploymentMode"] != "3p" {
+			t.Fatalf("deploymentMode（%s）: %s", path, mb)
+		}
+	}
+	mb, _ := os.ReadFile(desktopPathsFor(acc.Home).meta)
+	var meta map[string]any
+	json.Unmarshal(mb, &meta)
+	if meta["appliedId"] != desktopProfileID {
+		t.Fatalf("_meta appliedId: %s", mb)
 	}
 	// 别名持久化
 	al := storage.DesktopAliases(a.Store())
@@ -132,7 +187,7 @@ func TestDesktopApplyRejectsMissingModel(t *testing.T) {
 	if err := acc.Apply(v.ID); err == nil || !strings.Contains(err.Error(), "改绑") {
 		t.Fatalf("引用缺失模型应报改绑: %v", err)
 	}
-	if _, err := os.Stat(desktopLivePath(acc.Home)); err == nil {
+	if _, err := os.Stat(desktopPathsFor(acc.Home).profile); err == nil {
 		t.Fatal("失败不得写 Desktop 配置")
 	}
 }

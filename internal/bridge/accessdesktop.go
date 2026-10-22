@@ -22,7 +22,22 @@ import (
 // access.desktop_aliases，last-applied-wins）。
 const (
 	desktopConfigFileName = "claude_desktop_config.json"
+	// Desktop 3P 网关模式（参照 cc-switch）：两个配置文件设
+	// deploymentMode=3p，网关 profile 落 configLibrary/<id>.json，
+	// _meta.json 以 appliedId 激活。PROFILE_ID 与 cc-switch 一致
+	// （Desktop 按 id 匹配 _meta；同机并用两家工具时 last-wins）。
+	desktopProfileID        = "00000000-0000-4000-8000-000000157210"
+	desktopProfileName      = "AgentSwitch"
+	desktopConfigLibraryDir = "configLibrary"
 )
+
+// desktopManagedProfileKeys 是网关 profile 的受管键（写入 profile 文件、
+// 从旧版普通配置中清理——首次实现误写进 Claude/ 配置的遗留键）。
+var desktopManagedProfileKeys = []string{
+	"coworkEgressAllowedHosts", "disableDeploymentModeChooser",
+	"inferenceGatewayApiKey", "inferenceGatewayAuthScheme",
+	"inferenceGatewayBaseUrl", "inferenceProvider", "inferenceModels",
+}
 
 // desktopRoleRouteIDs 是接入文档角色名 → Desktop 路由 ID 的固定映射。
 // 白名单取自 Desktop 1.12603.1+ fail-all 校验（["sonnet","opus","haiku",
@@ -139,15 +154,33 @@ func composeDesktopRoutes(docJSON string) ([]DesktopRoute, map[string]string, er
 	return routes, aliases, nil
 }
 
-// desktopLivePath 返回 Claude Desktop 配置文件路径（相对注入的 home，
-// 与 backupLive 的基准一致）：Linux <home>/.config/Claude、macOS
-// <home>/Library/Application Support/Claude（与 cc-switch 平台映射一致；
-// Windows 未实现，随当前平台支持范围）。
-func desktopLivePath(home string) string {
+// desktopPaths 是 Desktop 3P 网关模式涉及的 4 个文件路径（相对注入的
+// home，与 backupLive 基准一致）：Linux <home>/.config、macOS
+// <home>/Library/Application Support（cc-switch 平台映射；Windows 未实现）。
+type desktopPaths struct {
+	normalConfig string // Claude/claude_desktop_config.json（官方模式配置）
+	threepConfig string // Claude-3p/claude_desktop_config.json（3P 模式配置）
+	profile      string // Claude-3p/configLibrary/<PROFILE_ID>.json（网关 profile）
+	meta         string // Claude-3p/configLibrary/_meta.json（应用登记）
+}
+
+func desktopPathsFor(home string) desktopPaths {
+	base := filepath.Join(home, ".config")
 	if runtime.GOOS == "darwin" {
-		return filepath.Join(home, "Library", "Application Support", "Claude", desktopConfigFileName)
+		base = filepath.Join(home, "Library", "Application Support")
 	}
-	return filepath.Join(home, ".config", "Claude", desktopConfigFileName)
+	lib := filepath.Join(base, "Claude-3p", desktopConfigLibraryDir)
+	return desktopPaths{
+		normalConfig: filepath.Join(base, "Claude", desktopConfigFileName),
+		threepConfig: filepath.Join(base, "Claude-3p", desktopConfigFileName),
+		profile:      filepath.Join(lib, desktopProfileID+".json"),
+		meta:         filepath.Join(lib, "_meta.json"),
+	}
+}
+
+// desktopLiveFiles 返回全部 4 个路径（备份清单用）。
+func (p desktopPaths) all() []string {
+	return []string{p.normalConfig, p.threepConfig, p.profile, p.meta}
 }
 
 // desktopPlan 是 Apply 的合成产物。
@@ -178,13 +211,18 @@ func (s AccessConfigs) composeDesktop(c storage.AccessConfig) (desktopPlan, erro
 	return desktopPlan{Routes: routes, Aliases: aliases}, nil
 }
 
-// writeClaudeDesktopLive 把网关 profile patch 合并进 Desktop 配置：受管五键
-// （inferenceProvider/inferenceGatewayBaseUrl/inferenceGatewayApiKey/
-// inferenceGatewayAuthScheme/inferenceModels）同键替换，其余键（MCP 等）
-// 原样保留；文件不存在建新、存在但非法 JSON 直接报错且绝不改动原文件；
-// 0600 原子写回。inferenceModels 按 cc-switch 形状生成：默认纯字符串名；
-// oneM 角色输出 {"name","supports1m":true,"prefer1m":true}（prefer1m 让
-// Desktop 只列原名、交内嵌 CLI 时自动补 [1m]）。本方法不写任何日志（含令牌）。
+// writeClaudeDesktopLive 启用 Desktop 的 3P 网关模式（参照 cc-switch 的
+// write_profile_at_paths，写 4 个文件）：
+//  1. Claude/claude_desktop_config.json —— deploymentMode=3p，其余键
+//     （MCP 等）原样保留，清理首次实现误写在顶层的网关 profile 遗留键；
+//  2. Claude-3p/claude_desktop_config.json —— deploymentMode=3p；
+//  3. configLibrary/<PROFILE_ID>.json —— 网关 profile 整文件（五键 +
+//     coworkEgressAllowedHosts/disableDeploymentModeChooser）；
+//  4. configLibrary/_meta.json —— entries 登记本 profile、appliedId 指向它
+//     （patch 合并，其余键保留）。
+//
+// 文件不存在建新、存在但非法 JSON 直接报错且绝不改动原文件；0600 原子写回。
+// 本方法不写任何日志（含令牌）。
 func (s AccessConfigs) writeClaudeDesktopLive(plan desktopPlan, baseURL, token string) error {
 	home := s.Home
 	if home == "" {
@@ -193,7 +231,75 @@ func (s AccessConfigs) writeClaudeDesktopLive(plan desktopPlan, baseURL, token s
 			return err
 		}
 	}
-	path := desktopLivePath(home)
+	p := desktopPathsFor(home)
+	// 1+2: 两个配置文件设 deploymentMode（normal 顺带清理遗留 profile 键）。
+	for _, cfg := range []struct {
+		path     string
+		cleanOld bool
+	}{{p.normalConfig, true}, {p.threepConfig, false}} {
+		if err := patchDesktopJSON(cfg.path, func(root map[string]any) {
+			root["deploymentMode"] = "3p"
+			if cfg.cleanOld {
+				for _, k := range desktopManagedProfileKeys {
+					delete(root, k)
+				}
+			}
+		}); err != nil {
+			return err
+		}
+	}
+	// 3: profile 文件整体重建（本工具私有文件，等价 cc-switch clear+set）。
+	models := make([]any, 0, len(plan.Routes))
+	for _, r := range plan.Routes {
+		if r.OneM {
+			models = append(models, map[string]any{
+				"name": r.RouteID, "supports1m": true, "prefer1m": true,
+			})
+		} else {
+			models = append(models, r.RouteID)
+		}
+	}
+	profile := map[string]any{
+		"coworkEgressAllowedHosts":     []any{"*"},
+		"disableDeploymentModeChooser": true,
+		"inferenceProvider":            "gateway",
+		"inferenceGatewayBaseUrl":      baseURL,
+		"inferenceGatewayApiKey":       token,
+		"inferenceGatewayAuthScheme":   "bearer",
+		"inferenceModels":              models,
+	}
+	if err := os.MkdirAll(filepath.Dir(p.profile), 0o755); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(profile, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := atomicWriteFile0600(p.profile, b); err != nil {
+		return err
+	}
+	// 4: _meta.json patch：entries 确保含本 profile、appliedId 指向它。
+	return patchDesktopJSON(p.meta, func(root map[string]any) {
+		entries, _ := root["entries"].([]any)
+		found := false
+		for _, e := range entries {
+			if m, ok := e.(map[string]any); ok && m["id"] == desktopProfileID {
+				m["name"] = desktopProfileName
+				found = true
+			}
+		}
+		if !found {
+			root["entries"] = append(entries, map[string]any{
+				"id": desktopProfileID, "name": desktopProfileName,
+			})
+		}
+		root["appliedId"] = desktopProfileID
+	})
+}
+
+// patchDesktopJSON 读-改-写单个 Desktop JSON 文件：不存在建空对象、存在但
+// 非法 JSON 报错且不动原文件；mutate 后 0600 原子写回。
+func patchDesktopJSON(path string, mutate func(root map[string]any)) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -210,26 +316,12 @@ func (s AccessConfigs) writeClaudeDesktopLive(plan desktopPlan, baseURL, token s
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	models := make([]any, 0, len(plan.Routes))
-	for _, r := range plan.Routes {
-		if r.OneM {
-			models = append(models, map[string]any{
-				"name": r.RouteID, "supports1m": true, "prefer1m": true,
-			})
-		} else {
-			models = append(models, r.RouteID)
-		}
-	}
-	root["inferenceProvider"] = "gateway"
-	root["inferenceGatewayBaseUrl"] = baseURL
-	root["inferenceGatewayApiKey"] = token
-	root["inferenceGatewayAuthScheme"] = "bearer"
-	root["inferenceModels"] = models
-	b, err := json.MarshalIndent(root, "", "  ")
+	mutate(root)
+	out, err := json.MarshalIndent(root, "", "  ")
 	if err != nil {
 		return err
 	}
-	return atomicWriteFile0600(path, b)
+	return atomicWriteFile0600(path, out)
 }
 
 // applyDesktop 执行 Desktop 接入的应用：合成计划 → patch 写入 Desktop 配置
@@ -258,14 +350,4 @@ func (s AccessConfigs) saveDesktopAliases(aliases map[string]string) error {
 		return err
 	}
 	return s.A.Store().Settings().Set(storage.DesktopAliasesSettingsKey, string(b))
-}
-
-// desktopConfigDirNote 给 UI 提示的实际写入路径（展示用）。
-func desktopConfigDirNote(home string) string {
-	if home == "" {
-		if h, err := os.UserHomeDir(); err == nil {
-			home = h
-		}
-	}
-	return desktopLivePath(home)
 }
