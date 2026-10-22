@@ -75,7 +75,7 @@ message_stop
 | 1 | Anthropic → OpenAI | `provider/openai.go` + `protocol/openai.go` | 收到 `finish_reason` 或 `[DONE]` | `Abort("upstream stream interrupted")`：关已开 text 块、丢弃未闭合工具块、发 Anthropic error 事件，不发 `message_stop` |
 | 2 | Anthropic → Anthropic（直通） | `provider/anthropic.go` | 见过 `message_stop`（或上游已发 `error`） | 追加 Anthropic error 事件 |
 | 3 | OpenAI → Anthropic | `protocol/convert_openai_inbound.go` | 见过 `message_stop` | `Abort`：发 OpenAI error chunk，不写 finish_reason、不写 `[DONE]` |
-| 4 | OpenAI → OpenAI（直通） | `gateway/handlers.go` 的 `openaiPassthrough` | 见过 `[DONE]` | 追加 OpenAI error chunk |
+| 4 | OpenAI → OpenAI（直通） | `gateway/handlers.go` 的 `openaiPassthrough` | 见过 `[DONE]` 或非空 `finish_reason` | 追加 OpenAI error chunk |
 
 通用规则：
 
@@ -144,7 +144,7 @@ OpenAI 入站截断后**不发送** `data: [DONE]`。错误消息只含稳定描
 
 ## 5. 风险与兼容
 
-- **直通扫描器**：需正确处理 `\n\n` / `\r\n\r\n` 事件边界与跨 chunk 切分；复用 `protocol.findEvent` 的逻辑（必要时导出内部 helper）。
+- **直通扫描器**：需正确处理 `\n\n` / `\r\n\r\n` 事件边界与跨 chunk 切分；复用 `protocol.findEvent` 的逻辑（必要时导出内部 helper）。终止标记只在**完整事件**内按 `event:`/`data:` 行匹配（正文中的同名字面量不算终止）；追加 error 事件前若已转发字节停在事件中途，先补 `\n\n` 使其自成一条事件。
 - **pipe 写失败**：客户端或 watchdog 关闭 reader 后，泵 goroutine 的 `pw.Write` 失败必须立即退出并由 `defer src.Close()` 释放上游。
 - **空闲阈值与心跳**：合法但极慢的上游（>120s 无任何 chunk）会被切断；这与现有总超时相比并未放宽「卡死」上限，且现在会显式报错。
 - **HTTP 状态不可回改**：流已提交后截断只能以 error 事件表达，遥测以 `error_class` 标记，README/spec 中说明。
