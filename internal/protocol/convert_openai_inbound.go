@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -497,7 +498,8 @@ type oaiInboundChunk struct {
 // 风格对齐：Feed 逐事件 flush，Finish 收口）。model 恒为 requestedModel（逻辑模型
 // 名，不泄露上游名）；text 增量即时出 content 帧，tool_use 出 tool_calls 帧
 // （index 单调分配，input_json_delta 原样分片），message_delta 的 stop_reason 映射
-// 为末帧 finish_reason，收口补 [DONE]。截断流由 Finish 兜底 finish=stop。
+// 为末帧 finish_reason，收口补 [DONE]。截断/上游错误由 Abort 出 error chunk
+// （不补 [DONE]）；Finish 只用于已见终止标记的正常收口。
 // 非并发安全：单一 goroutine 驱动。
 type anthropicToOpenAIStream struct {
 	raw            []byte
@@ -531,8 +533,8 @@ func (t *anthropicToOpenAIStream) emitChunk(delta oaiInboundChunkDelta, finish s
 	t.out.WriteString("\n\n")
 }
 
-// start 发首帧（role=assistant）；message_start 或首个内容事件触发，截断流由
-// close 兜底。id 映射同 AnthropicResponseToOpenAI：chatcmpl-<msg id>。
+// start 发首帧（role=assistant）；message_start 或首个内容事件触发。id 映射同
+// AnthropicResponseToOpenAI：chatcmpl-<msg id>。
 func (t *anthropicToOpenAIStream) start() {
 	if t.started {
 		return
@@ -565,12 +567,18 @@ func (t *anthropicToOpenAIStream) SawTerminal() bool { return t.sawTerminal }
 
 // Abort 以 error chunk 终止截断流：不写 finish_reason、不写 [DONE]。幂等。
 func (t *anthropicToOpenAIStream) Abort(msg string) []byte {
+	t.abortCore(msg)
+	return t.drain()
+}
+
+// abortCore 标记流已终止并写入 error chunk（不写 finish_reason/[DONE]）。不 drain：
+// 由 Abort 或后续 Feed 取回，保证 handleData 内的错误事件仍能流到客户端。幂等。
+func (t *anthropicToOpenAIStream) abortCore(msg string) {
 	if t.finished {
-		return nil
+		return
 	}
 	t.finished = true
 	t.out.Write(OpenAIStreamErrorChunk(msg))
-	return t.drain()
 }
 
 func (t *anthropicToOpenAIStream) handleData(payload []byte) {
@@ -617,10 +625,14 @@ func (t *anthropicToOpenAIStream) handleData(payload []byte) {
 		if p.Delta.StopReason != "" {
 			t.stopReason = p.Delta.StopReason
 		}
-	case "message_stop", "error":
+	case "message_stop":
 		t.sawTerminal = true
-		// error 事件亦收口：客户端拿得到 finish 而非悬空流。
 		t.close()
+	case "error":
+		// 上游错误事件：不伪装成正常结束（spec：任何上游错误都必须对客户端
+		// 可见）。error chunk 留在缓冲区由 Feed 取回，不转发上游错误正文。
+		t.sawTerminal = true
+		t.abortCore("upstream stream error")
 	}
 }
 
@@ -672,8 +684,10 @@ func (t *anthropicToOpenAIStream) drain() []byte {
 
 // AnthropicStreamToOpenAIStream 把 Anthropic SSE 流泵成 OpenAI chat.completion.chunk
 // SSE 流（与 openai.go 的 streamBody 同构反向）。model 回显 requestedModel（逻辑
-// 模型名）。src 由调用方关闭；EOF/写失败/读错所有路径都经 Finish 收口。
-func AnthropicStreamToOpenAIStream(r io.Reader, requestedModel string) io.Reader {
+// 模型名）。src 由调用方关闭。收口区分三种结束：ctx 取消 → 静默关流；EOF 且上游
+// 已给终止标记 → Finish（finish_reason + [DONE]）；EOF 缺终止标记或读错 → Abort
+// （error chunk，不补 [DONE]）。
+func AnthropicStreamToOpenAIStream(ctx context.Context, r io.Reader, requestedModel string) io.ReadCloser {
 	pr, pw := io.Pipe()
 	t := &anthropicToOpenAIStream{
 		requestedModel: requestedModel,
@@ -691,13 +705,23 @@ func AnthropicStreamToOpenAIStream(r io.Reader, requestedModel string) io.Reader
 					}
 				}
 			}
-			if rerr != nil {
-				if out := t.Finish(); len(out) > 0 {
-					_, _ = pw.Write(out)
-				}
-				pw.Close()
-				return
+			if rerr == nil {
+				continue
 			}
+			var out []byte
+			switch {
+			case ctx.Err() != nil:
+				// 客户端/网关取消：静默收尾
+			case rerr == io.EOF && t.SawTerminal():
+				out = t.Finish()
+			default:
+				out = t.Abort("upstream stream interrupted")
+			}
+			if len(out) > 0 {
+				_, _ = pw.Write(out)
+			}
+			pw.Close()
+			return
 		}
 	}()
 	return pr

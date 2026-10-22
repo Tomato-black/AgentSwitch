@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"strings"
@@ -280,7 +281,7 @@ func TestAnthropicStreamToOpenAIStreamChunks(t *testing.T) {
 		"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
 		"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":2}}\n\n" +
 		"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
-	out, err := io.ReadAll(AnthropicStreamToOpenAIStream(strings.NewReader(src), "logical-1"))
+	out, err := io.ReadAll(AnthropicStreamToOpenAIStream(context.Background(), strings.NewReader(src), "logical-1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +347,7 @@ func TestAnthropicStreamToOpenAIStreamToolCall(t *testing.T) {
 		"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\n" +
 		"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":4}}\n\n" +
 		"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
-	out, err := io.ReadAll(AnthropicStreamToOpenAIStream(strings.NewReader(src), "logical-1"))
+	out, err := io.ReadAll(AnthropicStreamToOpenAIStream(context.Background(), strings.NewReader(src), "logical-1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -409,6 +410,44 @@ func TestAnthropicToOpenAIStreamAbort(t *testing.T) {
 	}
 	if again := tu.Abort("again"); len(again) != 0 {
 		t.Fatalf("Abort must be idempotent, got %q", again)
+	}
+}
+
+// TestAnthropicStreamToOpenAIStreamTruncated：上游在 message_stop 前断流 →
+// 输出 error chunk，绝不补 [DONE]（未终止的流不能伪装成正常结束）。
+func TestAnthropicStreamToOpenAIStreamTruncated(t *testing.T) {
+	src := "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"par\"}}\n\n"
+	out, err := io.ReadAll(AnthropicStreamToOpenAIStream(context.Background(), strings.NewReader(src), "logical-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "upstream stream interrupted") {
+		t.Fatalf("missing error chunk:\n%s", s)
+	}
+	if strings.Contains(s, "[DONE]") {
+		t.Fatalf("truncated stream must not emit [DONE]:\n%s", s)
+	}
+}
+
+// TestAnthropicStreamToOpenAIStreamUpstreamError：上游 error 事件 → OpenAI
+// error chunk；不得伪装成 finish_reason=stop + [DONE] 的成功空回复，也不转发
+// 上游错误正文。
+func TestAnthropicStreamToOpenAIStreamUpstreamError(t *testing.T) {
+	src := "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"api_error\",\"message\":\"boom upstream detail\"}}\n\n"
+	out, err := io.ReadAll(AnthropicStreamToOpenAIStream(context.Background(), strings.NewReader(src), "logical-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	if !strings.Contains(s, `"error"`) || !strings.Contains(s, "upstream stream error") {
+		t.Fatalf("missing error chunk:\n%s", s)
+	}
+	if strings.Contains(s, "finish_reason") || strings.Contains(s, "[DONE]") {
+		t.Fatalf("upstream error must not look like success:\n%s", s)
+	}
+	if strings.Contains(s, "boom upstream detail") {
+		t.Fatalf("must not forward upstream error body:\n%s", s)
 	}
 }
 

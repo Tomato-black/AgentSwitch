@@ -446,7 +446,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			// anthropic 流式：SSE 泵过 AnthropicStreamToOpenAIStream。
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.WriteHeader(res.StatusCode)
-			copyStream(w, protocol.AnthropicStreamToOpenAIStream(res.Body, oar.Model))
+			copyStream(w, protocol.AnthropicStreamToOpenAIStream(ctx, res.Body, oar.Model))
 			res.Body.Close()
 		default:
 			// anthropic 非流：整体读出转 chat.completion。转换失败仍可转移——
