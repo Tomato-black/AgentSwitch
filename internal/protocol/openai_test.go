@@ -462,11 +462,29 @@ func TestStreamTransformerAbort(t *testing.T) {
 	if strings.Index(out, "message_start") > strings.Index(out, "event: error") {
 		t.Fatalf("message_start must precede error:\n%s", out)
 	}
+	if strings.Index(out, "event: content_block_stop") > strings.Index(out, "event: error") {
+		t.Fatalf("content_block_stop must precede error:\n%s", out)
+	}
+	if strings.Contains(out, "message_delta") {
+		t.Fatalf("Abort must not emit message_delta:\n%s", out)
+	}
 	if strings.Contains(out, "message_stop") {
 		t.Fatalf("Abort must not emit message_stop:\n%s", out)
 	}
 	if again := tu.Abort("again"); len(again) != 0 {
 		t.Fatalf("Abort must be idempotent, got %q", again)
+	}
+
+	// 空流截断：Abort 必须兜底发 message_start（先于 error），但不能凭空开块。
+	empty := string(NewOpenAIStreamTransformer().Abort("x"))
+	if !strings.Contains(empty, "event: message_start") {
+		t.Fatalf("empty-stream Abort must emit message_start:\n%s", empty)
+	}
+	if strings.Contains(empty, "content_block_start") {
+		t.Fatalf("empty-stream Abort must not open a block:\n%s", empty)
+	}
+	if strings.Index(empty, "message_start") > strings.Index(empty, "event: error") {
+		t.Fatalf("empty-stream message_start must precede error:\n%s", empty)
 	}
 }
 
