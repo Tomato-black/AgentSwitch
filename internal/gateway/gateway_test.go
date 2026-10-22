@@ -1297,6 +1297,53 @@ func TestOpenAIInboundOpenAIProtocolPassthrough(t *testing.T) {
 	}
 }
 
+// 回归 pin：OpenAI 入站 → openai 渠道是纯透传，工具调用体原样到达上游——
+// 既不经过 Anthropic↔OpenAI 转换器，也不做空名清洗（2026-10-22 协议修复
+// 排查后确认「OpenAI 入站不受影响」）。
+func TestOpenAIInboundOpenAIProtocolPassthroughPreservesToolCalls(t *testing.T) {
+	var gotBody map[string]any
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		json.Unmarshal(b, &gotBody)
+		w.Write([]byte(`{"id":"cmpl-1","object":"chat.completion","choices":[],"usage":{}}`))
+	}))
+	defer up.Close()
+	creds := newMapStore()
+	_ = creds.Set("account:ko", []byte("sk-oai"))
+	cand := router.Candidate{TargetID: "to", LogicalModel: "pub-1",
+		ChannelID: "co", ChannelName: "oai", SecretKey: "account:ko",
+		Protocol: "openai", BaseURL: up.URL, AllowPrivate: true,
+		UpstreamModel: "u-oai", Priority: 10}
+	s := newGW(t, up.URL, func(d *Deps) {
+		d.Cred = creds
+		d.Candidates = func(string) ([]router.Candidate, error) { return []router.Candidate{cand}, nil }
+	})
+	body := `{"model":"pub-1","messages":[{"role":"assistant","content":null,
+	  "tool_calls":[{"id":"call_1","type":"function","function":{"name":"Bash","arguments":"{\"command\":\"ls\"}"}}]}]}`
+	resp := postChat(t, s, body, "tok")
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status %d body %s", resp.StatusCode, b)
+	}
+	if gotBody["model"] != "u-oai" {
+		t.Fatalf("model not rewritten: %v", gotBody["model"])
+	}
+	msgs, _ := gotBody["messages"].([]any)
+	if len(msgs) != 1 {
+		t.Fatalf("messages must pass through untouched: %v", gotBody["messages"])
+	}
+	m0, _ := msgs[0].(map[string]any)
+	calls, _ := m0["tool_calls"].([]any)
+	if len(calls) != 1 {
+		t.Fatalf("tool_calls must pass through untouched: %v", m0["tool_calls"])
+	}
+	fn, _ := calls[0].(map[string]any)["function"].(map[string]any)
+	if fn["name"] != "Bash" || fn["arguments"] != `{"command":"ls"}` {
+		t.Fatalf("tool call mangled: %v", fn)
+	}
+}
+
 // TestOpenAIInboundUpstreamErrorOpenAIShape：anthropic 上游 400 的 Anthropic
 // envelope 须转成 OpenAI error 形状回给 chat.completions 客户端（不原样透传）。
 func TestOpenAIInboundUpstreamErrorOpenAIShape(t *testing.T) {
