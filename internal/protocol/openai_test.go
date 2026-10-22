@@ -383,6 +383,23 @@ func TestStreamTransformerTerminalMarker(t *testing.T) {
 	}
 }
 
+func TestStreamTransformerDropsIncompleteToolArgs(t *testing.T) {
+	tu := NewOpenAIStreamTransformer()
+	var acc []byte
+	acc = append(acc, tu.Feed([]byte(
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"Write","arguments":"{\"file_path\":\"/tmp/a\",\"content\":\"abc"}}]}}]}`+"\n\n"))...)
+	// 正常 finish_reason 但参数 JSON 不完整（上游自身 bug）：该块必须丢弃。
+	acc = append(acc, tu.Feed([]byte(
+		`data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`+"\n\n"))...)
+	out := string(acc)
+	if strings.Contains(out, `"name":"Write"`) {
+		t.Fatalf("incomplete tool block must not be emitted:\n%s", out)
+	}
+	if tu.DroppedTools() != 1 {
+		t.Fatalf("DroppedTools = %d, want 1", tu.DroppedTools())
+	}
+}
+
 // usage-only 尾块（choices 为空）不得产生空事件或 panic。
 func TestStreamTransformerUsageOnlyTail(t *testing.T) {
 	tu := NewOpenAIStreamTransformer()

@@ -357,18 +357,19 @@ type toolAcc struct {
 // 每字节恰好转发一次；Finish 收口（截断流按 end_turn）。
 // 非并发安全：单一 goroutine 驱动。
 type OpenAIStreamTransformer struct {
-	raw         []byte // 不完整事件的字节缓冲
-	out         bytes.Buffer
-	started     bool
-	finished    bool
-	msgID       string
-	model       string
-	inTok       int
-	outTok      int
-	blockIdx    int              // 下一个 content block 的 index
-	textOpen    bool             // 当前有打开的 text 块
-	tools       map[int]*toolAcc // 按上游 index 累积中的 tool_call
-	sawTerminal bool             // 已收到 finish_reason 或 [DONE]
+	raw          []byte // 不完整事件的字节缓冲
+	out          bytes.Buffer
+	started      bool
+	finished     bool
+	msgID        string
+	model        string
+	inTok        int
+	outTok       int
+	blockIdx     int              // 下一个 content block 的 index
+	textOpen     bool             // 当前有打开的 text 块
+	tools        map[int]*toolAcc // 按上游 index 累积中的 tool_call
+	sawTerminal  bool             // 已收到 finish_reason 或 [DONE]
+	droppedTools int              // 参数 JSON 不完整而丢弃的工具块数
 }
 
 func NewOpenAIStreamTransformer() *OpenAIStreamTransformer {
@@ -377,6 +378,9 @@ func NewOpenAIStreamTransformer() *OpenAIStreamTransformer {
 
 // SawTerminal 报告上游是否给出正常终止标记（finish_reason 或 [DONE]）。
 func (t *OpenAIStreamTransformer) SawTerminal() bool { return t.sawTerminal }
+
+// DroppedTools 报告因参数 JSON 不完整而丢弃的工具块数。
+func (t *OpenAIStreamTransformer) DroppedTools() int { return t.droppedTools }
 
 func (t *OpenAIStreamTransformer) emit(event string, payload any) {
 	b, err := json.Marshal(payload)
@@ -417,7 +421,7 @@ func (t *OpenAIStreamTransformer) closeText() {
 
 // emitTools 收口一次性发累积中的 tool_use 块（spec §5.3.3：按 index 累积、
 // 收口整块发出）。按上游 index 升序，Anthropic 块 index 用 t.blockIdx 单调
-// 分配；参数解析失败退化为空对象。
+// 分配；参数 JSON 解析失败的块整块丢弃并计入 DroppedTools。
 func (t *OpenAIStreamTransformer) emitTools() {
 	if len(t.tools) == 0 {
 		return
@@ -429,10 +433,15 @@ func (t *OpenAIStreamTransformer) emitTools() {
 	sort.Ints(idxs)
 	for _, i := range idxs {
 		acc := t.tools[i]
+		// 参数 JSON 不完整的块（上游 bug 或截断）不能下发：退化成 {} 会让
+		// 客户端以空参数执行工具，丢弃并计数由上层告警。
+		var input map[string]any
+		if err := json.Unmarshal([]byte(acc.args.String()), &input); err != nil {
+			t.droppedTools++
+			continue
+		}
 		// 真实 Anthropic 流的工具参数走 input_json_delta 分片；客户端只从分片
 		// 累积参数、忽略 start.input。塞进 start 会被当成 {}（2026-10-22 排查）。
-		input := map[string]any{}
-		_ = json.Unmarshal([]byte(acc.args.String()), &input)
 		m, _ := json.Marshal(input)
 		t.emit("content_block_start", map[string]any{
 			"type": "content_block_start", "index": t.blockIdx,
