@@ -370,6 +370,31 @@ func TestAnthropicAdapterNoDoubleV1(t *testing.T) {
 	}
 }
 
+func TestAnthropicAdapterStreamInterrupted(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		f := w.(http.Flusher)
+		w.Write([]byte("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"par\"}}\n\n"))
+		f.Flush()
+		hj, _ := w.(http.Hijacker)
+		conn, _, _ := hj.Hijack()
+		conn.Close()
+	}))
+	defer up.Close()
+	res, err := NewAnthropicAdapter().Do(context.Background(), DoRequest{
+		BaseURL: up.URL, AllowPrivate: true, APIKey: "sk-x", UpstreamModel: "up-1", Stream: true,
+		RawBody: []byte(`{"model":"up-1","stream":true,"messages":[]}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	b, _ := io.ReadAll(res.Body)
+	if !strings.Contains(string(b), "event: error") {
+		t.Fatalf("missing error event:\n%s", b)
+	}
+}
+
 func TestProbeBothProtocols(t *testing.T) {
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" {

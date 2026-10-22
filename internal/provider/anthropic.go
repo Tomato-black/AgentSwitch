@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"AgentSwitch/internal/protocol"
 )
 
 // anthropicEndpoint 按 Anthropic 生态约定拼接端点：厂商文档的 base_url 是 API 根
@@ -87,7 +89,16 @@ func (a *AnthropicAdapter) Do(ctx context.Context, r DoRequest) (ChatResult, err
 	if r.Stream {
 		req.Header.Set("Accept", "text/event-stream")
 	}
-	return sendUpstream(ctx, a.Client, req)
+	res, err := sendUpstream(ctx, a.Client, req)
+	if err != nil {
+		return res, err
+	}
+	if r.Stream && res.StatusCode >= 200 && res.StatusCode < 300 {
+		res.Body = WrapPassthroughStream(ctx, res.Body,
+			protocol.AnthropicErrorEvent("upstream stream interrupted"),
+			"event: message_stop", "event: error")
+	}
+	return res, nil
 }
 
 // sendUpstream 执行请求并归一化结果：3xx 拒绝为 error（CheckRedirect 返回
