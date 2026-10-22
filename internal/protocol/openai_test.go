@@ -40,8 +40,8 @@ func TestAnthropicToOpenAIDropsNamelessToolUseAndResult(t *testing.T) {
 	}
 	var req struct {
 		Messages []struct {
-			Role       string `json:"role"`
-			ToolCalls  []struct {
+			Role      string `json:"role"`
+			ToolCalls []struct {
 				Function struct {
 					Name string `json:"name"`
 				} `json:"function"`
@@ -441,6 +441,32 @@ func TestStreamTransformerAllToolsDroppedDowngradesStopReason(t *testing.T) {
 	}
 	if tu.DroppedTools() == 0 {
 		t.Fatal("DroppedTools must be > 0")
+	}
+}
+
+// 截断流由上层（空闲超时/上游断开且无终止标记）调用 Abort 收口：关闭已打开
+// 的 text 块、丢弃累积中的工具块，以 Anthropic error 事件结束，绝不发
+// message_stop——那会让客户端把半截响应当成正常完成。幂等。
+func TestStreamTransformerAbort(t *testing.T) {
+	tu := NewOpenAIStreamTransformer()
+	var acc []byte
+	acc = append(acc, tu.Feed([]byte(`data: {"id":"c","choices":[{"delta":{"content":"par"}}]}`+"\n\n"))...)
+	acc = append(acc, tu.Abort("upstream stream interrupted")...)
+	out := string(acc)
+	for _, want := range []string{"event: message_start", "event: content_block_stop", "event: error",
+		`"type":"api_error"`, "upstream stream interrupted"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Index(out, "message_start") > strings.Index(out, "event: error") {
+		t.Fatalf("message_start must precede error:\n%s", out)
+	}
+	if strings.Contains(out, "message_stop") {
+		t.Fatalf("Abort must not emit message_stop:\n%s", out)
+	}
+	if again := tu.Abort("again"); len(again) != 0 {
+		t.Fatalf("Abort must be idempotent, got %q", again)
 	}
 }
 

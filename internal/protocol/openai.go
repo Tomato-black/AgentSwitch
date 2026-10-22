@@ -613,6 +613,20 @@ func (t *OpenAIStreamTransformer) Finish() []byte {
 	return out
 }
 
+// Abort 以 error 事件收口截断流：关闭已打开的 text 块、丢弃累积中的工具块，
+// 不写 message_delta/message_stop。幂等。
+func (t *OpenAIStreamTransformer) Abort(msg string) []byte {
+	if t.finished {
+		return nil
+	}
+	t.finished = true
+	t.startMessage() // 空流截断也保证 message_start 先于 error（幂等）
+	t.closeText()
+	t.tools = map[int]*toolAcc{}
+	t.out.Write(AnthropicErrorEvent(msg))
+	return t.drain()
+}
+
 func (t *OpenAIStreamTransformer) drain() []byte {
 	if t.out.Len() == 0 {
 		return nil
