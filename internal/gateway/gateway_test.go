@@ -1620,6 +1620,41 @@ func TestMessagesStreamLongerThanTimeoutNotCut(t *testing.T) {
 	}
 }
 
+func TestOpenAIInboundStreamIdleTimeoutEmitsError(t *testing.T) {
+	release := make(chan struct{})
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		f := w.(http.Flusher)
+		w.WriteHeader(200)
+		w.Write([]byte(`data: {"id":"c","choices":[{"delta":{"content":"x"}}]}` + "\n\n"))
+		f.Flush()
+		<-release
+	}))
+	defer up.Close()
+	defer close(release)
+	s := newGW(t, up.URL, func(d *Deps) {
+		d.Limits = func() Limits { return Limits{MaxBodyBytes: 1 << 20, RequestTimeout: 50 * time.Millisecond} }
+		d.Candidates = func(string) ([]router.Candidate, error) {
+			return []router.Candidate{{TargetID: "t1", LogicalModel: "pub-1", ChannelID: "c1",
+				ChannelName: "main", SecretKey: "account:k1", Protocol: "openai",
+				BaseURL: up.URL, AllowPrivate: true, UpstreamModel: "up-1", Priority: 10}}, nil
+		}
+	})
+	body := `{"model":"pub-1","stream":true,"messages":[{"role":"user","content":"q"}]}`
+	req, _ := http.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer tok")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	out := w.Body.String()
+	if !strings.Contains(out, "upstream stream idle timeout") {
+		t.Fatalf("missing idle error chunk:\n%s", out)
+	}
+	recs := s.deps.Ring.List()
+	if len(recs) == 0 || recs[len(recs)-1].ErrorClass != "stream" {
+		t.Fatalf("request record must carry error_class=stream: %+v", recs)
+	}
+}
+
 func TestMessagesStreamIdleTimeoutEmitsError(t *testing.T) {
 	release := make(chan struct{})
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

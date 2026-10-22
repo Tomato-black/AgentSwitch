@@ -362,11 +362,25 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	decision := s.deps.Router.Resolve(oar.Model, cands)
 
+	lim := s.deps.Limits()
+	// 超时语义同 handleMessages：非流式为总时长上限；流式的 RequestTimeout 只
+	// 约束等待响应头，2xx 提交点即停表，其后由 copyStream 的空闲 watchdog 接管。
 	ctx := r.Context()
-	if lim := s.deps.Limits(); lim.RequestTimeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, lim.RequestTimeout)
+	var cancel context.CancelFunc
+	var headerTimer *time.Timer
+	if lim.RequestTimeout > 0 {
+		if oar.Stream {
+			ctx, cancel = context.WithCancel(ctx)
+			headerTimer = time.AfterFunc(lim.RequestTimeout, cancel)
+		} else {
+			ctx, cancel = context.WithTimeout(ctx, lim.RequestTimeout)
+		}
 		defer cancel()
+		defer func() {
+			if headerTimer != nil {
+				headerTimer.Stop()
+			}
+		}()
 	}
 
 	lastClass := provider.ClassUnknown
@@ -451,13 +465,21 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set(h, v)
 			}
 		}
+		// 提交点：响应头即将下发，头部等待计时器必须停表——否则活跃长流会被
+		// 总超时切断（首字节后绝不转移/重放，故此处只能停止，不能换候选）。
+		if oar.Stream && headerTimer != nil {
+			headerTimer.Stop()
+		}
 		switch {
 		case c.Protocol == "openai":
 			// 直通：响应已是 OpenAI 形状（流式为 chunk SSE），原样转发。
 			if oar.Stream {
 				w.Header().Set("Content-Type", "text/event-stream")
 				w.WriteHeader(res.StatusCode)
-				copyStream(w, res.Body, 0, nil)
+				onIdle := protocol.OpenAIStreamErrorChunk("upstream stream idle timeout")
+				if copyStream(w, res.Body, lim.RequestTimeout, onIdle) {
+					rec.ErrorClass = "stream"
+				}
 			} else {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(res.StatusCode)
@@ -468,7 +490,10 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			// anthropic 流式：SSE 泵过 AnthropicStreamToOpenAIStream。
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.WriteHeader(res.StatusCode)
-			copyStream(w, protocol.AnthropicStreamToOpenAIStream(ctx, res.Body, oar.Model), 0, nil)
+			onIdle := protocol.OpenAIStreamErrorChunk("upstream stream idle timeout")
+			if copyStream(w, protocol.AnthropicStreamToOpenAIStream(ctx, res.Body, oar.Model), lim.RequestTimeout, onIdle) {
+				rec.ErrorClass = "stream"
+			}
 			res.Body.Close()
 		default:
 			// anthropic 非流：整体读出转 chat.completion。转换失败仍可转移——
