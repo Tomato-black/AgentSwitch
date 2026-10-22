@@ -357,22 +357,26 @@ type toolAcc struct {
 // 每字节恰好转发一次；Finish 收口（截断流按 end_turn）。
 // 非并发安全：单一 goroutine 驱动。
 type OpenAIStreamTransformer struct {
-	raw      []byte // 不完整事件的字节缓冲
-	out      bytes.Buffer
-	started  bool
-	finished bool
-	msgID    string
-	model    string
-	inTok    int
-	outTok   int
-	blockIdx int              // 下一个 content block 的 index
-	textOpen bool             // 当前有打开的 text 块
-	tools    map[int]*toolAcc // 按上游 index 累积中的 tool_call
+	raw         []byte // 不完整事件的字节缓冲
+	out         bytes.Buffer
+	started     bool
+	finished    bool
+	msgID       string
+	model       string
+	inTok       int
+	outTok      int
+	blockIdx    int              // 下一个 content block 的 index
+	textOpen    bool             // 当前有打开的 text 块
+	tools       map[int]*toolAcc // 按上游 index 累积中的 tool_call
+	sawTerminal bool             // 已收到 finish_reason 或 [DONE]
 }
 
 func NewOpenAIStreamTransformer() *OpenAIStreamTransformer {
 	return &OpenAIStreamTransformer{tools: map[int]*toolAcc{}}
 }
+
+// SawTerminal 报告上游是否给出正常终止标记（finish_reason 或 [DONE]）。
+func (t *OpenAIStreamTransformer) SawTerminal() bool { return t.sawTerminal }
 
 func (t *OpenAIStreamTransformer) emit(event string, payload any) {
 	b, err := json.Marshal(payload)
@@ -525,6 +529,7 @@ func (t *OpenAIStreamTransformer) handleChunk(data []byte) {
 		}
 	}
 	if ch.FinishReason != nil && *ch.FinishReason != "" {
+		t.sawTerminal = true
 		t.close(mapFinishReason(*ch.FinishReason))
 	}
 }
@@ -541,6 +546,7 @@ func (t *OpenAIStreamTransformer) handleEvent(event []byte) {
 			continue
 		}
 		if payload == "[DONE]" {
+			t.sawTerminal = true
 			t.startMessage()
 			t.close("end_turn")
 			return

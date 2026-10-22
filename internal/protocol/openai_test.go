@@ -362,6 +362,27 @@ func TestStreamTransformerTruncatedFinish(t *testing.T) {
 	}
 }
 
+func TestStreamTransformerTerminalMarker(t *testing.T) {
+	tu := NewOpenAIStreamTransformer()
+	if tu.SawTerminal() {
+		t.Fatal("fresh transformer must not report terminal")
+	}
+	tu.Feed([]byte(`data: {"id":"c","choices":[{"delta":{"content":"x"},"finish_reason":null}]}` + "\n\n"))
+	if tu.SawTerminal() {
+		t.Fatal("finish_reason:null must not count as terminal")
+	}
+	tu.Feed([]byte(`data: {"choices":[{"delta":{},"finish_reason":"stop"}]}` + "\n\n"))
+	if !tu.SawTerminal() {
+		t.Fatal("finish_reason must mark terminal")
+	}
+
+	done := NewOpenAIStreamTransformer()
+	done.Feed([]byte("data: [DONE]\n\n"))
+	if !done.SawTerminal() {
+		t.Fatal("[DONE] must mark terminal")
+	}
+}
+
 // usage-only 尾块（choices 为空）不得产生空事件或 panic。
 func TestStreamTransformerUsageOnlyTail(t *testing.T) {
 	tu := NewOpenAIStreamTransformer()
