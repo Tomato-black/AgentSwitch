@@ -689,9 +689,10 @@ func (t *anthropicToOpenAIStream) drain() []byte {
 
 // AnthropicStreamToOpenAIStream 把 Anthropic SSE 流泵成 OpenAI chat.completion.chunk
 // SSE 流（与 openai.go 的 streamBody 同构反向）。model 回显 requestedModel（逻辑
-// 模型名）。src 由调用方关闭。收口区分三种结束：ctx 取消 → 静默关流；EOF 且上游
-// 已给终止标记 → Finish（finish_reason + [DONE]）；EOF 缺终止标记或读错 → Abort
-// （error chunk，不补 [DONE]）。
+// 模型名）。调用方必须关闭 r（上游 body）**以及返回的 ReadCloser**——关闭读端会
+// 解除泵在 io.Pipe 写端的阻塞，客户端断开后泵才能退出。收口区分三种结束：ctx
+// 取消 → 静默关流；EOF 且上游已给终止标记 → Finish（finish_reason + [DONE]）；
+// EOF 缺终止标记或读错 → Abort（error chunk，不补 [DONE]）。
 func AnthropicStreamToOpenAIStream(ctx context.Context, r io.Reader, requestedModel string) io.ReadCloser {
 	pr, pw := io.Pipe()
 	t := &anthropicToOpenAIStream{
