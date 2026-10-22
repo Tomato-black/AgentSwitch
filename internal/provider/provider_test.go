@@ -1,9 +1,12 @@
 package provider
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -414,5 +417,87 @@ func TestOpenAIAdapterStreamInterruptedEmitsError(t *testing.T) {
 	}
 	if strings.Contains(out, `"name":"Write"`) {
 		t.Fatalf("incomplete tool block leaked:\n%s", out)
+	}
+}
+
+func TestOpenAIAdapterStreamInterruptedLogsDroppedTools(t *testing.T) {
+	var logs bytes.Buffer
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		f := w.(http.Flusher)
+		w.Write([]byte(`data: {"id":"c","choices":[{"delta":{"tool_calls":[{"index":0,"id":"t1","function":{"name":"Write","arguments":"{\"file_path\":\"/tmp/a\""}}]}}]}` + "\n\n"))
+		f.Flush()
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Fatal("no hijacker")
+		}
+		conn, _, _ := hj.Hijack()
+		conn.Close()
+	}))
+	defer up.Close()
+	ad := NewOpenAIAdapter(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	res, err := ad.Do(context.Background(), DoRequest{
+		BaseURL: up.URL, AllowPrivate: true, APIKey: "sk-x", UpstreamModel: "up-1", Stream: true,
+		RawBody: []byte(`{"model":"up-1","max_tokens":8,"stream":true,"messages":[{"role":"user","content":"q"}]}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, res.Body)
+	res.Body.Close()
+	got := logs.String()
+	if !strings.Contains(got, "upstream stream interrupted") {
+		t.Fatalf("missing interrupted warning:\n%s", got)
+	}
+	if !strings.Contains(got, "dropped incomplete tool call") || !strings.Contains(got, "count=1") {
+		t.Fatalf("missing dropped-tool warning with count:\n%s", got)
+	}
+}
+
+func TestOpenAIAdapterStreamCancelSilent(t *testing.T) {
+	var logs bytes.Buffer
+	started := make(chan struct{})
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		f := w.(http.Flusher)
+		w.Write([]byte(`data: {"id":"c","choices":[{"delta":{"tool_calls":[{"index":0,"id":"t1","function":{"name":"Write","arguments":"{\"file_path\"/tmp/a\""}}]}}]}` + "\n\n"))
+		f.Flush()
+		// 工具块本身要收口才下发；追加一个 text delta 让客户端有可观测信号，
+		// 读到 text_delta 即证明其前面的工具块已被转换器累积。
+		w.Write([]byte(`data: {"choices":[{"delta":{"content":"x"}}]}` + "\n\n"))
+		f.Flush()
+		close(started)
+		<-r.Context().Done()
+	}))
+	defer up.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ad := NewOpenAIAdapter(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	res, err := ad.Do(ctx, DoRequest{
+		BaseURL: up.URL, AllowPrivate: true, APIKey: "sk-x", UpstreamModel: "up-1", Stream: true,
+		RawBody: []byte(`{"model":"up-1","max_tokens":8,"stream":true,"messages":[{"role":"user","content":"q"}]}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	br := bufio.NewReader(res.Body)
+	var seen strings.Builder
+	for !strings.Contains(seen.String(), "text_delta") {
+		line, rerr := br.ReadString('\n')
+		if rerr != nil {
+			t.Fatalf("read before cancel: %v\n%s", rerr, seen.String())
+		}
+		seen.WriteString(line)
+	}
+	cancel()
+	rest, _ := io.ReadAll(br)
+	res.Body.Close()
+	out := seen.String() + string(rest)
+	if strings.Contains(out, "event: error") {
+		t.Fatalf("canceled stream must not emit error event:\n%s", out)
+	}
+	if strings.Contains(logs.String(), "dropped incomplete tool call") {
+		t.Fatalf("cancel must be silent, got logs:\n%s", logs.String())
 	}
 }

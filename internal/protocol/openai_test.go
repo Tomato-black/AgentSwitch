@@ -498,3 +498,18 @@ func TestStreamTransformerUsageOnlyTail(t *testing.T) {
 		t.Fatalf("usage lost:\n%s", out)
 	}
 }
+
+// Abort 丢弃累积中的工具块时必须计入 DroppedTools（上层据此告警）。
+func TestStreamTransformerAbortCountsDroppedTools(t *testing.T) {
+	tu := NewOpenAIStreamTransformer()
+	acc := tu.Feed([]byte(
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"Write","arguments":"{\"file_path\":\"/tmp/a\""}}]}}]}` + "\n\n"))
+	acc = append(acc, tu.Abort("upstream stream interrupted")...)
+	out := string(acc)
+	if strings.Contains(out, `"type":"tool_use"`) || strings.Contains(out, `"name":"Write"`) {
+		t.Fatalf("aborted tool block leaked:\n%s", out)
+	}
+	if tu.DroppedTools() != 1 {
+		t.Fatalf("DroppedTools = %d, want 1", tu.DroppedTools())
+	}
+}

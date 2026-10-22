@@ -99,9 +99,10 @@ func (a *OpenAIAdapter) streamBody(ctx context.Context, src io.ReadCloser) io.Re
 				continue
 			}
 			var out []byte
+			canceled := ctx.Err() != nil
 			switch {
-			case ctx.Err() != nil:
-				// 客户端/网关取消：静默收尾
+			case canceled:
+				// 客户端/网关取消：静默收尾，不记录任何告警
 			case rerr == io.EOF && t.SawTerminal():
 				out = t.Finish()
 			default:
@@ -113,7 +114,7 @@ func (a *OpenAIAdapter) streamBody(ctx context.Context, src io.ReadCloser) io.Re
 			if len(out) > 0 {
 				_, _ = pw.Write(out)
 			}
-			if a.Log != nil && t.DroppedTools() > 0 {
+			if a.Log != nil && !canceled && t.DroppedTools() > 0 {
 				a.Log.Warn("dropped incomplete tool call", "count", t.DroppedTools())
 			}
 			pw.Close()

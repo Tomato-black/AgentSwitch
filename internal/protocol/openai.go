@@ -622,6 +622,7 @@ func (t *OpenAIStreamTransformer) Abort(msg string) []byte {
 	t.finished = true
 	t.startMessage() // 空流截断也保证 message_start 先于 error（幂等）
 	t.closeText()
+	t.droppedTools += len(t.tools) // 未完成工具块随截断一并丢弃，计数供上层告警
 	t.tools = map[int]*toolAcc{}
 	t.out.Write(AnthropicErrorEvent(msg))
 	return t.drain()
