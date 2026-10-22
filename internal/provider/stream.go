@@ -7,16 +7,18 @@ import (
 )
 
 // WrapPassthroughStream 包装直通 SSE 流：字节原样转发；跟踪终止标记
-// （terminals 任一出现即视为正常结束）。EOF/读错误且未见终止标记时追加
-// onTruncate；ctx 取消时静默关闭。src 由泵关闭。
+// （terminals 任一非空标记出现即视为正常结束）。EOF/读错误且未见终止标记时
+// 追加 onTruncate；ctx 取消只抑制追加，不会主动解除阻塞中的 src.Read——解除
+// 依赖调用方关闭 src 或取消上游请求。src 由泵关闭。
 func WrapPassthroughStream(ctx context.Context, src io.ReadCloser, onTruncate []byte, terminals ...string) io.ReadCloser {
 	pr, pw := io.Pipe()
 	go func() {
 		defer src.Close()
+		defer pw.Close()
 		seen := false
 		maxTail := 0
 		for _, m := range terminals {
-			if len(m)-1 > maxTail {
+			if m != "" && len(m)-1 > maxTail {
 				maxTail = len(m) - 1
 			}
 		}
@@ -24,7 +26,7 @@ func WrapPassthroughStream(ctx context.Context, src io.ReadCloser, onTruncate []
 		scan := func(p []byte) {
 			window := tail + string(p)
 			for _, m := range terminals {
-				if strings.Contains(window, m) {
+				if m != "" && strings.Contains(window, m) {
 					seen = true
 				}
 			}
@@ -48,7 +50,6 @@ func WrapPassthroughStream(ctx context.Context, src io.ReadCloser, onTruncate []
 			if ctx.Err() == nil && (!seen || rerr != io.EOF) {
 				_, _ = pw.Write(onTruncate)
 			}
-			pw.Close()
 			return
 		}
 	}()

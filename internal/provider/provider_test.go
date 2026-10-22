@@ -550,3 +550,61 @@ func (e *errAfterReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 func (e *errAfterReader) Close() error { return nil }
+
+// oneByteReader 每次 Read 只交出 1 字节，用于验证终止标记跨 chunk 边界时
+// 的尾部窗口逻辑（完整数据一次交出无法暴露窗口实现错误）。
+type oneByteReader struct{ data string }
+
+func (r *oneByteReader) Read(p []byte) (int, error) {
+	if len(r.data) == 0 {
+		return 0, io.EOF
+	}
+	p[0] = r.data[0]
+	r.data = r.data[1:]
+	return 1, nil
+}
+
+func (r *oneByteReader) Close() error { return nil }
+
+func TestWrapPassthroughStreamTerminalAcrossChunks(t *testing.T) {
+	t.Run("[DONE] split into single-byte chunks", func(t *testing.T) {
+		const stream = "data: a\n\ndata: [DONE]\n\n"
+		out, _ := io.ReadAll(WrapPassthroughStream(context.Background(),
+			&oneByteReader{data: stream}, []byte("ERR\n\n"), "[DONE]"))
+		if string(out) != stream {
+			t.Fatalf("out = %q", out)
+		}
+	})
+	t.Run("anthropic message_stop split into single-byte chunks", func(t *testing.T) {
+		const stream = "event: content_block_delta\ndata: {}\n\nevent: message_stop\ndata: {}\n\n"
+		out, _ := io.ReadAll(WrapPassthroughStream(context.Background(),
+			&oneByteReader{data: stream}, []byte("ERR\n\n"), "event: message_stop", "event: error"))
+		if string(out) != stream {
+			t.Fatalf("out = %q", out)
+		}
+	})
+	t.Run("anthropic error terminal split into single-byte chunks", func(t *testing.T) {
+		const stream = "event: error\ndata: {\"type\":\"error\"}\n\n"
+		out, _ := io.ReadAll(WrapPassthroughStream(context.Background(),
+			&oneByteReader{data: stream}, []byte("ERR\n\n"), "event: message_stop", "event: error"))
+		if string(out) != stream {
+			t.Fatalf("out = %q", out)
+		}
+	})
+	t.Run("empty terminal marker is ignored", func(t *testing.T) {
+		const stream = "data: a\n\n"
+		out, _ := io.ReadAll(WrapPassthroughStream(context.Background(),
+			io.NopCloser(strings.NewReader(stream)), []byte("ERR\n\n"), ""))
+		if string(out) != stream+"ERR\n\n" {
+			t.Fatalf("out = %q", out)
+		}
+	})
+	t.Run("truncated marker still appends error", func(t *testing.T) {
+		const stream = "data: a\n\ndata: [DON"
+		out, _ := io.ReadAll(WrapPassthroughStream(context.Background(),
+			&oneByteReader{data: stream}, []byte("ERR\n\n"), "[DONE]"))
+		if string(out) != stream+"ERR\n\n" {
+			t.Fatalf("out = %q", out)
+		}
+	})
+}
