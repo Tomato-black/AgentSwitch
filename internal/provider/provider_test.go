@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -501,3 +502,51 @@ func TestOpenAIAdapterStreamCancelSilent(t *testing.T) {
 		t.Fatalf("cancel must be silent, got logs:\n%s", logs.String())
 	}
 }
+
+func TestWrapPassthroughStream(t *testing.T) {
+	t.Run("normal terminal passes through unchanged", func(t *testing.T) {
+		src := io.NopCloser(strings.NewReader("data: a\n\ndata: [DONE]\n\n"))
+		out, _ := io.ReadAll(WrapPassthroughStream(context.Background(), src, []byte("ERR\n\n"), "[DONE]"))
+		if string(out) != "data: a\n\ndata: [DONE]\n\n" {
+			t.Fatalf("out = %q", out)
+		}
+	})
+	t.Run("clean EOF without terminal appends error", func(t *testing.T) {
+		src := io.NopCloser(strings.NewReader("data: a\n\n"))
+		out, _ := io.ReadAll(WrapPassthroughStream(context.Background(), src, []byte("ERR\n\n"), "[DONE]"))
+		if string(out) != "data: a\n\nERR\n\n" {
+			t.Fatalf("out = %q", out)
+		}
+	})
+	t.Run("read error appends error", func(t *testing.T) {
+		er := &errAfterReader{data: "data: a\n\n"}
+		out, _ := io.ReadAll(WrapPassthroughStream(context.Background(), er, []byte("ERR\n\n"), "[DONE]"))
+		if string(out) != "data: a\n\nERR\n\n" {
+			t.Fatalf("out = %q", out)
+		}
+	})
+	t.Run("canceled ctx does not append", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		src := io.NopCloser(strings.NewReader("data: a\n\n"))
+		out, _ := io.ReadAll(WrapPassthroughStream(ctx, src, []byte("ERR\n\n"), "[DONE]"))
+		if string(out) != "data: a\n\n" {
+			t.Fatalf("out = %q", out)
+		}
+	})
+}
+
+type errAfterReader struct {
+	data string
+	done bool
+}
+
+func (e *errAfterReader) Read(p []byte) (int, error) {
+	if e.done {
+		return 0, errors.New("boom")
+	}
+	e.done = true
+	n := copy(p, e.data)
+	return n, nil
+}
+func (e *errAfterReader) Close() error { return nil }
