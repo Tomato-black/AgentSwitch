@@ -1562,3 +1562,35 @@ func TestStripOneM(t *testing.T) {
 		}
 	}
 }
+
+func TestCopyStreamIdleTimeout(t *testing.T) {
+	pr, pw := io.Pipe()
+	defer pw.Close()
+	w := httptest.NewRecorder()
+	start := time.Now()
+	timedOut := copyStream(w, pr, 50*time.Millisecond, []byte("EVENT\n\n"))
+	if !timedOut {
+		t.Fatal("expected idle timeout")
+	}
+	if time.Since(start) > time.Second {
+		t.Fatal("watchdog took too long")
+	}
+	if !strings.Contains(w.Body.String(), "EVENT") {
+		t.Fatalf("idle payload missing: %q", w.Body.String())
+	}
+}
+
+func TestCopyStreamPassesData(t *testing.T) {
+	pr, pw := io.Pipe()
+	go func() {
+		pw.Write([]byte("hello"))
+		pw.Close()
+	}()
+	w := httptest.NewRecorder()
+	if copyStream(w, pr, time.Second, []byte("EVENT")) {
+		t.Fatal("must not report timeout")
+	}
+	if w.Body.String() != "hello" {
+		t.Fatalf("body = %q", w.Body.String())
+	}
+}

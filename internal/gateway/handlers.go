@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -256,7 +257,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(res.StatusCode)
 		if cr.Stream {
-			copyStream(w, res.Body)
+			copyStream(w, res.Body, 0, nil)
 		} else {
 			io.Copy(w, res.Body)
 		}
@@ -435,7 +436,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			if oar.Stream {
 				w.Header().Set("Content-Type", "text/event-stream")
 				w.WriteHeader(res.StatusCode)
-				copyStream(w, res.Body)
+				copyStream(w, res.Body, 0, nil)
 			} else {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(res.StatusCode)
@@ -446,7 +447,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			// anthropic 流式：SSE 泵过 AnthropicStreamToOpenAIStream。
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.WriteHeader(res.StatusCode)
-			copyStream(w, protocol.AnthropicStreamToOpenAIStream(ctx, res.Body, oar.Model))
+			copyStream(w, protocol.AnthropicStreamToOpenAIStream(ctx, res.Body, oar.Model), 0, nil)
 			res.Body.Close()
 		default:
 			// anthropic 非流：整体读出转 chat.completion。转换失败仍可转移——
@@ -716,20 +717,41 @@ func truncateForLog(b []byte) string {
 	return string(b)
 }
 
-// copyStream 逐块转发并 flush；客户端断开由上游 ctx 取消收尾。
-func copyStream(w http.ResponseWriter, src io.Reader) {
+// copyStream 逐块转发并 flush；idle>0 时监控客户端可见输出的空闲间隔，
+// 超时关闭上游并写出 onIdle。返回是否因空闲超时结束。
+func copyStream(w http.ResponseWriter, src io.ReadCloser, idle time.Duration, onIdle []byte) bool {
 	flusher, _ := w.(http.Flusher)
+	var timedOut atomic.Bool
+	var timer *time.Timer
+	if idle > 0 {
+		timer = time.AfterFunc(idle, func() {
+			timedOut.Store(true)
+			src.Close()
+		})
+		defer timer.Stop()
+	}
 	buf := make([]byte, 32<<10)
 	for {
 		n, err := src.Read(buf)
 		if n > 0 {
-			w.Write(buf[:n])
+			if timer != nil && !timedOut.Load() {
+				timer.Reset(idle)
+			}
+			if _, werr := w.Write(buf[:n]); werr != nil {
+				return timedOut.Load()
+			}
 			if flusher != nil {
 				flusher.Flush()
 			}
 		}
 		if err != nil {
-			return
+			if timedOut.Load() && len(onIdle) > 0 {
+				w.Write(onIdle)
+				if flusher != nil {
+					flusher.Flush()
+				}
+			}
+			return timedOut.Load()
 		}
 	}
 }
