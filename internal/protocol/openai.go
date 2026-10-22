@@ -170,6 +170,11 @@ func AnthropicRequestToOpenAI(body []byte) ([]byte, []string, error) {
 	if sys := systemText(ar.System); sys != "" {
 		out.Messages = append(out.Messages, oaixMessage{Role: "system", Content: &sys})
 	}
+	// 空名字的 tool_use 是客户端历史里的坏块（如被 CLI 拒绝的空工具调用）：
+	// 转成 OpenAI tool_calls 会得到空 function.name，严格上游（小米 mimo）直接
+	// 400 "missing a function name"。丢掉该 tool_use，并按其 id 丢掉配对的
+	// tool_result，避免留下悬空的 tool 消息。
+	droppedToolIDs := map[string]bool{}
 	for _, m := range ar.Messages {
 		blocks, _ := parseBlocks(m.Content)
 		var textParts []string
@@ -182,6 +187,12 @@ func AnthropicRequestToOpenAI(body []byte) ([]byte, []string, error) {
 					textParts = append(textParts, b.Text)
 				}
 			case "tool_use":
+				if b.Name == "" {
+					if b.ID != "" {
+						droppedToolIDs[b.ID] = true
+					}
+					continue
+				}
 				args := string(b.Input)
 				if args == "" {
 					args = "{}"
@@ -190,6 +201,9 @@ func AnthropicRequestToOpenAI(body []byte) ([]byte, []string, error) {
 				tc.Function.Name, tc.Function.Arguments = b.Name, args
 				calls = append(calls, tc)
 			case "tool_result":
+				if droppedToolIDs[b.ToolUseID] {
+					continue
+				}
 				txt := blocksText(b.Content)
 				toolMsgs = append(toolMsgs, oaixMessage{Role: "tool", Content: &txt, ToolCallID: b.ToolUseID})
 			}
@@ -311,10 +325,16 @@ type oaixChunk struct {
 			Role      string `json:"role"`
 			Content   string `json:"content"`
 			ToolCalls []struct {
-				Index     int    `json:"index"`
-				ID        string `json:"id"`
+				Index int    `json:"index"`
+				ID    string `json:"id"`
+				// 标准形态把 name/arguments 嵌在 function 下；顶层同名键只作
+				// 非标准扁平形态的兼容（2026-10-22 mimo 空名字排查）。
 				Name      string `json:"name"`
 				Arguments string `json:"arguments"`
+				Function  struct {
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"`
+				} `json:"function"`
 			} `json:"tool_calls"`
 		} `json:"delta"`
 		FinishReason *string `json:"finish_reason"`
@@ -405,13 +425,18 @@ func (t *OpenAIStreamTransformer) emitTools() {
 	sort.Ints(idxs)
 	for _, i := range idxs {
 		acc := t.tools[i]
+		// 真实 Anthropic 流的工具参数走 input_json_delta 分片；客户端只从分片
+		// 累积参数、忽略 start.input。塞进 start 会被当成 {}（2026-10-22 排查）。
 		input := map[string]any{}
 		_ = json.Unmarshal([]byte(acc.args.String()), &input)
 		m, _ := json.Marshal(input)
-		raw := json.RawMessage(m) // RawMessage 原样嵌入；[]byte 会被 base64 编码
 		t.emit("content_block_start", map[string]any{
 			"type": "content_block_start", "index": t.blockIdx,
-			"content_block": map[string]any{"type": "tool_use", "id": acc.id, "name": acc.name, "input": raw},
+			"content_block": map[string]any{"type": "tool_use", "id": acc.id, "name": acc.name, "input": map[string]any{}},
+		})
+		t.emit("content_block_delta", map[string]any{
+			"type": "content_block_delta", "index": t.blockIdx,
+			"delta": map[string]any{"type": "input_json_delta", "partial_json": string(m)},
 		})
 		t.emit("content_block_stop", map[string]any{"type": "content_block_stop", "index": t.blockIdx})
 		t.blockIdx++
@@ -485,11 +510,18 @@ func (t *OpenAIStreamTransformer) handleChunk(data []byte) {
 		if tc.ID != "" {
 			acc.id = tc.ID
 		}
-		if tc.Name != "" {
-			acc.name = tc.Name
+		name, args := tc.Function.Name, tc.Function.Arguments
+		if name == "" {
+			name = tc.Name // 非标准扁平形态兼容
 		}
-		if tc.Arguments != "" {
-			acc.args.WriteString(tc.Arguments)
+		if args == "" {
+			args = tc.Arguments
+		}
+		if name != "" {
+			acc.name = name
+		}
+		if args != "" {
+			acc.args.WriteString(args)
 		}
 	}
 	if ch.FinishReason != nil && *ch.FinishReason != "" {

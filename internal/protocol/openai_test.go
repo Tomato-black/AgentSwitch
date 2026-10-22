@@ -15,6 +15,56 @@ func mustJSON(t *testing.T, v any) []byte {
 	return b
 }
 
+// 空名字的 tool_use 是客户端历史里的坏块（如被 CLI 拒绝的空工具调用）：
+// 转成 OpenAI tool_calls 后 function.name 为空，严格的上游（小米 mimo）会直接
+// 400 "missing a function name"。转换器必须丢掉该 tool_use 以及配对的
+// tool_result，保持 OpenAI 的 tool 消息配对不悬空（2026-10-22 排查结论）。
+func TestAnthropicToOpenAIDropsNamelessToolUseAndResult(t *testing.T) {
+	anth := []byte(`{
+	  "model":"up-1","max_tokens":16,
+	  "messages":[
+	    {"role":"user","content":"hi"},
+	    {"role":"assistant","content":[
+	      {"type":"tool_use","id":"bad","name":"","input":{}},
+	      {"type":"tool_use","id":"ok","name":"search","input":{"q":"g"}}
+	    ]},
+	    {"role":"user","content":[
+	      {"type":"tool_result","tool_use_id":"bad","content":"no such tool available"},
+	      {"type":"tool_result","tool_use_id":"ok","content":"found"}
+	    ]}
+	  ]
+	}`)
+	out, _, err := AnthropicRequestToOpenAI(anth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var req struct {
+		Messages []struct {
+			Role       string `json:"role"`
+			ToolCalls  []struct {
+				Function struct {
+					Name string `json:"name"`
+				} `json:"function"`
+			} `json:"tool_calls"`
+			ToolCallID string `json:"tool_call_id"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(out, &req); err != nil {
+		t.Fatal(err)
+	}
+	if len(req.Messages) != 3 {
+		t.Fatalf("messages = %d, want 3 (user, assistant, tool): %+v", len(req.Messages), req.Messages)
+	}
+	asst := req.Messages[1]
+	if asst.Role != "assistant" || len(asst.ToolCalls) != 1 || asst.ToolCalls[0].Function.Name != "search" {
+		t.Fatalf("assistant must keep only the named tool call: %+v", asst)
+	}
+	tool := req.Messages[2]
+	if tool.Role != "tool" || tool.ToolCallID != "ok" {
+		t.Fatalf("tool message must keep only the paired result: %+v", tool)
+	}
+}
+
 func TestAnthropicToOpenAIRequest(t *testing.T) {
 	anth := []byte(`{
 	  "model":"up-1","max_tokens":256,"stream":true,
@@ -228,8 +278,8 @@ func TestStreamTransformerToolCallAccumulation(t *testing.T) {
 	if !strings.Contains(out, `"name":"f1"`) || !strings.Contains(out, `"name":"f2"`) {
 		t.Fatalf("tool blocks missing:\n%s", out)
 	}
-	if !strings.Contains(out, `{"a":1}`) {
-		t.Fatalf("args not accumulated:\n%s", out)
+	if !strings.Contains(out, `"partial_json":"{\"a\":1}"`) {
+		t.Fatalf("args not accumulated into input_json_delta:\n%s", out)
 	}
 	if !strings.Contains(out, `"stop_reason":"tool_use"`) {
 		t.Fatalf("stop reason:\n%s", out)
@@ -240,6 +290,65 @@ func TestStreamTransformerToolCallAccumulation(t *testing.T) {
 	// 块必然命中 4 次；按 event: 行统计才是「两开两关」的本意。
 	if strings.Count(out, "event: content_block_start") != 2 || strings.Count(out, "event: content_block_stop") != 2 {
 		t.Fatalf("block open/close mismatch:\n%s", out)
+	}
+}
+
+// OpenAI 标准流式 tool_calls 把函数名/参数嵌在 function 下：
+//
+//	{"tool_calls":[{"index":0,"id":"call_1","type":"function",
+//	                "function":{"name":"Bash","arguments":"{\"cmd\":"}}]}
+//
+// 只认顶层 name/arguments 的解析会把标准流读成「空名字 + 空参数」，
+// 客户端随即报 "No such tool available: "（2026-10-22 mimo 渠道排查结论）。
+func TestStreamTransformerStandardNestedToolCalls(t *testing.T) {
+	tu := NewOpenAIStreamTransformer()
+	var acc []byte
+	feed := func(s string) { acc = append(acc, tu.Feed([]byte(s))...) }
+	feed(`data: {"id":"c","choices":[{"delta":{"role":"assistant"}}]}` + "\n\n")
+	feed(`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"Bash","arguments":"{\"cmd\":"}}]}}]}` + "\n\n")
+	feed(`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"ls\"}"}}]}}]}` + "\n\n")
+	feed(`data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}` + "\n\n")
+	feed("data: [DONE]\n\n")
+	acc = append(acc, tu.Finish()...)
+	out := string(acc)
+	if !strings.Contains(out, `"name":"Bash"`) {
+		t.Fatalf("tool name lost from standard nested chunk:\n%s", out)
+	}
+	if !strings.Contains(out, `"id":"call_1"`) {
+		t.Fatalf("tool id lost:\n%s", out)
+	}
+	// 参数必须走 input_json_delta（真实 Anthropic 形状）；塞进
+	// content_block_start.input 会被客户端忽略（见下方用例）。
+	if !strings.Contains(out, `"type":"input_json_delta"`) ||
+		!strings.Contains(out, `"partial_json":"{\"cmd\":\"ls\"}"`) {
+		t.Fatalf("arguments must be delivered via input_json_delta:\n%s", out)
+	}
+	if !strings.Contains(out, `"stop_reason":"tool_use"`) {
+		t.Fatalf("stop reason:\n%s", out)
+	}
+}
+
+// Claude Code 只从 input_json_delta 分片累积工具参数，忽略
+// content_block_start.input：把完整参数塞进 start 会得到空对象，客户端报
+// "Invalid tool parameters"（2026-10-22 mimo 渠道排查）。start 的 input
+// 必须是空对象，参数全部经 input_json_delta 下发。
+func TestStreamTransformerToolUseEmitsInputJSONDelta(t *testing.T) {
+	tu := NewOpenAIStreamTransformer()
+	var acc []byte
+	feed := func(s string) { acc = append(acc, tu.Feed([]byte(s))...) }
+	feed(`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"Bash","arguments":"{\"command\":"}}]}}]}` + "\n\n")
+	feed(`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"ls -la\"}"}}]}}]}` + "\n\n")
+	feed(`data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}` + "\n\n")
+	acc = append(acc, tu.Finish()...)
+	out := string(acc)
+	if !strings.Contains(out, `"type":"input_json_delta"`) {
+		t.Fatalf("missing input_json_delta:\n%s", out)
+	}
+	if !strings.Contains(out, `"partial_json":"{\"command\":\"ls -la\"}"`) {
+		t.Fatalf("partial_json must carry full accumulated args:\n%s", out)
+	}
+	if strings.Contains(out, `"input":{"command"`) {
+		t.Fatalf("content_block_start.input must stay empty:\n%s", out)
 	}
 }
 
