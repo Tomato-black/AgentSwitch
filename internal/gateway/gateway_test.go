@@ -1372,6 +1372,40 @@ func TestOpenAIInboundUpstreamErrorOpenAIShape(t *testing.T) {
 	}
 }
 
+// TestOpenAIInboundPassthroughStreamInterrupted：OpenAI 直通流在上游未发 [DONE]
+// 即断流时，须向客户端补一条 error chunk，且不得伪造 [DONE]。
+func TestOpenAIInboundPassthroughStreamInterrupted(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		f := w.(http.Flusher)
+		w.Write([]byte(`data: {"id":"c","choices":[{"delta":{"content":"par"}}]}` + "\n\n"))
+		f.Flush()
+		hj, _ := w.(http.Hijacker)
+		conn, _, _ := hj.Hijack()
+		conn.Close()
+	}))
+	defer up.Close()
+	s := newGW(t, up.URL, func(d *Deps) {
+		d.Candidates = func(string) ([]router.Candidate, error) {
+			return []router.Candidate{{TargetID: "t1", LogicalModel: "pub-1", ChannelID: "c1",
+				ChannelName: "main", SecretKey: "account:k1", Protocol: "openai",
+				BaseURL: up.URL, AllowPrivate: true, UpstreamModel: "up-1", Priority: 10}}, nil
+		}
+	})
+	body := `{"model":"pub-1","stream":true,"messages":[{"role":"user","content":"q"}]}`
+	req, _ := http.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer tok")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	out := w.Body.String()
+	if !strings.Contains(out, `"error"`) || !strings.Contains(out, "upstream stream interrupted") {
+		t.Fatalf("missing error chunk:\n%s", out)
+	}
+	if strings.Contains(out, "[DONE]") {
+		t.Fatalf("truncated stream must not emit [DONE]:\n%s", out)
+	}
+}
+
 // —— 破坏性测试回归（2026-10-18）：畸形 messages 不得出网关 ——
 
 func TestMessagesMissingRejectedBeforeUpstream(t *testing.T) {

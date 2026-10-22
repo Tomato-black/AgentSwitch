@@ -536,6 +536,12 @@ func (a *openaiPassthrough) Do(ctx context.Context, r provider.DoRequest) (provi
 		return provider.ChatResult{StatusCode: resp.StatusCode, Header: resp.Header, RetryAfterSec: ra,
 			Body: io.NopCloser(bytes.NewReader(snippet))}, nil
 	}
+	// 2xx 直通流：上游未发 [DONE] 即断流时补 error chunk（不伪造 [DONE]）；
+	// 非流式与 4xx/5xx 响应体保持原样。
+	if r.Stream {
+		resp.Body = provider.WrapPassthroughStream(ctx, resp.Body,
+			protocol.OpenAIStreamErrorChunk("upstream stream interrupted"), "[DONE]")
+	}
 	return provider.ChatResult{StatusCode: resp.StatusCode, Header: resp.Header, Body: resp.Body, RetryAfterSec: ra}, nil
 }
 
