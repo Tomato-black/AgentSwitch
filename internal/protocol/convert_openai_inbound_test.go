@@ -451,6 +451,42 @@ func TestAnthropicStreamToOpenAIStreamUpstreamError(t *testing.T) {
 	}
 }
 
+// TestAnthropicToOpenAIStreamIgnoresFramesAfterTerminal：message_stop 收口之后
+// 的上游帧一律忽略——[DONE] 之后不得再出现任何 chunk。
+func TestAnthropicToOpenAIStreamIgnoresFramesAfterTerminal(t *testing.T) {
+	tu := &anthropicToOpenAIStream{requestedModel: "logical-1", toolIdx: map[int]int{}, created: 1}
+	first := tu.Feed([]byte("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
+	second := tu.Feed([]byte("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"late\"}}\n\n"))
+	out := string(first) + string(second)
+	if !strings.Contains(out, "data: [DONE]") {
+		t.Fatalf("missing [DONE]:\n%s", out)
+	}
+	if strings.Contains(out, "late") {
+		t.Fatalf("frames after message_stop must be ignored:\n%s", out)
+	}
+	if tail := out[strings.Index(out, "[DONE]")+len("[DONE]"):]; strings.Contains(tail, "data: {") {
+		t.Fatalf("no chunks may follow [DONE]:\n%s", out)
+	}
+}
+
+// TestAnthropicToOpenAIStreamIgnoresFramesAfterError：上游 error 事件终止流之后
+// 的帧同样忽略，且流保持“错误”形态（无内容帧、无 finish_reason、无 [DONE]）。
+func TestAnthropicToOpenAIStreamIgnoresFramesAfterError(t *testing.T) {
+	tu := &anthropicToOpenAIStream{requestedModel: "logical-1", toolIdx: map[int]int{}, created: 1}
+	first := tu.Feed([]byte("event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"api_error\",\"message\":\"boom\"}}\n\n"))
+	second := tu.Feed([]byte("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"late\"}}\n\n"))
+	out := string(first) + string(second)
+	if !strings.Contains(out, "upstream stream error") {
+		t.Fatalf("missing error chunk:\n%s", out)
+	}
+	if strings.Contains(out, "late") {
+		t.Fatalf("frames after error must be ignored:\n%s", out)
+	}
+	if strings.Contains(out, "[DONE]") || strings.Contains(out, "finish_reason") {
+		t.Fatalf("upstream error must not look like success:\n%s", out)
+	}
+}
+
 func TestAnthropicToOpenAIStreamSawTerminal(t *testing.T) {
 	tu := &anthropicToOpenAIStream{requestedModel: "m", toolIdx: map[int]int{}, created: 1}
 	if tu.SawTerminal() {

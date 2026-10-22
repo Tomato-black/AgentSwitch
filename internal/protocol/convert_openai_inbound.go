@@ -582,6 +582,11 @@ func (t *anthropicToOpenAIStream) abortCore(msg string) {
 }
 
 func (t *anthropicToOpenAIStream) handleData(payload []byte) {
+	if t.finished {
+		// 终止事件（message_stop / error / Abort）之后的帧一律忽略：
+		// 不得在 [DONE] 或 error chunk 之后再造出任何 chunk。
+		return
+	}
 	var p anthxStreamPayload
 	if json.Unmarshal(payload, &p) != nil {
 		return
