@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -18,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"AgentSwitch/internal/credential"
+	"AgentSwitch/internal/protocol"
 	"AgentSwitch/internal/provider"
 	"AgentSwitch/internal/router"
 	"AgentSwitch/internal/telemetry"
@@ -1632,8 +1634,10 @@ func TestOpenAIInboundStreamIdleTimeoutEmitsError(t *testing.T) {
 	}))
 	defer up.Close()
 	defer close(release)
+	var logs bytes.Buffer
 	s := newGW(t, up.URL, func(d *Deps) {
 		d.Limits = func() Limits { return Limits{MaxBodyBytes: 1 << 20, RequestTimeout: 50 * time.Millisecond} }
+		d.Log = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
 		d.Candidates = func(string) ([]router.Candidate, error) {
 			return []router.Candidate{{TargetID: "t1", LogicalModel: "pub-1", ChannelID: "c1",
 				ChannelName: "main", SecretKey: "account:k1", Protocol: "openai",
@@ -1653,6 +1657,7 @@ func TestOpenAIInboundStreamIdleTimeoutEmitsError(t *testing.T) {
 	if len(recs) == 0 || recs[len(recs)-1].ErrorClass != "stream" {
 		t.Fatalf("request record must carry error_class=stream: %+v", recs)
 	}
+	assertIdleTimeoutWarn(t, logs.String())
 }
 
 func TestMessagesStreamIdleTimeoutEmitsError(t *testing.T) {
@@ -1667,8 +1672,10 @@ func TestMessagesStreamIdleTimeoutEmitsError(t *testing.T) {
 	}))
 	defer up.Close()
 	defer close(release)
+	var logs bytes.Buffer
 	s := newGW(t, up.URL, func(d *Deps) {
 		d.Limits = func() Limits { return Limits{MaxBodyBytes: 1 << 20, RequestTimeout: 50 * time.Millisecond} }
+		d.Log = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	})
 	body := `{"model":"pub-1","max_tokens":8,"stream":true,"messages":[{"role":"user","content":"q"}]}`
 	resp := post(t, s, body, "tok")
@@ -1679,5 +1686,204 @@ func TestMessagesStreamIdleTimeoutEmitsError(t *testing.T) {
 	recs := s.deps.Ring.List()
 	if len(recs) == 0 || recs[len(recs)-1].ErrorClass != "stream" {
 		t.Fatalf("request record must carry error_class=stream: %+v", recs)
+	}
+	assertIdleTimeoutWarn(t, logs.String())
+}
+
+// assertIdleTimeoutWarn 断言 spec §3.7 要求的 WARN 日志（消息 + request_id + idle_ms）。
+func assertIdleTimeoutWarn(t *testing.T, logs string) {
+	t.Helper()
+	if !strings.Contains(logs, "stream idle timeout") {
+		t.Fatalf("missing idle timeout warning:\n%s", logs)
+	}
+	if !strings.Contains(logs, "request_id=") || !strings.Contains(logs, "idle_ms=50") {
+		t.Fatalf("idle timeout warning must carry request_id and idle_ms:\n%s", logs)
+	}
+}
+
+// failingWriter 模拟客户端断开：Write 永久失败（httptest.ResponseRecorder 不会）。
+type failingWriter struct{ h http.Header }
+
+func (f *failingWriter) Header() http.Header {
+	if f.h == nil {
+		f.h = http.Header{}
+	}
+	return f.h
+}
+func (f *failingWriter) Write([]byte) (int, error) { return 0, errors.New("client gone") }
+func (f *failingWriter) WriteHeader(int)           {}
+
+// TestCopyStreamClosesSrcOnClientWriteFailure：#1 回归——copyStream 拥有 src，
+// 客户端写失败时必须关闭它，解除转换器泵在 pipe 写端的永久阻塞。
+func TestCopyStreamClosesSrcOnClientWriteFailure(t *testing.T) {
+	pr, pw := io.Pipe()
+	pumpDone := make(chan struct{})
+	go func() {
+		defer close(pumpDone)
+		for {
+			// 模拟 AnthropicStreamToOpenAIStream 的泵：持续向 pipe 写转换结果；
+			// 读端被关闭后 Write 返回错误，泵退出。
+			if _, err := pw.Write([]byte("data: x\n\n")); err != nil {
+				return
+			}
+		}
+	}()
+	w := &failingWriter{}
+	if copyStream(w, pr, 0, nil) {
+		t.Fatal("client write failure must not report idle timeout")
+	}
+	select {
+	case <-pumpDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("pump goroutine still blocked after client write failure (src not closed)")
+	}
+}
+
+// TestCopyStreamIdleAddsEventBoundary：空闲超时恰好发生在事件中途时，onIdle
+// 必须另起一条 SSE 事件，不能与残缺事件粘连。
+func TestCopyStreamIdleAddsEventBoundary(t *testing.T) {
+	const prefix = `data: {"choices":[{"delta":{"content":"par"}`
+	pr, pw := io.Pipe()
+	go func() {
+		pw.Write([]byte(prefix)) // 不写事件分隔符、不关闭：驱动空闲 watchdog
+	}()
+	w := httptest.NewRecorder()
+	onIdle := protocol.OpenAIStreamErrorChunk("upstream stream idle timeout")
+	if !copyStream(w, pr, 50*time.Millisecond, onIdle) {
+		t.Fatal("expected idle timeout")
+	}
+	out := w.Body.String()
+	if !strings.HasPrefix(out, prefix) {
+		t.Fatalf("prefix must be unchanged: %q", out)
+	}
+	if !strings.Contains(out, "\n\ndata: {\"error\"") {
+		t.Fatalf("idle error must start on a fresh SSE boundary: %q", out)
+	}
+}
+
+// TestMessagesHeaderTimeoutReturns504：#3——头部等待超时必须显式 504，
+// 而不是 200 + 空 body；遥测记录 status=504、error_class=timeout。
+func TestMessagesHeaderTimeoutReturns504(t *testing.T) {
+	release := make(chan struct{})
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release // 永不写响应头
+	}))
+	defer up.Close()
+	defer close(release)
+	s := newGW(t, up.URL, func(d *Deps) {
+		d.Limits = func() Limits { return Limits{MaxBodyBytes: 1 << 20, RequestTimeout: 50 * time.Millisecond} }
+	})
+	body := `{"model":"pub-1","max_tokens":8,"stream":true,"messages":[{"role":"user","content":"q"}]}`
+	resp := post(t, s, body, "tok")
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusGatewayTimeout {
+		t.Fatalf("status = %d, want 504: %s", resp.StatusCode, b)
+	}
+	if !strings.Contains(string(b), "upstream response header timeout") {
+		t.Fatalf("missing timeout message: %s", b)
+	}
+	recs := s.deps.Ring.List()
+	if len(recs) == 0 || recs[len(recs)-1].Status != 504 || recs[len(recs)-1].ErrorClass != "timeout" {
+		t.Fatalf("request record must carry status=504/error_class=timeout: %+v", recs)
+	}
+}
+
+// TestOpenAIInboundHeaderTimeoutReturns504：OpenAI 入站同 #3，错误体为 OpenAI 形状。
+func TestOpenAIInboundHeaderTimeoutReturns504(t *testing.T) {
+	release := make(chan struct{})
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+	}))
+	defer up.Close()
+	defer close(release)
+	s := newGW(t, up.URL, func(d *Deps) {
+		d.Limits = func() Limits { return Limits{MaxBodyBytes: 1 << 20, RequestTimeout: 50 * time.Millisecond} }
+	})
+	body := `{"model":"pub-1","stream":true,"messages":[{"role":"user","content":"q"}]}`
+	req, _ := http.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer tok")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	out := w.Body.String()
+	if w.Code != http.StatusGatewayTimeout {
+		t.Fatalf("status = %d, want 504: %s", w.Code, out)
+	}
+	if !strings.Contains(out, "upstream response header timeout") {
+		t.Fatalf("missing timeout message: %s", out)
+	}
+	var env struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil || env.Error.Message == "" {
+		t.Fatalf("must be OpenAI error shape: %s", out)
+	}
+	recs := s.deps.Ring.List()
+	if len(recs) == 0 || recs[len(recs)-1].Status != 504 || recs[len(recs)-1].ErrorClass != "timeout" {
+		t.Fatalf("request record must carry status=504/error_class=timeout: %+v", recs)
+	}
+}
+
+// TestOpenAIInboundPassthroughFinishReasonOnlyNormal：#4——有 finish_reason、
+// 无 [DONE] 的正常 OpenAI 兼容流必须原样透传，不得追加 error chunk。
+func TestOpenAIInboundPassthroughFinishReasonOnlyNormal(t *testing.T) {
+	const stream = `data: {"id":"c","choices":[{"delta":{"content":"hi"},"finish_reason":null}]}` + "\n\n" +
+		`data: {"id":"c","choices":[{"delta":{},"finish_reason":"stop"}]}` + "\n\n"
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(stream))
+	}))
+	defer up.Close()
+	s := newGW(t, up.URL, func(d *Deps) {
+		d.Candidates = func(string) ([]router.Candidate, error) {
+			return []router.Candidate{{TargetID: "t1", LogicalModel: "pub-1", ChannelID: "c1",
+				ChannelName: "main", SecretKey: "account:k1", Protocol: "openai",
+				BaseURL: up.URL, AllowPrivate: true, UpstreamModel: "up-1", Priority: 10}}, nil
+		}
+	})
+	body := `{"model":"pub-1","stream":true,"messages":[{"role":"user","content":"q"}]}`
+	req, _ := http.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer tok")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if got := w.Body.String(); got != stream {
+		t.Fatalf("finish_reason-only stream must pass through unchanged:\n got %q\nwant %q", got, stream)
+	}
+}
+
+// TestOpenAIInboundPassthroughTruncationMidEvent：#2 端到端——上游在事件中途
+// 截断时，补的 error chunk 必须另起事件，前缀字节保持不变。
+func TestOpenAIInboundPassthroughTruncationMidEvent(t *testing.T) {
+	const prefix = `data: {"choices":[{"delta":{"content":"par"}`
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		f := w.(http.Flusher)
+		w.Write([]byte(prefix))
+		f.Flush()
+		hj, _ := w.(http.Hijacker)
+		conn, _, _ := hj.Hijack()
+		conn.Close()
+	}))
+	defer up.Close()
+	s := newGW(t, up.URL, func(d *Deps) {
+		d.Candidates = func(string) ([]router.Candidate, error) {
+			return []router.Candidate{{TargetID: "t1", LogicalModel: "pub-1", ChannelID: "c1",
+				ChannelName: "main", SecretKey: "account:k1", Protocol: "openai",
+				BaseURL: up.URL, AllowPrivate: true, UpstreamModel: "up-1", Priority: 10}}, nil
+		}
+	})
+	body := `{"model":"pub-1","stream":true,"messages":[{"role":"user","content":"q"}]}`
+	req, _ := http.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer tok")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	out := w.Body.String()
+	if !strings.HasPrefix(out, prefix) {
+		t.Fatalf("prefix must be unchanged: %q", out)
+	}
+	if !strings.Contains(out, "\n\ndata: {\"error\"") || !strings.Contains(out, "upstream stream interrupted") {
+		t.Fatalf("error chunk must start on a fresh SSE boundary: %q", out)
 	}
 }

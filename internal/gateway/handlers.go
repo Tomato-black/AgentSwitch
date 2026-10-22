@@ -182,10 +182,14 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var cancel context.CancelFunc
 	var headerTimer *time.Timer
+	var headerTimedOut atomic.Bool
 	if lim.RequestTimeout > 0 {
 		if cr.Stream {
 			ctx, cancel = context.WithCancel(ctx)
-			headerTimer = time.AfterFunc(lim.RequestTimeout, cancel)
+			headerTimer = time.AfterFunc(lim.RequestTimeout, func() {
+				headerTimedOut.Store(true)
+				cancel()
+			})
 		} else {
 			ctx, cancel = context.WithTimeout(ctx, lim.RequestTimeout)
 		}
@@ -278,6 +282,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 			onIdle := protocol.AnthropicErrorEvent("upstream stream idle timeout")
 			if copyStream(w, res.Body, lim.RequestTimeout, onIdle) {
 				rec.ErrorClass = "stream"
+				s.logIdleTimeout(rec.ID, lim.RequestTimeout)
 			}
 		} else {
 			io.Copy(w, res.Body)
@@ -287,6 +292,12 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	})
 	switches = out.Switches
 	if ferr != nil || out.Committed {
+		// 头部等待超时（区别于客户端断开）：计时器取消 ctx 且响应未提交时，客户端
+		// 必须收到明确的 504，而不是 200 + 空 body；客户端取消保持静默。
+		if ferr != nil && !out.Committed && headerTimedOut.Load() {
+			rec.Status, rec.ErrorClass = http.StatusGatewayTimeout, "timeout"
+			writeErr(w, http.StatusGatewayTimeout, protocol.ErrTypeAPI, "upstream response header timeout")
+		}
 		return // 客户端已断 / 响应已写：不再写终局错误
 	}
 	// 耗尽且可区分（简报 Task 6）：全部仅因冷却不可用 → 503 all targets cooling；
@@ -368,10 +379,14 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var cancel context.CancelFunc
 	var headerTimer *time.Timer
+	var headerTimedOut atomic.Bool
 	if lim.RequestTimeout > 0 {
 		if oar.Stream {
 			ctx, cancel = context.WithCancel(ctx)
-			headerTimer = time.AfterFunc(lim.RequestTimeout, cancel)
+			headerTimer = time.AfterFunc(lim.RequestTimeout, func() {
+				headerTimedOut.Store(true)
+				cancel()
+			})
 		} else {
 			ctx, cancel = context.WithTimeout(ctx, lim.RequestTimeout)
 		}
@@ -479,6 +494,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				onIdle := protocol.OpenAIStreamErrorChunk("upstream stream idle timeout")
 				if copyStream(w, res.Body, lim.RequestTimeout, onIdle) {
 					rec.ErrorClass = "stream"
+					s.logIdleTimeout(rec.ID, lim.RequestTimeout)
 				}
 			} else {
 				w.Header().Set("Content-Type", "application/json")
@@ -493,6 +509,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			onIdle := protocol.OpenAIStreamErrorChunk("upstream stream idle timeout")
 			if copyStream(w, protocol.AnthropicStreamToOpenAIStream(ctx, res.Body, oar.Model), lim.RequestTimeout, onIdle) {
 				rec.ErrorClass = "stream"
+				s.logIdleTimeout(rec.ID, lim.RequestTimeout)
 			}
 			res.Body.Close()
 		default:
@@ -517,6 +534,12 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	})
 	switches = out.Switches
 	if ferr != nil || out.Committed {
+		// 头部等待超时（区别于客户端断开）：计时器取消 ctx 且响应未提交时，客户端
+		// 必须收到明确的 504，而不是 200 + 空 body；客户端取消保持静默。
+		if ferr != nil && !out.Committed && headerTimedOut.Load() {
+			rec.Status, rec.ErrorClass = http.StatusGatewayTimeout, "timeout"
+			writeErrOpenAI(w, http.StatusGatewayTimeout, protocol.ErrTypeAPI, "upstream response header timeout")
+		}
 		return // 客户端已断 / 响应已写：不再写终局错误
 	}
 	if !out.Attempted && (out.CoolSkips > 0 || len(decision.Filtered) > 0) && allCooling(decision.Filtered) {
@@ -583,11 +606,14 @@ func (a *openaiPassthrough) Do(ctx context.Context, r provider.DoRequest) (provi
 		return provider.ChatResult{StatusCode: resp.StatusCode, Header: resp.Header, RetryAfterSec: ra,
 			Body: io.NopCloser(bytes.NewReader(snippet))}, nil
 	}
-	// 2xx 直通流：上游未发 [DONE] 即断流时补 error chunk（不伪造 [DONE]）；
+	// 2xx 直通流：上游未给出正常终止标记即断流时补 error chunk（不伪造 [DONE]）。
+	// 正常终止判据同时接受 [DONE] 与非空 finish_reason——部分 OpenAI 兼容上游
+	// 只发 finish_reason 后直接关流（spec 2026-10-22 §3.3 通用规则）。
 	// 非流式与 4xx/5xx 响应体保持原样。
 	if r.Stream {
 		resp.Body = provider.WrapPassthroughStream(ctx, resp.Body,
-			protocol.OpenAIStreamErrorChunk("upstream stream interrupted"), "[DONE]")
+			protocol.OpenAIStreamErrorChunk("upstream stream interrupted"),
+			"[DONE]", `"finish_reason":"`)
 	}
 	return provider.ChatResult{StatusCode: resp.StatusCode, Header: resp.Header, Body: resp.Body, RetryAfterSec: ra}, nil
 }
@@ -739,6 +765,15 @@ func upstreamErrorBodyOpenAI(snippet []byte, status int) []byte {
 // 只记截断片段，绝不记完整请求体。
 const upstreamErrorLogMaxBytes = 512
 
+// logIdleTimeout 记录客户端可见输出空闲超时（spec §3.7：WARN，含 request_id
+// 与 idle_ms；HTTP 状态已提交 200，无法回改，故以 error_class=stream 遥测）。
+func (s *Server) logIdleTimeout(requestID string, idle time.Duration) {
+	if s.deps.Log == nil {
+		return
+	}
+	s.deps.Log.Warn("stream idle timeout", "request_id", requestID, "idle_ms", idle.Milliseconds())
+}
+
 // logUpstreamError 为每次被上游拒绝的尝试落一行 "upstream error" 诊断日志。
 func (s *Server) logUpstreamError(requestID string, c router.Candidate, status int,
 	class provider.ErrorClass, snippet []byte) {
@@ -764,8 +799,11 @@ func truncateForLog(b []byte) string {
 }
 
 // copyStream 逐块转发并 flush；idle>0 时监控客户端可见输出的空闲间隔，
-// 超时关闭上游并写出 onIdle。返回是否因空闲超时结束。
+// 超时关闭上游并写出 onIdle。返回是否因空闲超时结束。src 由本函数拥有并在
+// 所有退出路径关闭：客户端写失败时必须关闭转换器 pipe 的读端，否则其泵
+// goroutine 会永久阻塞在写端（重复 Close 安全）。
 func copyStream(w http.ResponseWriter, src io.ReadCloser, idle time.Duration, onIdle []byte) bool {
+	defer src.Close()
 	flusher, _ := w.(http.Flusher)
 	var timedOut atomic.Bool
 	var timer *time.Timer
@@ -775,6 +813,13 @@ func copyStream(w http.ResponseWriter, src io.ReadCloser, idle time.Duration, on
 			src.Close()
 		})
 		defer timer.Stop()
+	}
+	// tail 保留最后 4 个字节，用于判断已转发内容是否停在 SSE 事件边界；
+	// 中途截断时先补 \n\n，避免错误事件与残缺事件粘连成非法 SSE。
+	var tail []byte
+	atEventBoundary := func() bool {
+		s := string(tail)
+		return strings.HasSuffix(s, "\n\n") || strings.HasSuffix(s, "\r\n\r\n")
 	}
 	buf := make([]byte, 32<<10)
 	for {
@@ -786,6 +831,14 @@ func copyStream(w http.ResponseWriter, src io.ReadCloser, idle time.Duration, on
 			if _, werr := w.Write(buf[:n]); werr != nil {
 				return timedOut.Load()
 			}
+			if len(buf[:n]) >= 4 {
+				tail = append(tail[:0], buf[n-4:n]...)
+			} else {
+				tail = append(tail, buf[:n]...)
+				if len(tail) > 4 {
+					tail = tail[len(tail)-4:]
+				}
+			}
 			if flusher != nil {
 				flusher.Flush()
 			}
@@ -795,6 +848,9 @@ func copyStream(w http.ResponseWriter, src io.ReadCloser, idle time.Duration, on
 			// 避免两次 Load 之间 watchdog 翻转造成「写了事件却报未超时」。
 			to := timedOut.Load()
 			if to && len(onIdle) > 0 {
+				if !atEventBoundary() {
+					w.Write([]byte("\n\n"))
+				}
 				w.Write(onIdle)
 				if flusher != nil {
 					flusher.Flush()
