@@ -50,7 +50,7 @@ Agent 指向 `127.0.0.1:17890` 并调用**逻辑模型名**（如 `my-code`）�
 
 ### Codex CLI（应用后写入 `~/.codex/config.toml` + `~/.codex/auth.json`）
 
-config.toml 受管键：`model`、`model_provider = "agentswitch"`、`[model_providers.agentswitch]`（base_url / wire_api="chat" / requires_openai_auth=false）；auth.json 受管键 `OPENAI_API_KEY`。流量走网关 OpenAI 入站 `POST /v1/chat/completions`。
+config.toml 受管键：`model`、`model_provider = "agentswitch"`、`[model_providers.agentswitch]`（base_url / wire_api="responses" / requires_openai_auth=false）；auth.json 受管键 `OPENAI_API_KEY`。流量走网关 Responses 入站 `POST /v1/responses`（Codex 0.143+ 只支持该线路；旧配置需在接入页重新「应用」一次）。
 
 ### 使用非默认配置
 
@@ -61,16 +61,17 @@ config.toml 受管键：`model`、`model_provider = "agentswitch"`、`[model_pro
 
 「应用」的那份始终是默认；网关重新生成令牌或改端口后，live 文件与所有持久文件自动刷新。
 
-## 双入站
+## 三入站
 
-网关暴露两套入站协议，**共用同一套逻辑模型 / 冷却 / 故障转移核心**：
+网关暴露三套入站协议，**共用同一套逻辑模型 / 冷却 / 故障转移核心**：
 
 | 入站 | 端点 | 面向 |
 |------|------|------|
 | Anthropic | `POST /v1/messages` | Claude Code 等 |
 | OpenAI | `POST /v1/chat/completions` | Codex 等 |
+| OpenAI Responses | `POST /v1/responses` | Codex CLI 0.143+ |
 
-另有 `GET /v1/models` 列出启用的逻辑模型名。客户端协议与上游渠道协议不一致时在网关适配层互转；故障转移不变量（首字节前可切换、首字节后不重放、400 不重试、客户端取消不上抛）对两套入站一致。
+另有 `GET /v1/models` 列出启用的逻辑模型名。客户端协议与上游渠道协议不一致时在网关适配层互转；故障转移不变量（首字节前可切换、首字节后不重放、400 不重试、客户端取消不上抛）对三套入站一致。
 
 ## 验收清单（对应 spec §15）
 
