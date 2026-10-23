@@ -217,9 +217,52 @@ func TestResponsesRequestToChat(t *testing.T) {
 	if choice["function"].(map[string]any)["name"] != "exec_command" {
 		t.Fatalf("tool_choice: %+v", choice)
 	}
+	tools := out["tools"].([]any)
+	if len(tools) != 1 {
+		t.Fatalf("tools: %+v", tools)
+	}
+	tool := tools[0].(map[string]any)
+	fn := tool["function"].(map[string]any)
+	if tool["type"] != "function" || fn["name"] != "exec_command" {
+		t.Fatalf("context-mapped chat tool: %+v", tool)
+	}
 	msgs := out["messages"].([]any)
 	if len(msgs) != 2 || msgs[0].(map[string]any)["role"] != "system" {
 		t.Fatalf("messages: %+v", msgs)
+	}
+}
+
+func TestResponsesRequestToChatOmitsUnsetFields(t *testing.T) {
+	// 请求里刻意带上 store/reasoning/include，确认它们不会出现在下发请求体中；
+	// max_output_tokens 未设置时同样不得产出 max_tokens。
+	r, _ := ParseResponsesRequest([]byte(`{
+		"model":"logical","input":[{"type":"message","role":"user","content":"hi"}],
+		"store":true,"reasoning":{"effort":"high"},"include":["reasoning.encrypted_content"]}`))
+	b, err := ResponsesRequestToChat(r, NewResponseToolContext(r), "upstream-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"max_tokens", "temperature", "top_p", "tools", "tool_choice", "store", "reasoning", "include"} {
+		if _, ok := out[key]; ok {
+			t.Fatalf("%s must be omitted: %+v", key, out)
+		}
+	}
+
+	// max_output_tokens=0 同样不下发 max_tokens。
+	zero, _ := ParseResponsesRequest([]byte(`{"model":"logical","input":"hi","max_output_tokens":0}`))
+	b, err = ResponsesRequestToChat(zero, NewResponseToolContext(zero), "upstream-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := out["max_tokens"]; ok {
+		t.Fatalf("zero max_output_tokens must not emit max_tokens: %+v", out)
 	}
 }
 
