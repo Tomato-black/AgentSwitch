@@ -72,6 +72,58 @@ func TestResponsesInputMessages(t *testing.T) {
 	}
 }
 
+func TestResponsesInputToolHistory(t *testing.T) {
+	r, _ := ParseResponsesRequest([]byte(`{
+		"model":"m",
+		"tools":[{"type":"custom","name":"apply_patch"},
+		         {"type":"namespace","name":"ns","tools":[{"type":"function","name":"run"}]}],
+		"input":[
+			{"type":"message","role":"user","content":"hi"},
+			{"type":"function_call","call_id":"c1","name":"ns__run","namespace":"ns","arguments":"{\"a\":1}"},
+			{"type":"function_call","call_id":"c2","name":"apply_patch","arguments":"{}"},
+			{"type":"function_call_output","call_id":"c1","output":"ok"},
+			{"type":"custom_tool_call","call_id":"c2","name":"apply_patch","input":"*** Begin Patch"},
+			{"type":"custom_tool_call_output","call_id":"c2","output":"done"},
+			{"type":"reasoning","summary":[]},
+			{"type":"function_call_output","call_id":"missing","output":"orphan"}
+		]}`))
+	tc := NewResponseToolContext(r)
+	msgs, err := responsesInputToMessages(r.Input, r.Instructions, tc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// user, assistant(tool_calls c1+c2), tool c1, assistant(tool_calls custom c2), tool c2, user(orphan)
+	if len(msgs) != 6 {
+		t.Fatalf("messages: %d %+v", len(msgs), msgs)
+	}
+	asst := msgs[1]
+	calls := asst["tool_calls"].([]map[string]any)
+	if len(calls) != 2 || calls[0]["id"] != "c1" {
+		t.Fatalf("merged tool calls: %+v", calls)
+	}
+	fn := calls[0]["function"].(map[string]any)
+	if fn["name"] != "ns__run" {
+		t.Fatalf("namespace name must stay flattened on history replay: %+v", fn)
+	}
+	if msgs[2]["role"] != "tool" || msgs[2]["tool_call_id"] != "c1" {
+		t.Fatalf("tool result: %+v", msgs[2])
+	}
+	if msgs[4]["role"] != "tool" || msgs[4]["tool_call_id"] != "c2" {
+		t.Fatalf("custom tool result: %+v", msgs[4])
+	}
+	orphan, _ := msgs[5]["content"].(string)
+	if msgs[5]["role"] != "user" || !strings.Contains(orphan, "without a matching tool_call") {
+		t.Fatalf("orphan output: %+v", msgs[5])
+	}
+}
+
+func TestResponsesInputRejectsItemReference(t *testing.T) {
+	_, err := responsesInputToMessages([]byte(`[{"type":"item_reference","id":"x"}]`), "", NewResponseToolContext(ResponsesRequest{}))
+	if err == nil {
+		t.Fatal("item_reference must be rejected")
+	}
+}
+
 func TestResponsesInputString(t *testing.T) {
 	msgs, err := responsesInputToMessages([]byte(`"hi"`), "", NewResponseToolContext(ResponsesRequest{}))
 	if err != nil || len(msgs) != 1 || msgs[0]["role"] != "user" {
