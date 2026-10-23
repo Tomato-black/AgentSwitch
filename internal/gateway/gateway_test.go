@@ -1931,3 +1931,70 @@ func TestResponsesPreviousResponseID400(t *testing.T) {
 		t.Fatalf("status=%d", resp.StatusCode)
 	}
 }
+
+func TestResponsesOpenAIChannelNonStream(t *testing.T) {
+	var gotModel string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		gotModel, _ = body["model"].(string)
+		if _, ok := body["messages"]; !ok {
+			t.Errorf("upstream must receive chat messages: %+v", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"id":"chatcmpl_1","object":"chat.completion","created":1,
+			"choices":[{"index":0,"message":{"role":"assistant","content":"pong"},"finish_reason":"stop"}],
+			"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}`))
+	}))
+	defer up.Close()
+	s := newGW(t, up.URL, func(d *Deps) {
+		d.Candidates = func(string) ([]router.Candidate, error) {
+			return []router.Candidate{{
+				TargetID: "t1", LogicalModel: "pub-1", ChannelID: "c1", ChannelName: "oa",
+				SecretKey: "account:k1", Protocol: "openai", BaseURL: up.URL,
+				AllowPrivate: true, UpstreamModel: "up-1", Priority: 10,
+			}}, nil
+		}
+	})
+	resp := postResponses(t, s, `{"model":"pub-1","input":"hi"}`, "tok")
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 || gotModel != "up-1" {
+		t.Fatalf("status=%d model=%q body=%s", resp.StatusCode, gotModel, b)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(b, &out); err != nil || out["object"] != "response" {
+		t.Fatalf("must be Responses shape: %s", b)
+	}
+	if out["model"] != "pub-1" {
+		t.Fatalf("logical model echoed: %s", b)
+	}
+}
+
+func TestResponsesOpenAIChannelStream(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(`data: {"id":"c1","choices":[{"delta":{"content":"hi"}}]}` + "\n\n"))
+		w.Write([]byte(`data: {"id":"c1","choices":[{"delta":{},"finish_reason":"stop"}]}` + "\n\n"))
+		w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer up.Close()
+	s := newGW(t, up.URL, func(d *Deps) {
+		d.Candidates = func(string) ([]router.Candidate, error) {
+			return []router.Candidate{{
+				TargetID: "t1", LogicalModel: "pub-1", ChannelID: "c1", ChannelName: "oa",
+				SecretKey: "account:k1", Protocol: "openai", BaseURL: up.URL,
+				AllowPrivate: true, UpstreamModel: "up-1", Priority: 10,
+			}}, nil
+		}
+	})
+	resp := postResponses(t, s, `{"model":"pub-1","input":"hi","stream":true}`, "tok")
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	out := string(b)
+	for _, want := range []string{"event: response.created", `"delta":"hi"`, "event: response.completed"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
+	}
+}
