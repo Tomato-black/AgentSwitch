@@ -1,6 +1,10 @@
 package protocol
 
-import "testing"
+import (
+	"regexp"
+	"strings"
+	"testing"
+)
 
 func toolCtx(t *testing.T, tools string) *ResponseToolContext {
 	t.Helper()
@@ -47,5 +51,41 @@ func TestToolContextDropsHostedAndDuplicateTools(t *testing.T) {
 	tc := toolCtx(t, `[{"type":"web_search"},{"type":"function","name":"a"},{"type":"function","name":"a"},{"type":"unknown"}]`)
 	if len(tc.ChatTools()) != 1 || tc.DroppedTools() != 3 {
 		t.Fatalf("tools=%d dropped=%d", len(tc.ChatTools()), tc.DroppedTools())
+	}
+}
+
+func TestFlattenResponseToolNameShort(t *testing.T) {
+	if got := flattenResponseToolName("ns", "run"); got != "ns__run" {
+		t.Fatalf("short name: %q", got)
+	}
+}
+
+func TestFlattenResponseToolNameLongIsBoundedAndHashed(t *testing.T) {
+	suffix := regexp.MustCompile(`__[0-9a-f]{8}$`)
+	got := flattenResponseToolName("ns", strings.Repeat("a", 70))
+	if len(got) > 64 {
+		t.Fatalf("len=%d must be <= 64: %q", len(got), got)
+	}
+	if !suffix.MatchString(got) {
+		t.Fatalf("long name must end with FNV-1a suffix: %q", got)
+	}
+}
+
+func TestFlattenResponseToolNameDeterministic(t *testing.T) {
+	long := strings.Repeat("a", 70)
+	first := flattenResponseToolName("ns", long)
+	second := flattenResponseToolName("ns", long)
+	if first != second {
+		t.Fatalf("same input must map to same name: %q != %q", first, second)
+	}
+	if other := flattenResponseToolName("ns", strings.Repeat("b", 70)); other == first {
+		t.Fatalf("different inputs must map to different names: %q", first)
+	}
+}
+
+func TestToolContextChatNameFallback(t *testing.T) {
+	tc := toolCtx(t, `[{"type":"function","name":"exec"}]`)
+	if got := tc.ChatName("unknown", "ns"); got != "unknown" {
+		t.Fatalf("unknown tool must fall back to name: %q", got)
 	}
 }
