@@ -1887,3 +1887,47 @@ func TestOpenAIInboundPassthroughTruncationMidEvent(t *testing.T) {
 		t.Fatalf("error chunk must start on a fresh SSE boundary: %q", out)
 	}
 }
+
+// postResponses 以指定令牌向 /v1/responses 发请求（Responses 入站骨架测试）。
+func postResponses(t *testing.T, s *Server, body, token string) *http.Response {
+	t.Helper()
+	req, _ := http.NewRequest("POST", "/v1/responses", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	return w.Result()
+}
+
+func TestResponsesAuthRequired(t *testing.T) {
+	var calls int
+	up := fakeUpstream(t, 200, `{"id":"ok"}`, &calls)
+	defer up.Close()
+	s := newGW(t, up.URL, nil)
+	resp := postResponses(t, s, `{"model":"pub-1","input":"hi"}`, "wrong")
+	defer resp.Body.Close()
+	if resp.StatusCode != 401 || calls != 0 {
+		t.Fatalf("status=%d calls=%d", resp.StatusCode, calls)
+	}
+}
+
+func TestResponsesUnknownModel404(t *testing.T) {
+	var calls int
+	up := fakeUpstream(t, 200, `{"id":"ok"}`, &calls)
+	defer up.Close()
+	s := newGW(t, up.URL, nil)
+	resp := postResponses(t, s, `{"model":"nope","input":"hi"}`, "tok")
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 404 || calls != 0 || !strings.Contains(string(b), "pub-1") {
+		t.Fatalf("status=%d calls=%d body=%s", resp.StatusCode, calls, b)
+	}
+}
+
+func TestResponsesPreviousResponseID400(t *testing.T) {
+	s := newGW(t, "http://127.0.0.1:1", nil)
+	resp := postResponses(t, s, `{"model":"pub-1","input":"hi","previous_response_id":"r"}`, "tok")
+	defer resp.Body.Close()
+	if resp.StatusCode != 400 {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+}
