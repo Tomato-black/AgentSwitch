@@ -1971,6 +1971,50 @@ func TestResponsesOpenAIChannelNonStream(t *testing.T) {
 	}
 }
 
+func TestResponsesAnthropicChannelNonStream(t *testing.T) {
+	var path string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		w.Write([]byte(`{"id":"msg_1","type":"message","role":"assistant","model":"u",
+			"content":[{"type":"text","text":"pong"}],"stop_reason":"end_turn",
+			"usage":{"input_tokens":3,"output_tokens":2}}`))
+	}))
+	defer up.Close()
+	s := newGW(t, up.URL, nil) // 默认候选为 anthropic
+	resp := postResponses(t, s, `{"model":"pub-1","input":"hi"}`, "tok")
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 || path != "/v1/messages" {
+		t.Fatalf("status=%d path=%q body=%s", resp.StatusCode, path, b)
+	}
+	if !strings.Contains(string(b), `"output_text"`) || !strings.Contains(string(b), "pong") {
+		t.Fatalf("must convert anthropic to responses: %s", b)
+	}
+}
+
+func TestResponsesAnthropicChannelStream(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m1\",\"usage\":{\"input_tokens\":3}}}\n\n"))
+		w.Write([]byte("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"))
+		w.Write([]byte("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n"))
+		w.Write([]byte("event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"))
+		w.Write([]byte("event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":1}}\n\n"))
+		w.Write([]byte("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
+	}))
+	defer up.Close()
+	s := newGW(t, up.URL, nil)
+	resp := postResponses(t, s, `{"model":"pub-1","input":"hi","stream":true}`, "tok")
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	out := string(b)
+	for _, want := range []string{"event: response.created", `"delta":"hi"`, "event: response.completed"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestResponsesOpenAIChannelStream(t *testing.T) {
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

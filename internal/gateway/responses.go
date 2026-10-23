@@ -122,7 +122,7 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		}
 		// 按候选协议准备出站：Responses 请求先转 chat.completions 形状；
 		//   openai    → 直通（转换后的 body 已是 chat.completions 形状）；
-		//   anthropic → Task 16 接入（当前跳过并换下一候选）。
+		//   anthropic → 再把 chat 形状转 Anthropic（双跳转换），响应侧反向中转。
 		var rawBody []byte
 		var adapter provider.Adapter
 		chatBody, err := protocol.ResponsesRequestToChat(req, tc, c.UpstreamModel)
@@ -135,8 +135,23 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		case "openai":
 			rawBody, adapter = chatBody, newOpenAIPassthrough()
 		case "anthropic":
-			lastClass = provider.ClassUnknown
-			return false, nil // Task 16 实现
+			oa, perr := protocol.ParseOpenAIChatRequest(chatBody)
+			if perr != nil {
+				rec.Status, rec.ErrorClass = 400, protocol.ErrTypeInvalidRequest
+				writeErrOpenAI(w, 400, protocol.ErrTypeInvalidRequest, "invalid body")
+				return true, nil
+			}
+			rawBody, err = protocol.OpenAIRequestToAnthropic(oa, c.UpstreamModel)
+			if err != nil {
+				rec.Status, rec.ErrorClass = 400, protocol.ErrTypeInvalidRequest
+				writeErrOpenAI(w, 400, protocol.ErrTypeInvalidRequest, "invalid body")
+				return true, nil
+			}
+			adapter, err = s.deps.AdapterFor("anthropic")
+			if err != nil {
+				lastClass = provider.ClassUnknown
+				return false, nil
+			}
 		default:
 			// 渠道协议配置错，密钥无辜：不冷却，换下一候选。
 			lastClass = provider.ClassUnknown
@@ -192,11 +207,21 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 			// response.failed（不伪造 response.completed）。
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.WriteHeader(res.StatusCode)
-			src := protocol.ChatStreamToResponsesStream(ctx, res.Body, req.Model, tc)
+			var mid io.ReadCloser // anthropic 双跳的中间 chat 流，必须显式关闭
+			var src io.ReadCloser
+			if c.Protocol == "anthropic" {
+				mid = protocol.AnthropicStreamToOpenAIStream(ctx, res.Body, req.Model)
+				src = protocol.ChatStreamToResponsesStream(ctx, mid, req.Model, tc)
+			} else {
+				src = protocol.ChatStreamToResponsesStream(ctx, res.Body, req.Model, tc)
+			}
 			onIdle := protocol.ResponsesFailedEvent("upstream stream idle timeout")
 			if copyStream(w, src, lim.RequestTimeout, onIdle) {
 				rec.ErrorClass = "stream"
 				s.logIdleTimeout(rec.ID, lim.RequestTimeout)
+			}
+			if mid != nil {
+				mid.Close() // 解除中间泵写端阻塞，避免 goroutine 泄漏
 			}
 			res.Body.Close()
 			return true, nil
@@ -209,7 +234,16 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 			lastClass = provider.ClassConnect
 			return false, nil
 		}
-		converted, cerr := protocol.ChatCompletionToResponses(full, req.Model, tc)
+		chatJSON := full
+		if c.Protocol == "anthropic" {
+			var cerr error
+			chatJSON, cerr = protocol.AnthropicResponseToOpenAI(full, req.Model)
+			if cerr != nil {
+				lastClass = provider.ClassUnknown
+				return false, nil
+			}
+		}
+		converted, cerr := protocol.ChatCompletionToResponses(chatJSON, req.Model, tc)
 		if cerr != nil {
 			lastClass = provider.ClassUnknown
 			return false, nil
