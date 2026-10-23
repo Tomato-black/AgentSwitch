@@ -706,3 +706,39 @@ func TestWrapPassthroughStreamEventAware(t *testing.T) {
 		}
 	})
 }
+
+// TestAnthropicEndpointAllPresetBases 锁死 spec 2026-10-23 §6 全部含 anthropic
+// 协议预置 base_url（按量 + Coding Plan 订阅）的端点拼接：base 无 /v1 拼
+// /v1/messages（Anthropic SDK 约定），已含 /v1 只拼 /messages。数据变更须先改 spec。
+func TestAnthropicEndpointAllPresetBases(t *testing.T) {
+	cases := []struct{ base, want string }{
+		// 按量（base 无 /v1 → 拼 /v1/messages）
+		{"https://api.xiaomimimo.com/anthropic", "https://api.xiaomimimo.com/anthropic/v1/messages"},
+		{"https://dashscope.aliyuncs.com/apps/anthropic", "https://dashscope.aliyuncs.com/apps/anthropic/v1/messages"},
+		{"https://api.deepseek.com/anthropic", "https://api.deepseek.com/anthropic/v1/messages"},
+		{"https://api.moonshot.cn/anthropic", "https://api.moonshot.cn/anthropic/v1/messages"},
+		{"https://open.bigmodel.cn/api/anthropic", "https://open.bigmodel.cn/api/anthropic/v1/messages"},
+		{"https://api.siliconflow.cn", "https://api.siliconflow.cn/v1/messages"},
+		{"https://api.stepfun.com", "https://api.stepfun.com/v1/messages"},
+		{"https://ark.cn-beijing.volces.com/api/compatible", "https://ark.cn-beijing.volces.com/api/compatible/v1/messages"},
+		{"https://api.anthropic.com", "https://api.anthropic.com/v1/messages"},
+		// base 已含 /v1 → 只拼 /messages
+		{"https://openrouter.ai/api/v1", "https://openrouter.ai/api/v1/messages"},
+		// 订阅（Coding Plan）
+		{"https://ark.cn-beijing.volces.com/api/coding", "https://ark.cn-beijing.volces.com/api/coding/v1/messages"},
+		{"https://api.kimi.com/coding/", "https://api.kimi.com/coding/v1/messages"}, // 官方原文带尾斜杠
+		{"https://coding.dashscope.aliyuncs.com/apps/anthropic", "https://coding.dashscope.aliyuncs.com/apps/anthropic/v1/messages"},
+		{"https://api.stepfun.com/step_plan", "https://api.stepfun.com/step_plan/v1/messages"},
+		{"https://token-plan-cn.xiaomimimo.com/anthropic", "https://token-plan-cn.xiaomimimo.com/anthropic/v1/messages"},
+		// 智谱订阅与按量 anthropic 同址，不重复列
+	}
+	for _, tc := range cases {
+		got, err := anthropicEndpoint(tc.base)
+		if err != nil {
+			t.Fatalf("anthropicEndpoint(%q) error: %v", tc.base, err)
+		}
+		if got != tc.want {
+			t.Errorf("anthropicEndpoint(%q) = %q, want %q", tc.base, got, tc.want)
+		}
+	}
+}
