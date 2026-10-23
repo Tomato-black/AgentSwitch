@@ -117,9 +117,7 @@ func TestDefaultJSONTwentyEntries(t *testing.T) {
 			if err := provider.ValidateBaseURL(ep.BaseURL, false); err != nil {
 				t.Errorf("preset %s %s baseUrl %q: %v", p.ID, proto, ep.BaseURL, err)
 			}
-			if len(ep.DefaultModels) == 0 {
-				t.Errorf("preset %s %s has no default models", p.ID, proto)
-			}
+			// defaultModels 允许为空（spec §3：端点模型需用户自填时），不设非空断言。
 		}
 	}
 	if w := Warning(); w != "" {

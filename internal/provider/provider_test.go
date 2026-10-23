@@ -791,3 +791,4 @@ func TestUserAgentPassthroughAdapters(t *testing.T) {
 		t.Fatal("空 UserAgent 时上游收到空 UA 头，want Go 默认")
 	}
 }
+

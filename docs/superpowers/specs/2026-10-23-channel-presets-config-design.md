@@ -105,10 +105,13 @@ TS 源码（`src/config/*ProviderPresets.ts`），无用户可扩展机制；本
   以及该预置**第一个可用协议**（`openai` 优先于 `anthropic`，按固定序）的 base_url 与
   建议模型。
 - **切换协议下拉**（`ui.Select`，现 `channels.go:310`）：当 `presetID` 非空且该预置含
-  目标协议时，自动替换 base_url 与建议模型；**手改保护**——若当前 base_url 与当前协议
-  的预设值不一致（用户已手改），切换时不覆盖，保留用户输入；**空值视为未修改**（从未
-  填过 = 切回时恢复预设值）。建议模型同理。
-- **切到预置未提供的协议**：base_url 与建议模型清空待手填（预设网格选中的高亮保持）。
+  目标协议时，自动替换 base_url 与建议模型；**手改保护**——若当前 base_url 与**任一**
+  协议的预设值都不一致且非空（用户已手改），切换时不覆盖，保留用户输入（含任一协议
+  预设值的判定使往返切换对称，且手敲恰好等于另一协议预设值时替换结果与所敲字符串相
+  同、无可观察差异）；**空值视为未修改**（从未填过 = 切回时恢复预设值）。建议模型与
+  base_url 各自独立判定。
+- **切到预置未提供的协议**：base_url 与建议模型在**未手改**（空或等于任一协议预设值）
+  时清空待手填；已手改的值保留不清（清掉手填值是破坏性的）。预设网格选中的高亮保持。
 - **「自定义」格**：行为不变（清预设字段，protocol 落默认 openai）。
 - **编辑已有渠道**：详情页协议保持静态文本、**不加协议控件**（协议创建后不可变是现有
   语义，`bridge.Channels.Update` 不接受协议参数——本设计不改这一点）；presetID 从渠道
@@ -182,7 +185,7 @@ TS 源码（`src/config/*ProviderPresets.ts`），无用户可扩展机制；本
 | id | 供应商 | openai baseUrl | anthropic baseUrl | 默认模型 |
 |----|--------|----------------|-------------------|----------|
 | zhipu-coding | 智谱 GLM Coding Plan | `https://open.bigmodel.cn/api/coding/paas/v4` | `https://open.bigmodel.cn/api/anthropic`（与按量同址） | glm-5.3 / glm-5.3-flash |
-| doubao-coding | 豆包 Coding Plan | `https://ark.cn-beijing.volces.com/api/coding/v3` | `https://ark.cn-beijing.volces.com/api/coding` | doubao-seed-evolving / doubao-seed-2.1-pro / doubao-seed-2.1-lite |
+| doubao-coding | 豆包 Coding Plan | `https://ark.cn-beijing.volces.com/api/coding/v3` | `https://ark.cn-beijing.volces.com/api/coding` | doubao-seed-evolving / doubao-seed-2-1-pro-260915 / doubao-seed-2-1-lite-260915 |
 | kimi-coding | Kimi Code | `https://api.kimi.com/coding/v1` | `https://api.kimi.com/coding/` | k3 / kimi-for-coding / kimi-for-coding-highspeed |
 | qwen-coding | 百炼 Coding Plan | `https://coding.dashscope.aliyuncs.com/v1` | `https://coding.dashscope.aliyuncs.com/apps/anthropic` | qwen3.7-plus / kimi-k2.5 / glm-5 |
 | stepfun-coding | 阶跃 Step Plan | `https://api.stepfun.com/step_plan/v1` | `https://api.stepfun.com/step_plan` | step-router-v1 / step-5-preview / step-3.7-flash |
@@ -261,7 +264,7 @@ TS 源码（`src/config/*ProviderPresets.ts`），无用户可扩展机制；本
 |------|------|
 | `internal/presets/channels.go` | 静态表 → `ChannelPreset` 双协议结构体 + embed 加载 + 用户文件合并 + 校验；`All()/ById()` 签名不变（返回值结构变） |
 | `internal/presets/default.json`（新增） | 14 家默认预置（查证结果） |
-| `internal/bridge/presets.go` | `PresetView` 改双协议结构，透传 |
+| ~~`internal/bridge/presets.go`~~ | 实施删除：desktop 直读 `internal/presets`（2026-10-17 UI 决策后的直连模式），bridge.PresetView 为 frontend 时代遗留死代码、从未 Bind |
 | `internal/desktop/channels.go` | `applyPreset` 双协议回填；协议下拉联动 + 手改保护 |
 | `internal/gateway` + `internal/provider` | UA 透传：入站 User-Agent 传至出站请求（Kimi Code 合规要求，见 §6 检查项 2） |
 | 测试 | presets 加载/合并/校验/降级；applyPreset 与协议联动（纯函数级）；bridge 透传；JoinAPIPath 全表断言；UA 透传断言；`[1m]` 小写剥离断言 |
@@ -273,5 +276,6 @@ TS 源码（`src/config/*ProviderPresets.ts`），无用户可扩展机制；本
 - **协议切换检测**：MyGo v0.6.2 `ui.Select(...)` 返回 Element，`Element.Changed() bool`
   在值变化的当帧返回 true（`ui/api_gen.go:3019`）——联动逻辑写在 `Changed()` 为真的
   分支，无需自记上一帧值。
-- 加载警告从 presets 包到 bridge/UI 的传递路径（presets 持最近加载警告字符串，
-  bridge 透传，UI 网格顶部一行展示）。
+- 加载警告从 presets 包到 UI 的传递路径（presets 持最近加载警告字符串，UI 直读
+  `presets.Warning()` 在网格顶部一行展示；原拟经 bridge 透传，实施时因 desktop
+  直连 internal 包的既有模式而直读，bridge 遗留死代码已删）。

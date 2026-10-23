@@ -362,7 +362,7 @@ func (u *uiState) channelNewView(c *ui.Context) {
 					ui.Row(c).Gap(12).Children(func() {
 						ui.Text(c, "API Key:").Width(96).TextColor(t.TextMuted)
 						ui.TextInput(c, &u.chForm.apiKey).Grow(1).
-							Placeholder("单个密钥，存 OS 密钥存储")
+							Placeholder("单个密钥，AES-256-GCM 加密存储")
 					})
 					ui.Row(c).Gap(16).Children(func() {
 						ui.Text(c, "允许私网上游").TextColor(t.TextMuted)
