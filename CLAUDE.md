@@ -24,6 +24,8 @@ python3 -c "import zipfile,re,html,sys; x=zipfile.ZipFile(sys.argv[1]).read('wor
 
 **Linux 字体渲染规避（2026-10-21）**：MyGo v0.5.1 的 Linux 子像素字形着色有缺陷——Pango 以白色栅格化字形、GPU 着色未正确应用文字颜色，所有文字实际画成白色（深色主题正文本就近白，不易察觉；亮色主题下整窗不可读）。`internal/desktop/fontrender_linux.go` 在 `WhenReady` 建窗前用 purego 对本进程 GTK 设 `gtk-xft-rgba=none`，改走灰度抗锯齿；**不改系统设置、不影响其他应用**。升级 MyGo 时先复查上游是否已修复，再决定是否移除该规避。**v0.6.2 复查（2026-10-22）**：上游 issue/changelog 无对口修复记录，保守保留；若亮色主题下实测文字颜色正常可移除。
 
+**渠道预置配置文件化（2026-10-23）**：预置不再硬编码于 Go，`internal/presets` 改为 embed 默认表（`default.json`，20 条：14 按量 + 6 家 Coding Plan 订阅独立条目）+ 用户文件 `~/.agentswitch/presets.json`（同 id 整体覆盖原位、新 id 追加；解析失败降级内嵌并在预设网格顶部提示警告）；每条按 `openai`/`anthropic` 双协议组织 baseUrl 与默认模型（`protocols` map），表单切协议经 `ui.Select(...).Changed()` 联动换值（手改保护：值非空且不等于任一协议预设值则不动；空值视为未修改）。内嵌条目 baseUrl 必须过 `ValidateBaseURL(_, false)`，**用户条目放宽**（http/私网/localhost 放行，仅要求可解析——自托管中转站模板用）。启动 `cmd/agentswitch/main.go` 加载一次、此后只读。全部 baseUrl/模型名以 `docs/superpowers/specs/2026-10-23-channel-presets-config-design.md` §6 官网查证表为准（当日逐家核实；anthropic 端点拼接护栏见 `TestAnthropicEndpointAllPresetBases`）。附带网关改动：出站请求透传客户端 `User-Agent`（Kimi Code 条款要求，`DoRequest.UserAgent`，空则保持 Go 默认）；`[1m]` 小写后缀剥离确认已兼容（`EqualFold`）。
+
 ## 常用命令
 
 ```bash
