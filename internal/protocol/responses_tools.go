@@ -189,7 +189,77 @@ func (tc *ResponseToolContext) addCustom(raw json.RawMessage, t responseToolDef)
 	tc.tools = append(tc.tools, map[string]any{"type": "function", "function": fn})
 }
 
-// 以下工具类型在后续任务中实现，本任务先留空实现以保证包可编译。
-func (tc *ResponseToolContext) addNamespace(t responseToolDef)              {}
-func (tc *ResponseToolContext) addToolSearch()                              {}
-func (tc *ResponseToolContext) addInputDeclaredTools(input json.RawMessage) {}
+// addNamespace 把 namespace 内的子 function 拍平为 "<namespace>__<name>" 注册，
+// 规范记录保留原始 namespace/name，供响应侧还原。
+func (tc *ResponseToolContext) addNamespace(t responseToolDef) {
+	namespace := strings.TrimSpace(t.Name)
+	if namespace == "" {
+		tc.dropped++
+		return
+	}
+	for _, child := range t.Tools {
+		if child.Type == "function" {
+			tc.addFunction(child, namespace)
+		}
+	}
+}
+
+// addToolSearch 把 Responses 的 tool_search 托管工具降级为一个 chat 函数代理，
+// 让上游模型仍可发出搜索意图（实际加载由客户端处理）。
+func (tc *ResponseToolContext) addToolSearch() {
+	const name = "tool_search"
+	if _, exists := tc.specsByChatName[name]; exists {
+		return
+	}
+	fn := map[string]any{
+		"name":        name,
+		"description": "Search and load Codex tools, plugins, connectors, and MCP namespaces for the current task.",
+		"parameters": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"query": map[string]any{"type": "string", "description": "Search query for tools or connectors to load."},
+				"limit": map[string]any{"type": "integer", "description": "Maximum number of tool groups to return."},
+			},
+			"required": []string{"query"},
+		},
+	}
+	tc.specsByChatName[name] = responseToolSpec{Kind: responseToolSearch, Name: name}
+	tc.chatNamesByKey["\x00"+name] = name
+	tc.tools = append(tc.tools, map[string]any{"type": "function", "function": fn})
+}
+
+// addInputDeclaredTools 递归扫描 input：tool_search_output / additional_tools
+// 中声明的工具（含 namespace 子工具）注册进本次工具上下文。
+func (tc *ResponseToolContext) addInputDeclaredTools(input json.RawMessage) {
+	if len(input) == 0 {
+		return
+	}
+	var v any
+	if json.Unmarshal(input, &v) != nil {
+		return
+	}
+	tc.walkDeclaredTools(v)
+}
+
+func (tc *ResponseToolContext) walkDeclaredTools(v any) {
+	switch x := v.(type) {
+	case []any:
+		for _, e := range x {
+			tc.walkDeclaredTools(e)
+		}
+	case map[string]any:
+		switch x["type"] {
+		case "tool_search_output", "additional_tools":
+			if arr, ok := x["tools"].([]any); ok {
+				for _, t := range arr {
+					if b, err := json.Marshal(t); err == nil {
+						tc.addTool(b)
+					}
+				}
+			}
+		}
+		for _, e := range x {
+			tc.walkDeclaredTools(e)
+		}
+	}
+}

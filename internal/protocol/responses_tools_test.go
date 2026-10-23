@@ -119,3 +119,47 @@ func TestToolContextChatNameFallback(t *testing.T) {
 		t.Fatalf("unknown tool must fall back to name: %q", got)
 	}
 }
+
+func TestToolContextNamespaceFlattening(t *testing.T) {
+	tc := toolCtx(t, `[{"type":"namespace","name":"multi_agent_v1","tools":[
+		{"type":"function","name":"spawn_agent","parameters":{"type":"object"}},
+		{"type":"function","name":"close_agent","parameters":{"type":"object"}}]}]`)
+	if len(tc.ChatTools()) != 2 {
+		t.Fatalf("chat tools: %+v", tc.ChatTools())
+	}
+	if got := tc.ChatName("spawn_agent", "multi_agent_v1"); got != "multi_agent_v1__spawn_agent" {
+		t.Fatalf("flattened name: %q", got)
+	}
+	spec, ok := tc.Spec("multi_agent_v1__spawn_agent")
+	if !ok || spec.Kind != responseToolNamespace || spec.Namespace != "multi_agent_v1" || spec.Name != "spawn_agent" {
+		t.Fatalf("spec: %+v ok=%v", spec, ok)
+	}
+}
+
+func TestToolContextToolSearchProxy(t *testing.T) {
+	tc := toolCtx(t, `[{"type":"tool_search"}]`)
+	if len(tc.ChatTools()) != 1 {
+		t.Fatalf("chat tools: %+v", tc.ChatTools())
+	}
+	fn := tc.ChatTools()[0]["function"].(map[string]any)
+	if fn["name"] != "tool_search" {
+		t.Fatalf("tool_search proxy: %+v", fn)
+	}
+	spec, ok := tc.Spec("tool_search")
+	if !ok || spec.Kind != responseToolSearch {
+		t.Fatalf("spec: %+v ok=%v", spec, ok)
+	}
+}
+
+func TestToolContextRegistersToolsFromInput(t *testing.T) {
+	r, err := ParseResponsesRequest([]byte(`{"model":"m","input":[
+		{"type":"tool_search_output","call_id":"c1","tools":[
+			{"type":"namespace","name":"mcp__apps","tools":[{"type":"function","name":"search","parameters":{"type":"object"}}]}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tc := NewResponseToolContext(r)
+	if _, ok := tc.Spec("mcp__apps__search"); !ok {
+		t.Fatalf("dynamically declared tools must register: %+v", tc.ChatTools())
+	}
+}
