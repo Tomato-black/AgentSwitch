@@ -101,7 +101,11 @@ func TestCodexLiveProjectionPreservesAndMerges(t *testing.T) {
 		t.Fatal("非受管段丢失")
 	}
 	mp := got["model_providers"].(map[string]any)["agentswitch"].(map[string]any)
-	// Codex CLI 0.143+ 已移除 Chat Completions 线路，仅支持 responses。
+	// Codex CLI 0.143+ 已移除 Chat Completions 线路，仅支持 responses；
+	// provider 的 name 为必填键（非空），缺失会报 provider name must not be empty。
+	if mp["name"] != "agentswitch" {
+		t.Fatal(mp)
+	}
 	if mp["wire_api"] != "responses" || mp["requires_openai_auth"] != false {
 		t.Fatal(mp)
 	}

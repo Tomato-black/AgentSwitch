@@ -50,7 +50,7 @@ Agent 指向 `127.0.0.1:17890` 并调用**逻辑模型名**（如 `my-code`）�
 
 ### Codex CLI（应用后写入 `~/.codex/config.toml` + `~/.codex/auth.json`）
 
-config.toml 受管键：`model`、`model_provider = "agentswitch"`、`[model_providers.agentswitch]`（base_url / wire_api="responses" / requires_openai_auth=false）；auth.json 受管键 `OPENAI_API_KEY`。流量走网关 Responses 入站 `POST /v1/responses`（Codex 0.143+ 只支持该线路；旧配置需在接入页重新「应用」一次）。
+config.toml 受管键：`model`、`model_provider = "agentswitch"`、`[model_providers.agentswitch]`（name="agentswitch" / base_url / wire_api="responses" / requires_openai_auth=false）；auth.json 受管键 `OPENAI_API_KEY`。流量走网关 Responses 入站 `POST /v1/responses`（Codex 0.143+ 只支持该线路；旧配置需在接入页重新「应用」一次）。
 
 ### 使用非默认配置
 

@@ -215,11 +215,13 @@ model = "<逻辑模型名>"
 model_provider = "agentswitch"
 
 [model_providers.agentswitch]
+name = "agentswitch"
 base_url = "<OPENAI_BASE_URL>"
 wire_api = "responses"
 requires_openai_auth = false
 ```
 
+- `name` 是 Codex 0.143+ 的必填键（非空；缺失时报 `provider name must not be empty`），由 AgentSwitch 作为受管键写入。
 - 只修改受管键，其余键保留；写前备份语义不变。
 - 老配置迁移：**仅当用户重新「应用」接入配置（或保存/令牌/端口联动）时改写**；不新增启动自愈、不做启动时写入用户文件。
 - README 与 CLAUDE.md 同步说明「Codex 需 0.143+ 的 responses 线路；旧配置需重新应用一次」。
