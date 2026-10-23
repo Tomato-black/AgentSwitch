@@ -27,3 +27,6 @@ func (Presets) List() []PresetView {
 	}
 	return out
 }
+
+// Warning 透传最近一次预置加载的降级/跳过警告（空 = 无异常），供 UI 提示。
+func (Presets) Warning() string { return presets.Warning() }

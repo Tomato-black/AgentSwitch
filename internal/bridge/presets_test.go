@@ -31,3 +31,16 @@ func TestPresetsBridgeList(t *testing.T) {
 		}
 	}
 }
+
+// TestPresetsWarningBridge 警告透传：坏数据加载后桥接返回 presets.Warning()
+// 同值；干净数据加载后返回空。
+func TestPresetsWarningBridge(t *testing.T) {
+	presets.Load([]byte(`[{"id":"bad","protocols":{"openai":{"baseUrl":"ftp://x"}}}]`), "")
+	if w := (Presets{}).Warning(); w == "" || w != presets.Warning() {
+		t.Fatalf("Warning() = %q, want presets.Warning() = %q", w, presets.Warning())
+	}
+	presets.Load([]byte(`[{"id":"ok","protocols":{"openai":{"baseUrl":"https://a.example.com"}}}]`), "")
+	if w := (Presets{}).Warning(); w != "" {
+		t.Fatalf("clean load Warning() = %q, want empty", w)
+	}
+}

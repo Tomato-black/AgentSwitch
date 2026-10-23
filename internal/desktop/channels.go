@@ -287,6 +287,10 @@ func (u *uiState) channelNewView(c *ui.Context) {
 	s := softs(t)
 	ui.Scroll(c).Grow(1).Children(func() {
 		ui.Column(c).Gap(12).Children(func() {
+			// 预置加载警告一行（spec §4：降级/跳过不阻塞，网格顶部提示）。
+			if w := presets.Warning(); w != "" {
+				ui.Text(c, "预置加载异常（已降级）："+w).TextColor(t.Danger)
+			}
 			ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 				if ui.Button(c, "返回列表").Clicked() {
 					u.chView = ""
