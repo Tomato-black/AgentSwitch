@@ -125,3 +125,61 @@ func TestApplyPresetDualProtocol(t *testing.T) {
 		t.Fatalf("已填 name 不得覆盖, got %q", f3.name)
 	}
 }
+
+// TestSwitchProtocolRules 覆盖 spec §5 协议联动五例：值替换、手改保护、
+// 空值恢复、无目标协议清空、建议模型独立手改保护。
+func TestSwitchProtocolRules(t *testing.T) {
+	dual := presets.ChannelPreset{
+		ID: "p",
+		Protocols: map[string]presets.ProtocolEndpoint{
+			"openai":    {BaseURL: "https://o.example/v1", DefaultModels: []string{"m-o"}},
+			"anthropic": {BaseURL: "https://a.example", DefaultModels: []string{"m-a"}},
+		},
+	}
+	// ① 双协议切 anthropic：值替换。
+	f := channelForm{protocol: "openai", baseURL: "https://o.example/v1", suggestions: "m-o"}
+	switchProtocol(&f, dual, "anthropic")
+	if f.baseURL != "https://a.example" || f.suggestions != "m-a" || f.protocol != "anthropic" {
+		t.Fatalf("① 切换替换失败: %+v", f)
+	}
+	// ② 手改保护：baseURL 已人为改为第三值 → 切协议不动。
+	f = channelForm{protocol: "openai", baseURL: "https://mine.example", suggestions: "m-o"}
+	switchProtocol(&f, dual, "anthropic")
+	if f.baseURL != "https://mine.example" {
+		t.Fatalf("② 手改保护失败: %q", f.baseURL)
+	}
+	// 但建议模型仍是预设值 → 应替换（两字段独立判定）。
+	if f.suggestions != "m-a" {
+		t.Fatalf("② suggestions 应独立替换: %q", f.suggestions)
+	}
+	// ③ 空值恢复：切到无预设协议清空后切回 openai → 恢复预设。
+	f = channelForm{protocol: "anthropic", baseURL: "https://a.example", suggestions: "m-a"}
+	switchProtocol(&f, dual, "anthropic") // 先处于 anthropic 预设值
+	switchProtocol(&f, dual, "openai")
+	if f.baseURL != "https://o.example/v1" || f.suggestions != "m-o" {
+		t.Fatalf("③ 往返恢复失败: %+v", f)
+	}
+	// ④ 仅 openai 预置切 anthropic → 清空（值为预设值时）。
+	onlyOpenAI := presets.ChannelPreset{ID: "q", Protocols: map[string]presets.ProtocolEndpoint{
+		"openai": {BaseURL: "https://q.example/v1", DefaultModels: []string{"mq"}},
+	}}
+	f = channelForm{protocol: "openai", baseURL: "https://q.example/v1", suggestions: "mq"}
+	switchProtocol(&f, onlyOpenAI, "anthropic")
+	if f.baseURL != "" || f.suggestions != "" || f.protocol != "anthropic" {
+		t.Fatalf("④ 无目标协议应清空: %+v", f)
+	}
+	// ④b 清空后切回 openai（空值=未修改）→ 恢复。
+	switchProtocol(&f, onlyOpenAI, "openai")
+	if f.baseURL != "https://q.example/v1" || f.suggestions != "mq" {
+		t.Fatalf("④b 空值恢复失败: %+v", f)
+	}
+	// ⑤ suggestions 手改后切协议不被覆盖，baseURL（预设值）正常替换。
+	f = channelForm{protocol: "openai", baseURL: "https://o.example/v1", suggestions: "my-model"}
+	switchProtocol(&f, dual, "anthropic")
+	if f.suggestions != "my-model" {
+		t.Fatalf("⑤ suggestions 手改保护失败: %q", f.suggestions)
+	}
+	if f.baseURL != "https://a.example" {
+		t.Fatalf("⑤ baseURL 应替换: %q", f.baseURL)
+	}
+}

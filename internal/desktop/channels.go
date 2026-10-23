@@ -48,6 +48,38 @@ func applyPreset(form *channelForm, p presets.ChannelPreset) {
 	}
 }
 
+// switchProtocol 是协议下拉联动（spec §5）：目标协议在预置中→当当前值
+// 为空或等于任一协议预设值（未手改）时替换为目标协议预设值；目标协议不在
+// 预置中→同条件下清空待手填。空值视为未修改（切走再切回可恢复预设）。
+// baseURL 与建议模型各自独立判定，互不牵连。
+func switchProtocol(form *channelForm, p presets.ChannelPreset, newProto string) {
+	form.protocol = newProto
+	replace := func(cur string, cands []string, next string) string {
+		if cur == "" {
+			return next
+		}
+		for _, c := range cands {
+			if cur == c {
+				return next
+			}
+		}
+		return cur // 用户已手改，保留
+	}
+	var baseCands, modelCands []string
+	for _, ep := range p.Protocols {
+		baseCands = append(baseCands, ep.BaseURL)
+		modelCands = append(modelCands, strings.Join(ep.DefaultModels, "\n"))
+	}
+	ep, has := p.Protocols[newProto]
+	nextBase, nextModels := "", ""
+	if has {
+		nextBase = ep.BaseURL
+		nextModels = strings.Join(ep.DefaultModels, "\n")
+	}
+	form.baseURL = replace(form.baseURL, baseCands, nextBase)
+	form.suggestions = replace(form.suggestions, modelCands, nextModels)
+}
+
 // validate 校验表单：缺 name/key/base_url 依次报中文错误；编辑态
 // （editID 非空）Key 留空 = 不改，不拦。
 func (f channelForm) validate() error {
@@ -319,7 +351,13 @@ func (u *uiState) channelNewView(c *ui.Context) {
 					})
 					ui.Row(c).Gap(12).Children(func() {
 						ui.Text(c, "协议:").Width(96).TextColor(t.TextMuted)
-						ui.Select(c, &u.chForm.protocol, []string{"openai", "anthropic"})
+						// 协议切换联动（spec §5）：Changed() 当帧生效，预置含目标
+						// 协议则换 base_url/建议模型（手改保护见 switchProtocol）。
+						if ui.Select(c, &u.chForm.protocol, []string{"openai", "anthropic"}).Changed() {
+							if p, ok := presets.ById(u.chForm.presetID); ok {
+								switchProtocol(&u.chForm, p, u.chForm.protocol)
+							}
+						}
 					})
 					ui.Row(c).Gap(12).Children(func() {
 						ui.Text(c, "API Key:").Width(96).TextColor(t.TextMuted)
