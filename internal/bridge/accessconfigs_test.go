@@ -101,7 +101,8 @@ func TestCodexLiveProjectionPreservesAndMerges(t *testing.T) {
 		t.Fatal("非受管段丢失")
 	}
 	mp := got["model_providers"].(map[string]any)["agentswitch"].(map[string]any)
-	if mp["wire_api"] != "chat" || mp["requires_openai_auth"] != false {
+	// Codex CLI 0.143+ 已移除 Chat Completions 线路，仅支持 responses。
+	if mp["wire_api"] != "responses" || mp["requires_openai_auth"] != false {
 		t.Fatal(mp)
 	}
 	if mp["base_url"] != "http://127.0.0.1:17890/v1" {

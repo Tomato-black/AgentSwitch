@@ -421,8 +421,9 @@ func (s AccessConfigs) writeClaudeLive(doc map[string]any, env map[string]string
 //   - config.toml：不存在建空；解析为 map[string]any（go-toml/v2：TOML 表
 //     对应嵌套 map[string]any）；受管键 model=<model>、
 //     model_provider="agentswitch"、model_providers.agentswitch 子表
-//     {base_url: env["OPENAI_BASE_URL"], wire_api: "chat",
-//     requires_openai_auth: false}（同键替换，子表内非受管键保留）；其余
+//     {base_url: env["OPENAI_BASE_URL"], wire_api: "responses"
+//     （Codex 0.143+ 仅支持 Responses 线路）, requires_openai_auth: false}
+//     （同键替换，子表内非受管键保留）；其余
 //     顶层键/表语义保留（TOML 注释允许丢失）；0600 原子写。
 //   - auth.json：不存在建空对象；JSON 解析失败中止；受管键 OPENAI_API_KEY
 //     = env["OPENAI_API_KEY"]；其余键保留；0600 原子写。
@@ -477,7 +478,7 @@ func (s AccessConfigs) writeCodexLive(env map[string]string, model string) error
 		agent = m
 	}
 	agent["base_url"] = env["OPENAI_BASE_URL"]
-	agent["wire_api"] = "chat"
+	agent["wire_api"] = "responses"
 	agent["requires_openai_auth"] = false
 	providers["agentswitch"] = agent
 	cfg["model_providers"] = providers
