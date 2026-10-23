@@ -1,0 +1,286 @@
+[
+  {
+    "id": "xiaomi",
+    "displayName": "小米 MiMo",
+    "docUrl": "https://mimo.mi.com/",
+    "protocols": {
+      "openai": {
+        "baseUrl": "https://api.xiaomimimo.com/v1",
+        "defaultModels": ["mimo-v2.6-pro", "mimo-v2.6-flash", "mimo-v2.6-pro-ultraspeed"]
+      },
+      "anthropic": {
+        "baseUrl": "https://api.xiaomimimo.com/anthropic",
+        "defaultModels": ["mimo-v2.6-pro", "mimo-v2.6-flash", "mimo-v2.6-pro-ultraspeed"]
+      }
+    }
+  },
+  {
+    "id": "qwen",
+    "displayName": "阿里千问",
+    "docUrl": "https://bailian.console.aliyun.com/",
+    "protocols": {
+      "openai": {
+        "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "defaultModels": ["qwen3.8-max", "qwen3.8-flash", "qwen3.7-plus"]
+      },
+      "anthropic": {
+        "baseUrl": "https://dashscope.aliyuncs.com/apps/anthropic",
+        "defaultModels": ["qwen3.8-max", "qwen3.8-flash", "qwen3.7-plus"]
+      }
+    }
+  },
+  {
+    "id": "deepseek",
+    "displayName": "DeepSeek",
+    "docUrl": "https://platform.deepseek.com/",
+    "protocols": {
+      "openai": {
+        "baseUrl": "https://api.deepseek.com",
+        "defaultModels": ["deepseek-flash", "deepseek-v4-pro"]
+      },
+      "anthropic": {
+        "baseUrl": "https://api.deepseek.com/anthropic",
+        "defaultModels": ["deepseek-flash", "deepseek-v4-pro"]
+      }
+    }
+  },
+  {
+    "id": "kimi",
+    "displayName": "Kimi 月之暗面",
+    "docUrl": "https://platform.moonshot.cn/",
+    "protocols": {
+      "openai": {
+        "baseUrl": "https://api.moonshot.cn/v1",
+        "defaultModels": ["kimi-k3", "kimi-k2.7-code", "kimi-k2.6"]
+      },
+      "anthropic": {
+        "baseUrl": "https://api.moonshot.cn/anthropic",
+        "defaultModels": ["kimi-k3", "kimi-k2.7-code", "kimi-k2.6"]
+      }
+    }
+  },
+  {
+    "id": "zhipu",
+    "displayName": "智谱 GLM",
+    "docUrl": "https://open.bigmodel.cn/",
+    "protocols": {
+      "openai": {
+        "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+        "defaultModels": ["glm-5.3", "glm-5.3-flash", "glm-5.2"]
+      },
+      "anthropic": {
+        "baseUrl": "https://open.bigmodel.cn/api/anthropic",
+        "defaultModels": ["glm-5.3", "glm-5.3-flash", "glm-5.2"]
+      }
+    }
+  },
+  {
+    "id": "siliconflow",
+    "displayName": "硅基流动",
+    "docUrl": "https://cloud.siliconflow.cn/",
+    "protocols": {
+      "openai": {
+        "baseUrl": "https://api.siliconflow.cn/v1",
+        "defaultModels": ["deepseek-ai/DeepSeek-V4.1-Flash", "zai-org/GLM-5.3", "moonshotai/Kimi-K2.7-Code"]
+      },
+      "anthropic": {
+        "baseUrl": "https://api.siliconflow.cn",
+        "defaultModels": ["deepseek-ai/DeepSeek-V4.1-Flash", "zai-org/GLM-5.3", "moonshotai/Kimi-K2.7-Code"]
+      }
+    }
+  },
+  {
+    "id": "stepfun",
+    "displayName": "阶跃星辰",
+    "docUrl": "https://platform.stepfun.com/",
+    "protocols": {
+      "openai": {
+        "baseUrl": "https://api.stepfun.com/v1",
+        "defaultModels": ["step-5-preview", "step-3.7-flash", "step-3.5-flash"]
+      },
+      "anthropic": {
+        "baseUrl": "https://api.stepfun.com",
+        "defaultModels": ["step-5-preview", "step-3.7-flash", "step-3.5-flash"]
+      }
+    }
+  },
+  {
+    "id": "doubao",
+    "displayName": "豆包·火山方舟",
+    "docUrl": "https://console.volcengine.com/ark",
+    "protocols": {
+      "openai": {
+        "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+        "defaultModels": ["doubao-seed-evolving", "doubao-seed-2-1-pro-260915", "doubao-seed-2-1-lite-260915"]
+      },
+      "anthropic": {
+        "baseUrl": "https://ark.cn-beijing.volces.com/api/compatible",
+        "defaultModels": ["doubao-seed-evolving", "doubao-seed-2-1-pro-260915", "doubao-seed-2-1-lite-260915"]
+      }
+    }
+  },
+  {
+    "id": "anthropic",
+    "displayName": "Anthropic",
+    "docUrl": "https://console.anthropic.com/",
+    "protocols": {
+      "openai": {
+        "baseUrl": "https://api.anthropic.com/v1",
+        "defaultModels": ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
+      },
+      "anthropic": {
+        "baseUrl": "https://api.anthropic.com",
+        "defaultModels": ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
+      }
+    }
+  },
+  {
+    "id": "openai",
+    "displayName": "OpenAI",
+    "docUrl": "https://platform.openai.com/",
+    "protocols": {
+      "openai": {
+        "baseUrl": "https://api.openai.com",
+        "defaultModels": ["gpt-5.6-terra", "gpt-5.6-luna"]
+      }
+    }
+  },
+  {
+    "id": "google",
+    "displayName": "Google AI Studio",
+    "docUrl": "https://aistudio.google.com/",
+    "protocols": {
+      "openai": {
+        "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "defaultModels": ["gemini-4-argon", "gemini-3.8-flash"]
+      }
+    }
+  },
+  {
+    "id": "groq",
+    "displayName": "Groq",
+    "docUrl": "https://console.groq.com/",
+    "protocols": {
+      "openai": {
+        "baseUrl": "https://api.groq.com/openai/v1",
+        "defaultModels": ["openai/gpt-oss-120b", "qwen/qwen3.8-27b", "openai/gpt-oss-20b"]
+      }
+    }
+  },
+  {
+    "id": "together",
+    "displayName": "Together AI",
+    "docUrl": "https://docs.together.ai/",
+    "protocols": {
+      "openai": {
+        "baseUrl": "https://api.together.ai/v1",
+        "defaultModels": ["moonshotai/Kimi-K3", "zai-org/GLM-5.3", "Qwen/Qwen3.8-27B"]
+      }
+    }
+  },
+  {
+    "id": "openrouter",
+    "displayName": "OpenRouter",
+    "docUrl": "https://openrouter.ai/docs",
+    "protocols": {
+      "openai": {
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "defaultModels": ["anthropic/claude-sonnet-5.5", "anthropic/claude-opus-5.5", "openai/gpt-6.1-sol"]
+      },
+      "anthropic": {
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "defaultModels": ["anthropic/claude-sonnet-5.5", "anthropic/claude-opus-5.5", "openai/gpt-6.1-sol"]
+      }
+    }
+  },
+  {
+    "id": "zhipu-coding",
+    "displayName": "智谱 GLM Coding Plan",
+    "docUrl": "https://docs.bigmodel.cn/cn/coding-plan",
+    "protocols": {
+      "openai": {
+        "baseUrl": "https://open.bigmodel.cn/api/coding/paas/v4",
+        "defaultModels": ["glm-5.3", "glm-5.3-flash"]
+      },
+      "anthropic": {
+        "baseUrl": "https://open.bigmodel.cn/api/anthropic",
+        "defaultModels": ["glm-5.3", "glm-5.3-flash"]
+      }
+    }
+  },
+  {
+    "id": "doubao-coding",
+    "displayName": "豆包 Coding Plan",
+    "docUrl": "https://www.volcengine.com/docs/ark/coding-plan-personal-get-started",
+    "protocols": {
+      "openai": {
+        "baseUrl": "https://ark.cn-beijing.volces.com/api/coding/v3",
+        "defaultModels": ["doubao-seed-evolving", "doubao-seed-2-1-pro-260915", "doubao-seed-2-1-lite-260915"]
+      },
+      "anthropic": {
+        "baseUrl": "https://ark.cn-beijing.volces.com/api/coding",
+        "defaultModels": ["doubao-seed-evolving", "doubao-seed-2-1-pro-260915", "doubao-seed-2-1-lite-260915"]
+      }
+    }
+  },
+  {
+    "id": "kimi-coding",
+    "displayName": "Kimi Code",
+    "docUrl": "https://www.kimi.com/code/docs",
+    "protocols": {
+      "openai": {
+        "baseUrl": "https://api.kimi.com/coding/v1",
+        "defaultModels": ["k3", "kimi-for-coding", "kimi-for-coding-highspeed"]
+      },
+      "anthropic": {
+        "baseUrl": "https://api.kimi.com/coding/",
+        "defaultModels": ["k3", "kimi-for-coding", "kimi-for-coding-highspeed"]
+      }
+    }
+  },
+  {
+    "id": "qwen-coding",
+    "displayName": "百炼 Coding Plan",
+    "docUrl": "https://help.aliyun.com/zh/model-studio/coding-plan",
+    "protocols": {
+      "openai": {
+        "baseUrl": "https://coding.dashscope.aliyuncs.com/v1",
+        "defaultModels": ["qwen3.7-plus", "kimi-k2.5", "glm-5"]
+      },
+      "anthropic": {
+        "baseUrl": "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+        "defaultModels": ["qwen3.7-plus", "kimi-k2.5", "glm-5"]
+      }
+    }
+  },
+  {
+    "id": "stepfun-coding",
+    "displayName": "阶跃 Step Plan",
+    "docUrl": "https://platform.stepfun.com/docs/zh/step-plan/quick-start",
+    "protocols": {
+      "openai": {
+        "baseUrl": "https://api.stepfun.com/step_plan/v1",
+        "defaultModels": ["step-router-v1", "step-5-preview", "step-3.7-flash"]
+      },
+      "anthropic": {
+        "baseUrl": "https://api.stepfun.com/step_plan",
+        "defaultModels": ["step-router-v1", "step-5-preview", "step-3.7-flash"]
+      }
+    }
+  },
+  {
+    "id": "xiaomi-coding",
+    "displayName": "小米 MiMo Token Plan",
+    "docUrl": "https://mimo.mi.com/docs/tokenplan/integration/claudecode",
+    "protocols": {
+      "openai": {
+        "baseUrl": "https://token-plan-cn.xiaomimimo.com/v1",
+        "defaultModels": ["mimo-v2.6-pro", "mimo-v2.6-flash"]
+      },
+      "anthropic": {
+        "baseUrl": "https://token-plan-cn.xiaomimimo.com/anthropic",
+        "defaultModels": ["mimo-v2.6-pro", "mimo-v2.6-flash"]
+      }
+    }
+  }
+]

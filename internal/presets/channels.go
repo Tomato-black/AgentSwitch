@@ -5,6 +5,7 @@
 package presets
 
 import (
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -12,6 +13,15 @@ import (
 
 	"AgentSwitch/internal/provider"
 )
+
+// defaultJSON 是内嵌默认预置表（spec 2026-10-23 §6 查证数据），开箱即用；
+// 解析失败属构建期缺陷（TestDefaultJSONTwentyEntries 断言）。
+//
+//go:embed default.json
+var defaultJSON []byte
+
+// DefaultJSON 返回内嵌默认表字节（应用启动传给 Load；测试注入用）。
+func DefaultJSON() []byte { return defaultJSON }
 
 // ProtocolEndpoint 是某协议下的端点预设：base_url 与默认模型建议列表。
 type ProtocolEndpoint struct {

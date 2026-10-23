@@ -9,6 +9,7 @@ import (
 
 	"AgentSwitch/internal/app"
 	"AgentSwitch/internal/desktop"
+	"AgentSwitch/internal/presets"
 )
 
 func main() {
@@ -32,6 +33,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// 渠道预置表启动加载一次（spec 2026-10-23 §4：此后只读；用户文件路径
+	// 由后续任务接入）。
+	presets.Load(presets.DefaultJSON(), "")
 	if err := desktop.Run(a); err != nil {
 		log.Fatal(err)
 	}

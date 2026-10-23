@@ -3,6 +3,8 @@ package presets
 import (
 	"strings"
 	"testing"
+
+	"AgentSwitch/internal/provider"
 )
 
 // fixtureEmbedded 是最小内嵌默认表 fixture：一条双协议（qwen 形态）+ 一条仅
@@ -81,5 +83,67 @@ func TestLoadEmbeddedMustPassValidateBaseURL(t *testing.T) {
 	}
 	if Warning() == "" {
 		t.Fatal("Warning() empty, want non-empty for skipped ftp entry")
+	}
+}
+
+// TestDefaultJSONTwentyEntries 锁死内嵌默认表（spec 2026-10-23 §6）：20 条
+// （14 按量 + 6 Coding Plan 订阅）、展示序、每条至少一协议且 baseUrl 过
+// ValidateBaseURL(_, false)、id 唯一、抽查端点逐字相等。数据变更须先改 spec。
+func TestDefaultJSONTwentyEntries(t *testing.T) {
+	Load(DefaultJSON(), "")
+	all := All()
+	if len(all) != 20 {
+		t.Fatalf("All() len = %d, want 20", len(all))
+	}
+	wantOrder := []string{
+		"xiaomi", "qwen", "deepseek", "kimi", "zhipu", "siliconflow", "stepfun", "doubao",
+		"anthropic", "openai", "google", "groq", "together", "openrouter",
+		"zhipu-coding", "doubao-coding", "kimi-coding", "qwen-coding", "stepfun-coding", "xiaomi-coding",
+	}
+	seen := map[string]bool{}
+	for i, p := range all {
+		if p.ID != wantOrder[i] {
+			t.Fatalf("all[%d].ID = %q, want %q", i, p.ID, wantOrder[i])
+		}
+		if seen[p.ID] {
+			t.Errorf("duplicate id %q", p.ID)
+		}
+		seen[p.ID] = true
+		if len(p.Protocols) == 0 {
+			t.Errorf("preset %s has no protocols", p.ID)
+		}
+		for proto, ep := range p.Protocols {
+			if err := provider.ValidateBaseURL(ep.BaseURL, false); err != nil {
+				t.Errorf("preset %s %s baseUrl %q: %v", p.ID, proto, ep.BaseURL, err)
+			}
+			if len(ep.DefaultModels) == 0 {
+				t.Errorf("preset %s %s has no default models", p.ID, proto)
+			}
+		}
+	}
+	if w := Warning(); w != "" {
+		t.Fatalf("default table must load clean, Warning() = %q", w)
+	}
+	// 抽查：小米双协议、Kimi Code anthropic 尾斜杠、OpenRouter 双协议同址。
+	xm, _ := ById("xiaomi")
+	if xm.Protocols["openai"].BaseURL != "https://api.xiaomimimo.com/v1" ||
+		xm.Protocols["anthropic"].BaseURL != "https://api.xiaomimimo.com/anthropic" {
+		t.Errorf("xiaomi protocols = %+v", xm.Protocols)
+	}
+	kc, _ := ById("kimi-coding")
+	if kc.Protocols["anthropic"].BaseURL != "https://api.kimi.com/coding/" {
+		t.Errorf("kimi-coding anthropic baseUrl = %q", kc.Protocols["anthropic"].BaseURL)
+	}
+	or, _ := ById("openrouter")
+	if or.Protocols["openai"].BaseURL != "https://openrouter.ai/api/v1" ||
+		or.Protocols["anthropic"].BaseURL != "https://openrouter.ai/api/v1" {
+		t.Errorf("openrouter protocols = %+v", or.Protocols)
+	}
+	// 仅 openai 的四家不得有 anthropic 键。
+	for _, id := range []string{"openai", "google", "groq", "together"} {
+		p, _ := ById(id)
+		if _, has := p.Protocols["anthropic"]; has {
+			t.Errorf("preset %s must not have anthropic endpoint (spec §6: 无)", id)
+		}
 	}
 }
