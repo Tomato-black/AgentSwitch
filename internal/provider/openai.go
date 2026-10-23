@@ -52,6 +52,9 @@ func (a *OpenAIAdapter) Do(ctx context.Context, r DoRequest) (ChatResult, error)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+r.APIKey)
+	if r.UserAgent != "" {
+		req.Header.Set("User-Agent", r.UserAgent)
+	}
 	if r.Stream {
 		req.Header.Set("Accept", "text/event-stream")
 	}

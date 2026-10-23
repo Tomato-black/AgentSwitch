@@ -742,3 +742,52 @@ func TestAnthropicEndpointAllPresetBases(t *testing.T) {
 		}
 	}
 }
+
+// TestUserAgentPassthroughAdapters 覆盖 spec 2026-10-23 §6 检查项 2（Kimi
+// Code 条款要求透传客户端 UA）：DoRequest.UserAgent 非空时两 adapter 出站
+// 带同值；空时不设置（保持 Go 默认，不发明空 UA 头）。
+func TestUserAgentPassthroughAdapters(t *testing.T) {
+	const ua = "claude-cli/2.0.0 (test)"
+	seen := map[string]string{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen[r.URL.Path] = r.Header.Get("User-Agent")
+		w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	anthropic := NewAnthropicAdapter()
+	res, err := anthropic.Do(context.Background(), DoRequest{
+		BaseURL: srv.URL, AllowPrivate: true, APIKey: "k", UserAgent: ua, RawBody: []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if seen["/v1/messages"] != ua {
+		t.Fatalf("anthropic UA = %q, want %q", seen["/v1/messages"], ua)
+	}
+
+	openai := NewOpenAIAdapter(nil)
+	res, err = openai.Do(context.Background(), DoRequest{
+		BaseURL: srv.URL, AllowPrivate: true, APIKey: "k", UserAgent: ua, RawBody: []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if seen["/v1/chat/completions"] != ua {
+		t.Fatalf("openai UA = %q, want %q", seen["/v1/chat/completions"], ua)
+	}
+
+	// 空 UA：不显式设置（Go 默认 Go-http-client/1.1，非空）。
+	res, err = openai.Do(context.Background(), DoRequest{
+		BaseURL: srv.URL, AllowPrivate: true, APIKey: "k", RawBody: []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if seen["/v1/chat/completions"] == "" {
+		t.Fatal("空 UserAgent 时上游收到空 UA 头，want Go 默认")
+	}
+}

@@ -86,6 +86,9 @@ func (a *AnthropicAdapter) Do(ctx context.Context, r DoRequest) (ChatResult, err
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Api-Key", r.APIKey)
 	req.Header.Set("Anthropic-Version", "2023-06-01")
+	if r.UserAgent != "" {
+		req.Header.Set("User-Agent", r.UserAgent)
+	}
 	if r.Stream {
 		req.Header.Set("Accept", "text/event-stream")
 	}

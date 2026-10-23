@@ -17,6 +17,9 @@ type DoRequest struct {
 	UpstreamModel string
 	RawBody       []byte
 	Stream        bool
+	// UserAgent 透传客户端原始 UA（Kimi Code 等订阅条款要求；spec
+	// 2026-10-23 §6 检查项 2）。空 = 不设置（保持 Go 默认 UA）。
+	UserAgent string
 }
 
 // ChatResult 是上游响应：非 2xx 时 Body 为已限长读取的错误体（供 Classify 使用）。
