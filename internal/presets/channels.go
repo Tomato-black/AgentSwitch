@@ -6,6 +6,7 @@ package presets
 
 import (
 	_ "embed"
+	"os"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -51,13 +52,41 @@ var knownProtocols = map[string]bool{"openai": true, "anthropic": true}
 
 // Load 解析内嵌默认字节与用户文件（userFile 为空或不存在时只用内嵌），
 // 校验后更新包内表与警告。内嵌条目 baseUrl 必须过 provider.ValidateBaseURL
-// (_, false)；用户文件条目放宽（http/私网放行，仅要求可解析，Task 4 接入）。
-// 坏条目跳过并计入 Warning，整体解析失败降级用内嵌表——预置是辅助功能，
-// 绝不阻塞启动（spec §4）。
+// (_, false)；用户文件条目放宽（http/私网/localhost 放行，仅要求可解析——
+// spec §4 用户决策 2026-10-23）。合并按 id：同 id 整体覆盖原位、新 id 追加
+// 末尾。坏条目跳过并计入 Warning，用户文件整体解析失败降级用内嵌表——预置
+// 是辅助功能，绝不阻塞启动（spec §4）。
 func Load(embedded []byte, userFile string) {
 	table, warning = nil, ""
 	table = parse(embedded, true)
-	_ = userFile // 用户文件合并在 Task 4 实现
+	if userFile == "" {
+		return
+	}
+	data, err := os.ReadFile(userFile)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			warning += fmt.Sprintf("用户预置文件读取失败已忽略：%v；", err)
+		}
+		return
+	}
+	user := parse(data, false)
+	merge(user)
+}
+
+// merge 把用户表并入 table：同 id 整体覆盖（原位），新 id 追加末尾。
+func merge(user []ChannelPreset) {
+	index := make(map[string]int, len(table))
+	for i, p := range table {
+		index[p.ID] = i
+	}
+	for _, p := range user {
+		if i, ok := index[p.ID]; ok {
+			table[i] = p
+		} else {
+			index[p.ID] = len(table)
+			table = append(table, p)
+		}
+	}
 }
 
 // parse 解析一段 JSON 到预设表：单条校验失败跳过并拼进警告；strict=true 时

@@ -1,6 +1,7 @@
 package presets
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -145,5 +146,97 @@ func TestDefaultJSONTwentyEntries(t *testing.T) {
 		if _, has := p.Protocols["anthropic"]; has {
 			t.Errorf("preset %s must not have anthropic endpoint (spec §6: 无)", id)
 		}
+	}
+}
+
+// userFileFixture 是用户覆盖文件 fixture：整条覆盖 qwen + 追加私网中转站。
+const userFileFixture = `[
+  {"id":"qwen","displayName":"我的千问","docUrl":"https://my.example/",
+   "protocols":{"openai":{"baseUrl":"https://my-qwen.example.com/v1","defaultModels":["qwen-custom"]}}},
+  {"id":"myrelay","displayName":"内网中转","docUrl":"http://relay.local/",
+   "protocols":{"openai":{"baseUrl":"http://192.168.1.10:3000/v1","defaultModels":["gpt-x"]}}}
+]`
+
+// TestUserFileOverrideAndAppend 覆盖 spec §4：同 id 整体覆盖（原位）+ 新 id
+// 追加末尾；用户条目放宽校验（http 私网放行）不产生警告。
+func TestUserFileOverrideAndAppend(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/presets.json"
+	if err := os.WriteFile(path, []byte(userFileFixture), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	Load(DefaultJSON(), path)
+	all := All()
+	if len(all) != 21 { // 20 内嵌 + 1 追加
+		t.Fatalf("All() len = %d, want 21", len(all))
+	}
+	// qwen 在原位（index 1）且为用户版整体覆盖（displayName/docUrl/protocols 全换）。
+	if all[1].ID != "qwen" || all[1].DisplayName != "我的千问" {
+		t.Fatalf("overridden qwen = %+v", all[1])
+	}
+	if all[1].Protocols["openai"].BaseURL != "https://my-qwen.example.com/v1" {
+		t.Fatalf("qwen openai baseUrl = %+v", all[1].Protocols["openai"])
+	}
+	if _, has := all[1].Protocols["anthropic"]; has {
+		t.Error("整体覆盖后 anthropic 键应被用户版替换掉（用户版无该协议）")
+	}
+	// myrelay 追加在末尾。
+	if last := all[20]; last.ID != "myrelay" || last.Protocols["openai"].BaseURL != "http://192.168.1.10:3000/v1" {
+		t.Fatalf("appended myrelay = %+v", last)
+	}
+	if w := Warning(); w != "" {
+		t.Fatalf("私网用户条目不应告警, Warning() = %q", w)
+	}
+}
+
+// TestUserFileGarbageDegrades 覆盖 spec §4：用户文件语法坏 → 整体降级用内嵌
+// 默认表，警告非空。
+func TestUserFileGarbageDegrades(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/presets.json"
+	if err := os.WriteFile(path, []byte(`{{{`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	Load(DefaultJSON(), path)
+	if len(All()) != 20 {
+		t.Fatalf("degraded table len = %d, want 20", len(All()))
+	}
+	if Warning() == "" {
+		t.Fatal("降级必须有警告")
+	}
+}
+
+// TestUserFileMissing 覆盖 spec §4：用户文件不存在 → 只用内嵌表，无警告。
+func TestUserFileMissing(t *testing.T) {
+	Load(DefaultJSON(), "/no/such/dir/presets.json")
+	if len(All()) != 20 {
+		t.Fatalf("All() len = %d, want 20", len(All()))
+	}
+	if w := Warning(); w != "" {
+		t.Fatalf("文件缺失不算异常, Warning() = %q", w)
+	}
+}
+
+// TestUserFileSkipBadEntries 覆盖 spec §4：用户文件单条坏（id 空）只跳过该条，
+// 其余用户条目照常生效。
+func TestUserFileSkipBadEntries(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/presets.json"
+	fixture := `[
+  {"id":"","displayName":"无 ID","protocols":{"openai":{"baseUrl":"https://a.example.com"}}},
+  {"id":"good-relay","displayName":"好中转","protocols":{"openai":{"baseUrl":"http://10.0.0.5:8080/v1"}}}
+]`
+	if err := os.WriteFile(path, []byte(fixture), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	Load(DefaultJSON(), path)
+	if _, ok := ById("good-relay"); !ok {
+		t.Fatal("good-relay missing")
+	}
+	if len(All()) != 21 {
+		t.Fatalf("All() len = %d, want 21", len(All()))
+	}
+	if !strings.Contains(Warning(), "已跳过") {
+		t.Fatalf("Warning() = %q, want skip note", Warning())
 	}
 }

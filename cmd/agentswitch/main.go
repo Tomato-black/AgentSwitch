@@ -33,9 +33,14 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	// 渠道预置表启动加载一次（spec 2026-10-23 §4：此后只读；用户文件路径
-	// 由后续任务接入）。
-	presets.Load(presets.DefaultJSON(), "")
+	// 渠道预置表启动加载一次（spec 2026-10-23 §4：内嵌默认 + 用户文件覆盖，
+	// 此后只读）。用户文件放 ~/.agentswitch/presets.json（项目用户编辑文件
+	// 惯例，同 access/backups）。
+	userPresets := ""
+	if home, err := os.UserHomeDir(); err == nil {
+		userPresets = filepath.Join(home, ".agentswitch", "presets.json")
+	}
+	presets.Load(presets.DefaultJSON(), userPresets)
 	if err := desktop.Run(a); err != nil {
 		log.Fatal(err)
 	}
