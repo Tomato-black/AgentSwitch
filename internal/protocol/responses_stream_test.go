@@ -326,8 +326,54 @@ func TestChatStreamToResponsesCustomAndToolSearch(t *testing.T) {
 			t.Fatalf("missing %q:\n%s", want, out)
 		}
 	}
+	// added item 形状必须还原原始工具语义，不能退化为 function_call。
+	if !strings.Contains(out, `"input":""`) {
+		t.Fatalf("custom added item must carry empty input:\n%s", out)
+	}
+	for _, want := range []string{`"execution":"client"`, `"arguments":{}`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("tool_search added item missing %q:\n%s", want, out)
+		}
+	}
 	if strings.Contains(out, "response.function_call_arguments.delta") {
 		t.Fatalf("custom/tool_search must not stream argument deltas:\n%s", out)
+	}
+}
+
+// namespace 子函数不属于 custom/tool_search，参数增量必须继续流式下发
+// （多分片到达时逐片转发），收口 item 用短名 + namespace。
+func TestChatStreamToResponsesNamespaceToolStreamsArgumentDeltas(t *testing.T) {
+	r, _ := ParseResponsesRequest([]byte(`{"model":"m","tools":[{"type":"namespace","name":"multi_agent_v1","tools":[{"type":"function","name":"spawn_agent"}]}]}`))
+	tc := NewResponseToolContext(r)
+	chat := `data: {"id":"c","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_ns","function":{"name":"multi_agent_v1__spawn_agent","arguments":"{\"task\":"}}]}}]}` + "\n\n" +
+		`data: {"id":"c","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"explore\"}"}}]}}]}` + "\n\n" +
+		`data: {"id":"c","choices":[{"delta":{},"finish_reason":"tool_calls"}]}` + "\n\n" +
+		`data: [DONE]` + "\n\n"
+	rc := ChatStreamToResponsesStream(context.Background(), strings.NewReader(chat), "m", tc)
+	defer rc.Close()
+	b, _ := io.ReadAll(rc)
+	out := string(b)
+
+	if n := strings.Count(out, "event: response.function_call_arguments.delta"); n != 2 {
+		t.Fatalf("expected 2 argument deltas, got %d:\n%s", n, out)
+	}
+	for _, want := range []string{`"delta":"{\"task\":"`, `"delta":"\"explore\"}"`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing delta fragment %q:\n%s", want, out)
+		}
+	}
+	data := sseEventData(t, out, "response.completed")
+	resp, _ := data["response"].(map[string]any)
+	output, _ := resp["output"].([]any)
+	if len(output) != 1 {
+		t.Fatalf("completed output must contain the tool call, got %#v", resp["output"])
+	}
+	finalItem, _ := output[0].(map[string]any)
+	if finalItem["name"] != "spawn_agent" || finalItem["namespace"] != "multi_agent_v1" {
+		t.Fatalf("completed item must use short name + namespace, got %#v", finalItem)
+	}
+	if finalItem["arguments"] != `{"task":"explore"}` {
+		t.Fatalf("completed item arguments mismatch, got %#v", finalItem["arguments"])
 	}
 }
 

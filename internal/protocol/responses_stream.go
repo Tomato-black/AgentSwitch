@@ -248,12 +248,19 @@ func (t *chatToResponsesStream) pushToolDelta(index int, id, name, args string) 
 		t.openTool(st)
 		return
 	}
-	if st.open && args != "" && st.kind == responseToolFunction {
+	if st.open && args != "" && streamsToolArgumentDeltas(st.kind) {
 		t.out.Write(responsesSSEEvent("response.function_call_arguments.delta", map[string]any{
 			"type": "response.function_call_arguments.delta", "item_id": st.idPrefix + st.callID,
 			"output_index": st.index, "delta": args,
 		}))
 	}
+}
+
+// streamsToolArgumentDeltas 判定工具是否在流中逐片下发参数增量。
+// 只有 custom 与 tool_search 需要整包收口（协议上不流式输出其输入），
+// function 与 namespace 子函数保持增量转发。
+func streamsToolArgumentDeltas(kind responseToolKind) bool {
+	return kind != responseToolCustom && kind != responseToolSearch
 }
 
 // toolSpec 解析 chat 名对应的 Responses 工具语义；未登记的工具按普通 function 透传。
@@ -297,7 +304,7 @@ func (t *chatToResponsesStream) openTool(st *responsesToolState) {
 	t.out.Write(responsesSSEEvent("response.output_item.added", map[string]any{
 		"type": "response.output_item.added", "output_index": st.index, "item": item,
 	}))
-	if st.args.Len() > 0 && st.kind == responseToolFunction {
+	if st.args.Len() > 0 && streamsToolArgumentDeltas(st.kind) {
 		t.out.Write(responsesSSEEvent("response.function_call_arguments.delta", map[string]any{
 			"type": "response.function_call_arguments.delta", "item_id": st.idPrefix + st.callID,
 			"output_index": st.index, "delta": st.args.String(),
