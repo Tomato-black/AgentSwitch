@@ -241,6 +241,68 @@ func TestChatStreamToResponsesToolCallIDSynthesized(t *testing.T) {
 	}
 }
 
+// namespace 内的子函数：added 与 completed 都必须使用短名 + namespace，
+// 不能把拍平后的 chat 名（multi_agent_v1__spawn_agent）泄露给客户端。
+func TestChatStreamToResponsesNamespaceToolNames(t *testing.T) {
+	r, _ := ParseResponsesRequest([]byte(`{"model":"m","tools":[{"type":"namespace","name":"multi_agent_v1","tools":[{"type":"function","name":"spawn_agent"}]}]}`))
+	tc := NewResponseToolContext(r)
+	chat := `data: {"id":"c","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_ns","function":{"name":"multi_agent_v1__spawn_agent","arguments":"{}"}}]}}]}` + "\n\n" +
+		`data: {"id":"c","choices":[{"delta":{},"finish_reason":"tool_calls"}]}` + "\n\n" +
+		`data: [DONE]` + "\n\n"
+	rc := ChatStreamToResponsesStream(context.Background(), strings.NewReader(chat), "m", tc)
+	defer rc.Close()
+	b, _ := io.ReadAll(rc)
+	out := string(b)
+
+	check := func(event string, item map[string]any) {
+		t.Helper()
+		if item["name"] != "spawn_agent" || item["namespace"] != "multi_agent_v1" || item["call_id"] != "call_ns" {
+			t.Fatalf("%s item must use short name + namespace, got %#v\n%s", event, item, out)
+		}
+	}
+	added := sseEventData(t, out, "response.output_item.added")
+	addedItem, _ := added["item"].(map[string]any)
+	check("output_item.added", addedItem)
+
+	done := sseEventData(t, out, "response.output_item.done")
+	doneItem, _ := done["item"].(map[string]any)
+	check("output_item.done", doneItem)
+
+	data := sseEventData(t, out, "response.completed")
+	resp, _ := data["response"].(map[string]any)
+	output, _ := resp["output"].([]any)
+	if len(output) != 1 {
+		t.Fatalf("completed output must contain the tool call, got %#v", resp["output"])
+	}
+	finalItem, _ := output[0].(map[string]any)
+	check("response.completed.output", finalItem)
+	// id 仍以 call_id 派生，不得使用拍平名。
+	if finalItem["id"] != "fc_call_ns" {
+		t.Fatalf("item id must derive from call_id, got %#v", finalItem["id"])
+	}
+}
+
+// 工具先于正文开启时，completed.output 仍必须按 output_index 升序排列，
+// 而不是按收口顺序（text 先收口）。
+func TestChatStreamToResponsesOutputSortedByIndex(t *testing.T) {
+	chat := `data: {"id":"c","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"exec","arguments":"{}"}}]}}]}` + "\n\n" +
+		`data: {"id":"c","choices":[{"delta":{"content":"done"}}]}` + "\n\n" +
+		`data: {"id":"c","choices":[{"delta":{},"finish_reason":"tool_calls"}]}` + "\n\n" +
+		`data: [DONE]` + "\n\n"
+	out := streamEvents(t, chat)
+	data := sseEventData(t, out, "response.completed")
+	resp, _ := data["response"].(map[string]any)
+	output, _ := resp["output"].([]any)
+	if len(output) != 2 {
+		t.Fatalf("expected tool + message items, got %#v", resp["output"])
+	}
+	first, _ := output[0].(map[string]any)
+	second, _ := output[1].(map[string]any)
+	if first["id"] != "fc_call_1" || second["id"] != "resp_c_msg" {
+		t.Fatalf("output must be ordered by output_index, got %#v", resp["output"])
+	}
+}
+
 // 上游无终止标记即结束（截断）时不得发 response.completed，必须发失败事件。
 func TestChatStreamToResponsesTruncatedFails(t *testing.T) {
 	chat := `data: {"id":"chatcmpl_1","choices":[{"delta":{"content":"partial"}}]}` + "\n\n"

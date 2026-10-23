@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 )
 
@@ -37,6 +38,24 @@ type responsesTextState struct {
 	text  strings.Builder
 	open  bool
 	done  bool
+}
+
+// responseOutputItem 是收口阶段的一个完成态 output 项及其 output_index。
+// 文本、工具（以及后续任务的 reasoning）都汇入同一集合，统一按 index 升序后
+// 写入 response.completed / response.failed 的 output。
+type responseOutputItem struct {
+	index int
+	item  map[string]any
+}
+
+// sortedOutputItems 按 output_index 升序整理最终 output，返回非 nil 数组。
+func sortedOutputItems(items []responseOutputItem) []map[string]any {
+	sort.SliceStable(items, func(i, j int) bool { return items[i].index < items[j].index })
+	out := make([]map[string]any, 0, len(items))
+	for _, it := range items {
+		out = append(out, it.item)
+	}
+	return out
 }
 
 // responsesToolState 记录一个流式工具调用的进度。
@@ -162,7 +181,7 @@ func (t *chatToResponsesStream) pushText(delta string) {
 }
 
 // closeText 收口文本项并返回其完成态 item；未开启或已收口时返回 nil。
-func (t *chatToResponsesStream) closeText() []map[string]any {
+func (t *chatToResponsesStream) closeText() []responseOutputItem {
 	if !t.text.open || t.text.done {
 		return nil
 	}
@@ -184,7 +203,7 @@ func (t *chatToResponsesStream) closeText() []map[string]any {
 	t.out.Write(responsesSSEEvent("response.output_item.done", map[string]any{
 		"type": "response.output_item.done", "output_index": t.text.index, "item": item,
 	}))
-	return []map[string]any{item}
+	return []responseOutputItem{{index: t.text.index, item: item}}
 }
 
 // pushToolDelta 累积一个工具调用分片。与 cc-switch 一致：必须等 call_id 与 name
@@ -224,9 +243,26 @@ func (t *chatToResponsesStream) pushToolDelta(index int, id, name, args string) 
 	}
 }
 
+// toolSpec 解析 chat 名对应的 Responses 工具语义；未登记的工具按普通 function 透传。
+func (t *chatToResponsesStream) toolSpec(name string) responseToolSpec {
+	if t.tc != nil {
+		if spec, ok := t.tc.Spec(name); ok {
+			return spec
+		}
+	}
+	return responseToolSpec{Kind: responseToolFunction, Name: name}
+}
+
 // openTool 发出 output_item.added；参数若在 call_id/name 到齐前已缓冲，此处一次性补发。
+// 工具名按工具上下文还原（namespace 子函数用短名 + namespace），保证 added 与
+// done 两个 item 的命名一致。
 func (t *chatToResponsesStream) openTool(st *responsesToolState) {
 	st.open = true
+	spec := t.toolSpec(st.name)
+	name := spec.Name
+	if name == "" {
+		name = st.name
+	}
 	item := map[string]any{
 		"id": st.idPrefix + st.callID, "type": st.itemType, "status": "in_progress",
 		"call_id": st.callID,
@@ -235,7 +271,10 @@ func (t *chatToResponsesStream) openTool(st *responsesToolState) {
 		item["execution"] = "client"
 		item["arguments"] = map[string]any{}
 	} else {
-		item["name"] = st.name
+		item["name"] = name
+		if spec.Namespace != "" {
+			item["namespace"] = spec.Namespace
+		}
 		if st.kind == responseToolCustom {
 			item["input"] = ""
 		} else {
@@ -256,8 +295,8 @@ func (t *chatToResponsesStream) openTool(st *responsesToolState) {
 // closeTools 依次收口工具调用并返回完成态 item。
 // 未拿到工具名的调用无法还原语义，直接丢弃；id 缺失时合成非空 call_id，
 // 并补发 added，保证客户端看到的事件序列完整（不会出现只有 done 的孤儿 item）。
-func (t *chatToResponsesStream) closeTools() []map[string]any {
-	var output []map[string]any
+func (t *chatToResponsesStream) closeTools() []responseOutputItem {
+	var output []responseOutputItem
 	for _, idx := range t.toolOrder {
 		st := t.tools[idx]
 		if st == nil || st.done || st.name == "" {
@@ -272,13 +311,7 @@ func (t *chatToResponsesStream) closeTools() []map[string]any {
 		if !st.open {
 			t.openTool(st)
 		}
-		// 工具上下文缺失（防御性分支）时按普通 function 透传，避免流 goroutine panic。
-		spec := responseToolSpec{Kind: responseToolFunction, Name: st.name}
-		if t.tc != nil {
-			if s, ok := t.tc.Spec(st.name); ok {
-				spec = s
-			}
-		}
+		spec := t.toolSpec(st.name)
 		switch st.kind {
 		default:
 			// function（含未登记工具的透传）收口；custom/tool_search 分支由后续任务补齐。
@@ -301,18 +334,18 @@ func (t *chatToResponsesStream) closeTools() []map[string]any {
 				"type": "response.output_item.done", "output_index": st.index, "item": item,
 			}))
 			st.completed = item
-			output = append(output, item)
+			output = append(output, responseOutputItem{index: st.index, item: item})
 		}
 	}
 	return output
 }
 
 // completedToolItems 返回已收口的工具 item；未完成的不下发（用于失败收尾）。
-func (t *chatToResponsesStream) completedToolItems() []map[string]any {
-	var output []map[string]any
+func (t *chatToResponsesStream) completedToolItems() []responseOutputItem {
+	var output []responseOutputItem
 	for _, idx := range t.toolOrder {
 		if st := t.tools[idx]; st != nil && st.done && st.completed != nil {
-			output = append(output, st.completed)
+			output = append(output, responseOutputItem{index: st.index, item: st.completed})
 		}
 	}
 	return output
@@ -417,13 +450,10 @@ func (t *chatToResponsesStream) Finish() []byte {
 	}
 	t.finished = true
 	t.ensureStarted()
-	output := t.closeText()
-	output = append(output, t.closeTools()...)
-	if output == nil {
-		output = []map[string]any{}
-	}
+	items := t.closeText()
+	items = append(items, t.closeTools()...)
 	resp := t.baseResponse("completed")
-	resp["output"] = output
+	resp["output"] = sortedOutputItems(items)
 	t.out.Write(responsesSSEEvent("response.completed", map[string]any{"type": "response.completed", "response": resp}))
 	return t.drain()
 }
@@ -436,14 +466,11 @@ func (t *chatToResponsesStream) Fail(message string) {
 	}
 	t.finished, t.failed = true, true
 	t.ensureStarted()
-	output := t.closeText()
+	items := t.closeText()
 	// 失败收尾只带已收口的工具 item；仍在流式中的工具下发会破坏客户端状态机。
-	output = append(output, t.completedToolItems()...)
-	if output == nil {
-		output = []map[string]any{}
-	}
+	items = append(items, t.completedToolItems()...)
 	resp := t.baseResponse("failed")
-	resp["output"] = output
+	resp["output"] = sortedOutputItems(items)
 	resp["error"] = map[string]any{"message": message}
 	t.out.Write(responsesSSEEvent("response.failed", map[string]any{"type": "response.failed", "response": resp}))
 }
