@@ -59,19 +59,20 @@ func sortedOutputItems(items []responseOutputItem) []map[string]any {
 }
 
 // responsesToolState 记录一个流式工具调用的进度。
-// kind/itemType/idPrefix 的零值即 function / function_call / fc_；custom 与
-// tool_search 的 kind 解析与收口分支由后续任务填充。
+// kind/itemType/idPrefix 的零值即 function / function_call / fc_；工具名首次
+// 到达后按工具上下文解析一次真实类型（custom/tool_search）。
 type responsesToolState struct {
-	index     int
-	callID    string
-	name      string
-	args      strings.Builder
-	open      bool
-	done      bool
-	kind      responseToolKind
-	itemType  string
-	idPrefix  string
-	completed map[string]any
+	index        int
+	callID       string
+	name         string
+	args         strings.Builder
+	open         bool
+	done         bool
+	kind         responseToolKind
+	itemType     string
+	idPrefix     string
+	kindResolved bool
+	completed    map[string]any
 }
 
 // chatToResponsesStream 是 chat.completion.chunk → Responses SSE 的状态机。
@@ -227,6 +228,18 @@ func (t *chatToResponsesStream) pushToolDelta(index int, id, name, args string) 
 	if name != "" {
 		st.name = name
 	}
+	// 工具名到齐后按工具上下文解析一次真实类型，决定 added/done 的 item 形状
+	// 与 id 前缀；未登记的工具按普通 function 透传。
+	if st.name != "" && !st.kindResolved {
+		st.kindResolved = true
+		st.kind = t.toolSpec(st.name).Kind
+		switch st.kind {
+		case responseToolCustom:
+			st.itemType, st.idPrefix = "custom_tool_call", "ctc_"
+		case responseToolSearch:
+			st.itemType, st.idPrefix = "tool_search_call", "ts_"
+		}
+	}
 	if args != "" {
 		st.args.WriteString(args)
 	}
@@ -313,8 +326,41 @@ func (t *chatToResponsesStream) closeTools() []responseOutputItem {
 		}
 		spec := t.toolSpec(st.name)
 		switch st.kind {
+		case responseToolCustom:
+			// custom 不流式下发输入增量，收口时解包 {"input":...} 后一次性补发。
+			input := customToolInput(st.args.String())
+			item := map[string]any{
+				"id": st.idPrefix + callID, "type": st.itemType, "status": "completed",
+				"call_id": callID, "name": spec.Name, "input": input,
+			}
+			if input != "" {
+				t.out.Write(responsesSSEEvent("response.custom_tool_call_input.delta", map[string]any{
+					"type": "response.custom_tool_call_input.delta", "item_id": st.idPrefix + callID,
+					"output_index": st.index, "delta": input,
+				}))
+			}
+			t.out.Write(responsesSSEEvent("response.custom_tool_call_input.done", map[string]any{
+				"type": "response.custom_tool_call_input.done", "item_id": st.idPrefix + callID,
+				"output_index": st.index, "input": input,
+			}))
+			t.out.Write(responsesSSEEvent("response.output_item.done", map[string]any{
+				"type": "response.output_item.done", "output_index": st.index, "item": item,
+			}))
+			st.completed = item
+			output = append(output, responseOutputItem{index: st.index, item: item})
+		case responseToolSearch:
+			item := map[string]any{
+				"id": st.idPrefix + callID, "type": st.itemType, "status": "completed",
+				"call_id": callID, "execution": "client",
+				"arguments": parseToolArgumentsObject(st.args.String()),
+			}
+			t.out.Write(responsesSSEEvent("response.output_item.done", map[string]any{
+				"type": "response.output_item.done", "output_index": st.index, "item": item,
+			}))
+			st.completed = item
+			output = append(output, responseOutputItem{index: st.index, item: item})
 		default:
-			// function（含未登记工具的透传）收口；custom/tool_search 分支由后续任务补齐。
+			// function（含未登记工具与 namespace 子函数的透传）收口。
 			args := st.args.String()
 			if args == "" {
 				args = "{}"

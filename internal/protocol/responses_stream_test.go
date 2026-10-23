@@ -303,6 +303,34 @@ func TestChatStreamToResponsesOutputSortedByIndex(t *testing.T) {
 	}
 }
 
+// custom 与 tool_search 工具：added 用各自的 item 形状，不流式输出参数增量；
+// custom 收口解包 {"input":...} 并补发自定义输入事件，tool_search 收口下发参数对象。
+func TestChatStreamToResponsesCustomAndToolSearch(t *testing.T) {
+	r, _ := ParseResponsesRequest([]byte(`{"model":"m","tools":[
+		{"type":"custom","name":"apply_patch"},{"type":"tool_search"}]}`))
+	tc := NewResponseToolContext(r)
+	chat := `data: {"id":"c","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_p","function":{"name":"apply_patch","arguments":"{\"input\":\"*** Begin Patch\"}"}}]}}]}` + "\n\n" +
+		`data: {"id":"c","choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_t","function":{"name":"tool_search","arguments":"{\"query\":\"gmail\"}"}}]}}]}` + "\n\n" +
+		`data: {"id":"c","choices":[{"delta":{},"finish_reason":"tool_calls"}]}` + "\n\n" +
+		`data: [DONE]` + "\n\n"
+	rc := ChatStreamToResponsesStream(context.Background(), strings.NewReader(chat), "m", tc)
+	defer rc.Close()
+	b, _ := io.ReadAll(rc)
+	out := string(b)
+	for _, want := range []string{
+		`"type":"custom_tool_call"`, `"input":"*** Begin Patch"`,
+		"response.custom_tool_call_input.done",
+		`"type":"tool_search_call"`, `"query":"gmail"`, "event: response.completed",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "response.function_call_arguments.delta") {
+		t.Fatalf("custom/tool_search must not stream argument deltas:\n%s", out)
+	}
+}
+
 // 上游无终止标记即结束（截断）时不得发 response.completed，必须发失败事件。
 func TestChatStreamToResponsesTruncatedFails(t *testing.T) {
 	chat := `data: {"id":"chatcmpl_1","choices":[{"delta":{"content":"partial"}}]}` + "\n\n"
