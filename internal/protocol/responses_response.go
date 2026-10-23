@@ -112,7 +112,8 @@ func chatUsageToResponsesUsage(u *chatUsage) map[string]any {
 }
 
 // chatMessageToResponseItems 把 chat 助手消息转为 Responses output 项。
-// 本任务仅处理文本与 reasoning；工具调用项由后续任务补齐。
+// 文本与 reasoning 之后，按 ResponseToolContext 记录的原始工具语义还原
+// function / custom / tool_search 三类工具调用项。
 func chatMessageToResponseItems(content *string, reasoningContent, reasoning string,
 	calls []chatToolCall, respID string, tc *ResponseToolContext) []map[string]any {
 	var out []map[string]any
@@ -133,5 +134,59 @@ func chatMessageToResponseItems(content *string, reasoningContent, reasoning str
 			"summary": []map[string]any{{"type": "summary_text", "text": text}},
 		})
 	}
+	for _, call := range calls {
+		name := call.Function.Name
+		spec, ok := tc.Spec(name)
+		if !ok {
+			// 未登记的工具名按普通 function 透传，避免丢调用。
+			spec = responseToolSpec{Kind: responseToolFunction, Name: name}
+		}
+		callID := call.ID
+		if callID == "" {
+			callID = "call_" + fmt.Sprint(len(out))
+		}
+		switch spec.Kind {
+		case responseToolCustom:
+			out = append(out, map[string]any{
+				"id": "ctc_" + callID, "type": "custom_tool_call", "status": "completed",
+				"call_id": callID, "name": spec.Name, "input": customToolInput(call.Function.Arguments),
+			})
+		case responseToolSearch:
+			out = append(out, map[string]any{
+				"id": "ts_" + callID, "type": "tool_search_call", "status": "completed",
+				"call_id": callID, "execution": "client",
+				"arguments": parseToolArgumentsObject(call.Function.Arguments),
+			})
+		default:
+			item := map[string]any{
+				"id": "fc_" + callID, "type": "function_call", "status": "completed",
+				"call_id": callID, "name": spec.Name, "arguments": call.Function.Arguments,
+			}
+			if spec.Namespace != "" {
+				item["namespace"] = spec.Namespace
+			}
+			out = append(out, item)
+		}
+	}
 	return out
+}
+
+// customToolInput 从 {"input":"..."} 解包自由文本；解析失败时原样返回。
+func customToolInput(arguments string) string {
+	var obj map[string]any
+	if json.Unmarshal([]byte(arguments), &obj) == nil {
+		if s, ok := obj[customToolInputField].(string); ok {
+			return s
+		}
+	}
+	return arguments
+}
+
+// parseToolArgumentsObject 把参数 JSON 解析为对象；失败时退化为 {"query": 原文}。
+func parseToolArgumentsObject(arguments string) map[string]any {
+	var obj map[string]any
+	if json.Unmarshal([]byte(arguments), &obj) == nil && obj != nil {
+		return obj
+	}
+	return map[string]any{"query": arguments}
 }

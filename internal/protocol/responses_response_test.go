@@ -94,6 +94,46 @@ func assertReasoningItem(t *testing.T, b []byte, want string) {
 	t.Fatalf("no reasoning item: %s", b)
 }
 
+func TestChatCompletionToResponsesToolItems(t *testing.T) {
+	r, _ := ParseResponsesRequest([]byte(`{"model":"m","tools":[
+		{"type":"function","name":"exec_command"},
+		{"type":"custom","name":"apply_patch"},
+		{"type":"namespace","name":"ns","tools":[{"type":"function","name":"run"}]},
+		{"type":"tool_search"}]}`))
+	tc := NewResponseToolContext(r)
+	chat := `{"id":"c1","created":1,"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[
+		{"id":"call_1","type":"function","function":{"name":"exec_command","arguments":"{\"cmd\":\"ls\"}"}},
+		{"id":"call_2","type":"function","function":{"name":"apply_patch","arguments":"{\"input\":\"*** Begin Patch\"}"}},
+		{"id":"call_3","type":"function","function":{"name":"ns__run","arguments":"{}"}},
+		{"id":"call_4","type":"function","function":{"name":"tool_search","arguments":"{\"query\":\"gmail\"}"}}
+	]},"finish_reason":"tool_calls"}]}`
+	b, err := ChatCompletionToResponses([]byte(chat), "m", tc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]any
+	json.Unmarshal(b, &out)
+	items := out["output"].([]any)
+	if len(items) != 4 {
+		t.Fatalf("items: %s", b)
+	}
+	if items[0].(map[string]any)["type"] != "function_call" ||
+		items[0].(map[string]any)["name"] != "exec_command" {
+		t.Fatalf("function item: %+v", items[0])
+	}
+	if items[1].(map[string]any)["type"] != "custom_tool_call" ||
+		items[1].(map[string]any)["input"] != "*** Begin Patch" {
+		t.Fatalf("custom item: %+v", items[1])
+	}
+	if items[2].(map[string]any)["namespace"] != "ns" || items[2].(map[string]any)["name"] != "run" {
+		t.Fatalf("namespace item: %+v", items[2])
+	}
+	if items[3].(map[string]any)["type"] != "tool_search_call" ||
+		items[3].(map[string]any)["arguments"].(map[string]any)["query"] != "gmail" {
+		t.Fatalf("tool_search item: %+v", items[3])
+	}
+}
+
 func TestChatCompletionToResponsesLengthIncomplete(t *testing.T) {
 	chat := `{"id":"c","created":1,"choices":[{"message":{"role":"assistant","content":"x"},"finish_reason":"length"}]}`
 	b, _ := ChatCompletionToResponses([]byte(chat), "m", NewResponseToolContext(ResponsesRequest{}))
