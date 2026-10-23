@@ -1557,6 +1557,8 @@ func TestStripOneM(t *testing.T) {
 		"[]":        "[]",
 		"[1M]":      "",       // 纯后缀也剥（随后未登记模型 404，行为明确）
 		"a[1M]x":    "a[1M]x", // 非尾部不动
+		// 智谱 Coding Plan 官方 1M 后缀为小写 [1m]（spec 2026-10-23 §6）。
+		"glm-5.3-flash[1m]": "glm-5.3-flash",
 	}
 	for in, want := range cases {
 		if got := stripOneM(in); got != want {
