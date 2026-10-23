@@ -2095,14 +2095,25 @@ func TestResponsesCommitNoReplay(t *testing.T) {
 	if calls2 != 0 {
 		t.Fatalf("must not replay after commit; second calls=%d", calls2)
 	}
-	if !strings.Contains(string(b), "event: response.failed") || strings.Contains(string(b), "event: response.completed") {
+	out := string(b)
+	// 提交点已越过的直接证据：首 chunk 的文本增量必须先到客户端。
+	deltaIdx := strings.Index(out, "event: response.output_text.delta")
+	if deltaIdx < 0 || !strings.Contains(out, `"delta":"partial"`) {
+		t.Fatalf("first chunk must reach client before abort: %s", b)
+	}
+	failedIdx := strings.Index(out, "event: response.failed")
+	if failedIdx < 0 || strings.Contains(out, "event: response.completed") {
 		t.Fatalf("truncation must fail: %s", b)
+	}
+	if deltaIdx > failedIdx {
+		t.Fatalf("committed delta must precede failure: %s", b)
 	}
 }
 
 // TestResponsesIdleTimeoutFails：上游首 chunk 后静默超过 RequestTimeout（流式语义
-// = 客户端可见输出空闲时限）→ 发 response.failed 且不重放第二目标。
+// = 客户端可见输出空闲时限）→ 空闲看门狗发 response.failed 且不重放第二目标。
 func TestResponsesIdleTimeoutFails(t *testing.T) {
+	release := make(chan struct{})
 	var calls2 int
 	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls2++ }))
 	defer good.Close()
@@ -2113,9 +2124,10 @@ func TestResponsesIdleTimeoutFails(t *testing.T) {
 			"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
 			"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"x\"}}\n\n"))
 		w.(http.Flusher).Flush()
-		time.Sleep(2 * time.Second)
+		<-release // 首 chunk 后静默，直到测试收尾（defer LIFO：先 close 再 Close server）
 	}))
 	defer slow.Close()
+	defer close(release)
 	tw, _ := twoCands(t, slow.URL, good.URL)
 	s := newGW(t, slow.URL, func(d *Deps) {
 		d.Limits = func() Limits { return Limits{MaxBodyBytes: 1 << 20, RequestTimeout: 100 * time.Millisecond} }
@@ -2124,7 +2136,19 @@ func TestResponsesIdleTimeoutFails(t *testing.T) {
 	resp := postResponses(t, s, `{"model":"pub-1","input":"hi","stream":true}`, "tok")
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(b), "event: response.failed") || calls2 != 0 {
-		t.Fatalf("idle timeout must fail without replay: calls2=%d %s", calls2, b)
+	out := string(b)
+	if resp.StatusCode != 200 {
+		t.Fatalf("committed stream must keep 200, got %d: %s", resp.StatusCode, b)
+	}
+	// 必须命中空闲看门狗（copyStream 的 onIdle），而不是流内错误产生的
+	// 通用 response.failed——否则去掉 idle 参数测试仍会误过。
+	if !strings.Contains(out, "event: response.failed") || !strings.Contains(out, "upstream stream idle timeout") {
+		t.Fatalf("idle timeout must emit watchdog failure: %s", b)
+	}
+	if strings.Contains(out, "event: response.completed") {
+		t.Fatalf("idle timeout must not fake completion: %s", b)
+	}
+	if calls2 != 0 {
+		t.Fatalf("idle timeout must not replay; second calls=%d", calls2)
 	}
 }
