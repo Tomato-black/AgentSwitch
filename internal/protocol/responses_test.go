@@ -44,3 +44,37 @@ func TestParseResponsesRequestAllowsNullPreviousResponseID(t *testing.T) {
 		t.Fatalf("null previous_response_id must be accepted: %v", err)
 	}
 }
+
+func TestResponsesInputMessages(t *testing.T) {
+	r, _ := ParseResponsesRequest([]byte(`{
+		"model":"m","instructions":"system rules",
+		"input":[
+			{"type":"message","role":"developer","content":[{"type":"input_text","text":"dev rules"}]},
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"},{"type":"input_image","image_url":"data:x"}]},
+			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"previous"}]}
+		]}`))
+	tc := NewResponseToolContext(r)
+	msgs, err := responsesInputToMessages(r.Input, r.Instructions, tc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("messages: %+v", msgs)
+	}
+	if msgs[0]["role"] != "system" || msgs[0]["content"] != "system rules\n\ndev rules" {
+		t.Fatalf("system merge: %+v", msgs[0])
+	}
+	if msgs[1]["role"] != "user" || msgs[1]["content"] != "hello" {
+		t.Fatalf("user text: %+v", msgs[1])
+	}
+	if msgs[2]["role"] != "assistant" || msgs[2]["content"] != "previous" {
+		t.Fatalf("assistant text: %+v", msgs[2])
+	}
+}
+
+func TestResponsesInputString(t *testing.T) {
+	msgs, err := responsesInputToMessages([]byte(`"hi"`), "", NewResponseToolContext(ResponsesRequest{}))
+	if err != nil || len(msgs) != 1 || msgs[0]["role"] != "user" {
+		t.Fatalf("string input: %+v err=%v", msgs, err)
+	}
+}
