@@ -38,11 +38,23 @@ type responsesTextState struct {
 	text  strings.Builder
 	open  bool
 	done  bool
+	item  map[string]any // 收口后的完成态 item，供最终 output 聚合使用
+}
+
+// responsesReasoningState 记录流式 reasoning summary 项的进度：
+// 首个 reasoning 增量开启一项，正文开始或收口时补齐 done 事件。
+type responsesReasoningState struct {
+	index int
+	id    string
+	text  strings.Builder
+	open  bool
+	done  bool
+	item  map[string]any // 收口后的完成态 item，供最终 output 聚合使用
 }
 
 // responseOutputItem 是收口阶段的一个完成态 output 项及其 output_index。
-// 文本、工具（以及后续任务的 reasoning）都汇入同一集合，统一按 index 升序后
-// 写入 response.completed / response.failed 的 output。
+// reasoning、文本与工具都汇入同一集合，统一按 index 升序后写入
+// response.completed / response.failed 的 output。
 type responseOutputItem struct {
 	index int
 	item  map[string]any
@@ -76,7 +88,7 @@ type responsesToolState struct {
 }
 
 // chatToResponsesStream 是 chat.completion.chunk → Responses SSE 的状态机。
-// 本任务覆盖文本与 function 工具生命周期；reasoning 分支由后续任务填充。
+// 覆盖 reasoning、文本与工具调用的生命周期。
 type chatToResponsesStream struct {
 	out         bytes.Buffer
 	raw         []byte
@@ -87,6 +99,7 @@ type chatToResponsesStream struct {
 	model       string
 	createdAt   int64
 	nextIndex   int
+	reasoning   responsesReasoningState
 	text        responsesTextState
 	tools       map[int]*responsesToolState
 	toolOrder   []int
@@ -181,10 +194,18 @@ func (t *chatToResponsesStream) pushText(delta string) {
 	}))
 }
 
-// closeText 收口文本项并返回其完成态 item；未开启或已收口时返回 nil。
+// closeText 收口文本项并返回其完成态 item；未开启时返回 nil。
+// 若此前已收口（reasoning 插入时），直接返回留存的 item，供最终 output 聚合，
+// 但不再重复下发 done 事件。
 func (t *chatToResponsesStream) closeText() []responseOutputItem {
-	if !t.text.open || t.text.done {
+	if !t.text.open {
 		return nil
+	}
+	if t.text.done {
+		if t.text.item == nil {
+			return nil
+		}
+		return []responseOutputItem{{index: t.text.index, item: t.text.item}}
 	}
 	t.text.done = true
 	text := t.text.text.String()
@@ -204,7 +225,70 @@ func (t *chatToResponsesStream) closeText() []responseOutputItem {
 	t.out.Write(responsesSSEEvent("response.output_item.done", map[string]any{
 		"type": "response.output_item.done", "output_index": t.text.index, "item": item,
 	}))
+	t.text.item = item
 	return []responseOutputItem{{index: t.text.index, item: item}}
+}
+
+// pushReasoning 追加一段 reasoning 摘要；首个增量开启 reasoning 项，
+// 若此时文本项仍在流式中则先收口它（两段 item 各自独立收口）。
+func (t *chatToResponsesStream) pushReasoning(delta string) {
+	t.ensureStarted()
+	if !t.reasoning.open {
+		t.closeText()
+		t.reasoning.index = t.nextIndex
+		t.nextIndex++
+		t.reasoning.id = "rs_" + t.respID
+		t.reasoning.open = true
+		t.out.Write(responsesSSEEvent("response.output_item.added", map[string]any{
+			"type": "response.output_item.added", "output_index": t.reasoning.index,
+			"item": map[string]any{"id": t.reasoning.id, "type": "reasoning", "status": "in_progress", "summary": []any{}},
+		}))
+		t.out.Write(responsesSSEEvent("response.reasoning_summary_part.added", map[string]any{
+			"type": "response.reasoning_summary_part.added", "item_id": t.reasoning.id,
+			"output_index": t.reasoning.index, "summary_index": 0,
+			"part": map[string]any{"type": "summary_text", "text": ""},
+		}))
+	}
+	t.reasoning.text.WriteString(delta)
+	t.out.Write(responsesSSEEvent("response.reasoning_summary_text.delta", map[string]any{
+		"type": "response.reasoning_summary_text.delta", "item_id": t.reasoning.id,
+		"output_index": t.reasoning.index, "summary_index": 0, "delta": delta,
+	}))
+}
+
+// closeReasoning 收口 reasoning 项并返回其完成态 item；未开启时返回 nil。
+// 若此前已收口（正文开始时），直接返回留存的 item，供最终 output 聚合，
+// 但不再重复下发 done 事件。完成态 item 不带 status 字段（与 Responses 一致）。
+func (t *chatToResponsesStream) closeReasoning() []responseOutputItem {
+	if !t.reasoning.open {
+		return nil
+	}
+	if t.reasoning.done {
+		if t.reasoning.item == nil {
+			return nil
+		}
+		return []responseOutputItem{{index: t.reasoning.index, item: t.reasoning.item}}
+	}
+	t.reasoning.done = true
+	text := t.reasoning.text.String()
+	item := map[string]any{
+		"id": t.reasoning.id, "type": "reasoning",
+		"summary": []map[string]any{{"type": "summary_text", "text": text}},
+	}
+	t.out.Write(responsesSSEEvent("response.reasoning_summary_text.done", map[string]any{
+		"type": "response.reasoning_summary_text.done", "item_id": t.reasoning.id,
+		"output_index": t.reasoning.index, "summary_index": 0, "text": text,
+	}))
+	t.out.Write(responsesSSEEvent("response.reasoning_summary_part.done", map[string]any{
+		"type": "response.reasoning_summary_part.done", "item_id": t.reasoning.id,
+		"output_index": t.reasoning.index, "summary_index": 0,
+		"part": map[string]any{"type": "summary_text", "text": text},
+	}))
+	t.out.Write(responsesSSEEvent("response.output_item.done", map[string]any{
+		"type": "response.output_item.done", "output_index": t.reasoning.index, "item": item,
+	}))
+	t.reasoning.item = item
+	return []responseOutputItem{{index: t.reasoning.index, item: item}}
 }
 
 // pushToolDelta 累积一个工具调用分片。与 cc-switch 一致：必须等 call_id 与 name
@@ -408,6 +492,20 @@ func (t *chatToResponsesStream) completedToolItems() []responseOutputItem {
 // 只读取 id/created/usage 用于填充响应信封；上游 model 一律忽略，
 // 响应中的 model 始终回显客户端请求的逻辑模型名。
 func (t *chatToResponsesStream) handleChunk(data []byte) {
+	if t.finished {
+		return
+	}
+	// 上游在流中回 error 对象：立即失败收口并把错误信息透给客户端，
+	// 绝不再把后续 [DONE] 当成正常完成。
+	var probe struct {
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(data, &probe) == nil && probe.Error != nil && probe.Error.Message != "" {
+		t.Fail(probe.Error.Message)
+		return
+	}
 	var c struct {
 		ID      string     `json:"id"`
 		Created int64      `json:"created"`
@@ -415,8 +513,10 @@ func (t *chatToResponsesStream) handleChunk(data []byte) {
 		Usage   *chatUsage `json:"usage"`
 		Choices []struct {
 			Delta struct {
-				Content   string `json:"content"`
-				ToolCalls []struct {
+				Content          string `json:"content"`
+				ReasoningContent string `json:"reasoning_content"`
+				Reasoning        string `json:"reasoning"`
+				ToolCalls        []struct {
 					Index    int    `json:"index"`
 					ID       string `json:"id"`
 					Function struct {
@@ -444,10 +544,18 @@ func (t *chatToResponsesStream) handleChunk(data []byte) {
 	if len(c.Choices) == 0 {
 		return
 	}
-	if c.Choices[0].Delta.Content != "" {
-		t.pushText(c.Choices[0].Delta.Content)
+	d := c.Choices[0].Delta
+	if r := d.ReasoningContent; r != "" {
+		t.pushReasoning(r)
+	} else if r := d.Reasoning; r != "" {
+		t.pushReasoning(r)
 	}
-	for _, call := range c.Choices[0].Delta.ToolCalls {
+	if d.Content != "" {
+		// reasoning 项在正文开始前收口，两段 item 各自独立。
+		t.closeReasoning()
+		t.pushText(d.Content)
+	}
+	for _, call := range d.ToolCalls {
 		t.pushToolDelta(call.Index, call.ID, call.Function.Name, call.Function.Arguments)
 	}
 	if c.Choices[0].FinishReason != nil && *c.Choices[0].FinishReason != "" {
@@ -504,6 +612,7 @@ func (t *chatToResponsesStream) Finish() []byte {
 	t.finished = true
 	t.ensureStarted()
 	items := t.closeText()
+	items = append(items, t.closeReasoning()...)
 	items = append(items, t.closeTools()...)
 	resp := t.baseResponse("completed")
 	resp["output"] = sortedOutputItems(items)
@@ -520,6 +629,8 @@ func (t *chatToResponsesStream) Fail(message string) {
 	t.finished, t.failed = true, true
 	t.ensureStarted()
 	items := t.closeText()
+	// reasoning 内容已完整到达，失败收尾时正常收口并保留。
+	items = append(items, t.closeReasoning()...)
 	// 失败收尾只带已收口的工具 item；仍在流式中的工具下发会破坏客户端状态机。
 	items = append(items, t.completedToolItems()...)
 	resp := t.baseResponse("failed")

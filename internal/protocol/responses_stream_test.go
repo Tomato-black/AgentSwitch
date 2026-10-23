@@ -377,6 +377,113 @@ func TestChatStreamToResponsesNamespaceToolStreamsArgumentDeltas(t *testing.T) {
 	}
 }
 
+// reasoning 增量先于正文：必须开启 reasoning summary 项、逐片下发 delta，
+// 正文开始时收口；completed.output 按 output_index 同时包含 reasoning 与 message。
+func TestChatStreamToResponsesReasoning(t *testing.T) {
+	chat := `data: {"id":"c","choices":[{"delta":{"reasoning_content":"think"}}]}` + "\n\n" +
+		`data: {"id":"c","choices":[{"delta":{"content":"answer"}}]}` + "\n\n" +
+		`data: {"id":"c","choices":[{"delta":{},"finish_reason":"stop"}]}` + "\n\n" +
+		`data: [DONE]` + "\n\n"
+	out := streamEvents(t, chat)
+	for _, want := range []string{
+		`"type":"reasoning"`, "response.reasoning_summary_text.delta", `"delta":"think"`,
+		"response.reasoning_summary_text.done", "response.reasoning_summary_part.done",
+		"event: response.completed",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q:\n%s", want, out)
+		}
+	}
+
+	data := sseEventData(t, out, "response.completed")
+	resp, _ := data["response"].(map[string]any)
+	output, _ := resp["output"].([]any)
+	if len(output) != 2 {
+		t.Fatalf("completed output must contain reasoning + message, got %#v", resp["output"])
+	}
+	reasoning, _ := output[0].(map[string]any)
+	if reasoning["type"] != "reasoning" || reasoning["id"] != "rs_resp_c" {
+		t.Fatalf("first item must be the reasoning item, got %#v", reasoning)
+	}
+	if _, ok := reasoning["status"]; ok {
+		t.Fatalf("completed reasoning item must not carry status, got %#v", reasoning)
+	}
+	summary, _ := reasoning["summary"].([]any)
+	if len(summary) != 1 {
+		t.Fatalf("reasoning summary must hold one part, got %#v", reasoning["summary"])
+	}
+	part, _ := summary[0].(map[string]any)
+	if part["type"] != "summary_text" || part["text"] != "think" {
+		t.Fatalf("reasoning summary part mismatch, got %#v", part)
+	}
+	if second, _ := output[1].(map[string]any); second["type"] != "message" {
+		t.Fatalf("second item must be the message, got %#v", second)
+	}
+}
+
+// 正文先于 reasoning 到达：pushReasoning 先收口文本项，reasoning 在 Finish 时收口；
+// 两个 item 都必须保留并按 output_index 排列（message 在前、reasoning 在后）。
+func TestChatStreamToResponsesReasoningAfterText(t *testing.T) {
+	chat := `data: {"id":"c","choices":[{"delta":{"content":"answer"}}]}` + "\n\n" +
+		`data: {"id":"c","choices":[{"delta":{"reasoning_content":"think"}}]}` + "\n\n" +
+		`data: {"id":"c","choices":[{"delta":{},"finish_reason":"stop"}]}` + "\n\n" +
+		`data: [DONE]` + "\n\n"
+	out := streamEvents(t, chat)
+	if strings.Contains(out, "response.failed") {
+		t.Fatalf("interleaved stream must not fail:\n%s", out)
+	}
+	if n := strings.Count(out, "event: response.reasoning_summary_text.done"); n != 1 {
+		t.Fatalf("reasoning must be closed exactly once, got %d:\n%s", n, out)
+	}
+	data := sseEventData(t, out, "response.completed")
+	resp, _ := data["response"].(map[string]any)
+	output, _ := resp["output"].([]any)
+	if len(output) != 2 {
+		t.Fatalf("completed output must keep both items, got %#v", resp["output"])
+	}
+	first, _ := output[0].(map[string]any)
+	second, _ := output[1].(map[string]any)
+	if first["id"] != "resp_c_msg" || second["id"] != "rs_resp_c" {
+		t.Fatalf("output must be ordered by output_index, got %#v", resp["output"])
+	}
+}
+
+// 兼容只给 delta.reasoning（无 _content 后缀）的上游：同样按 reasoning 流式下发。
+func TestChatStreamToResponsesReasoningFallbackField(t *testing.T) {
+	chat := `data: {"id":"c","choices":[{"delta":{"reasoning":"why"}}]}` + "\n\n" +
+		`data: {"id":"c","choices":[{"delta":{},"finish_reason":"stop"}]}` + "\n\n" +
+		`data: [DONE]` + "\n\n"
+	out := streamEvents(t, chat)
+	if !strings.Contains(out, `"delta":"why"`) || !strings.Contains(out, "response.reasoning_summary_text.done") {
+		t.Fatalf("delta.reasoning fallback must stream as reasoning:\n%s", out)
+	}
+	if strings.Contains(out, "response.failed") {
+		t.Fatalf("reasoning stream must not fail:\n%s", out)
+	}
+}
+
+// 上游在流中回 error chunk：必须立即发 response.failed 并带上游错误信息；
+// 其后的 [DONE] 不得把失败流改写成 completed。
+func TestChatStreamToResponsesErrorChunkEmitsFailed(t *testing.T) {
+	chat := `data: {"id":"c","choices":[{"delta":{"content":"half"}}]}` + "\n\n" +
+		`data: {"error":{"message":"upstream exploded","type":"server_error"}}` + "\n\n" +
+		`data: [DONE]` + "\n\n"
+	out := streamEvents(t, chat)
+	if !strings.Contains(out, "event: response.failed") {
+		t.Fatalf("error chunk must emit response.failed:\n%s", out)
+	}
+	if strings.Contains(out, "event: response.completed") {
+		t.Fatalf("error chunk must never complete:\n%s", out)
+	}
+	if !strings.Contains(out, "upstream exploded") {
+		t.Fatalf("upstream error message must surface:\n%s", out)
+	}
+	// 已输出文本随失败收口一并下发（不是空 output）。
+	if !strings.Contains(out, `"delta":"half"`) {
+		t.Fatalf("already-emitted delta must be preserved:\n%s", out)
+	}
+}
+
 // 上游无终止标记即结束（截断）时不得发 response.completed，必须发失败事件。
 func TestChatStreamToResponsesTruncatedFails(t *testing.T) {
 	chat := `data: {"id":"chatcmpl_1","choices":[{"delta":{"content":"partial"}}]}` + "\n\n"
