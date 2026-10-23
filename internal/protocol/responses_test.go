@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -108,12 +109,64 @@ func TestResponsesInputToolHistory(t *testing.T) {
 	if msgs[2]["role"] != "tool" || msgs[2]["tool_call_id"] != "c1" {
 		t.Fatalf("tool result: %+v", msgs[2])
 	}
+	if msgs[2]["content"] != "ok" {
+		t.Fatalf("tool result content: %+v", msgs[2])
+	}
+	customAsst := msgs[3]
+	customCalls := customAsst["tool_calls"].([]map[string]any)
+	customFn := customCalls[0]["function"].(map[string]any)
+	var customArgs map[string]any
+	if err := json.Unmarshal([]byte(customFn["arguments"].(string)), &customArgs); err != nil {
+		t.Fatalf("custom arguments must be JSON: %v (%+v)", err, customFn)
+	}
+	if len(customArgs) != 1 || customArgs[customToolInputField] != "*** Begin Patch" {
+		t.Fatalf("custom arguments must wrap input field: %+v", customArgs)
+	}
 	if msgs[4]["role"] != "tool" || msgs[4]["tool_call_id"] != "c2" {
 		t.Fatalf("custom tool result: %+v", msgs[4])
+	}
+	if msgs[4]["content"] != "done" {
+		t.Fatalf("custom tool result content: %+v", msgs[4])
 	}
 	orphan, _ := msgs[5]["content"].(string)
 	if msgs[5]["role"] != "user" || !strings.Contains(orphan, "without a matching tool_call") {
 		t.Fatalf("orphan output: %+v", msgs[5])
+	}
+}
+
+func TestResponsesInputToolSearchHistory(t *testing.T) {
+	r, _ := ParseResponsesRequest([]byte(`{
+		"model":"m",
+		"tools":[{"type":"tool_search"}],
+		"input":[
+			{"type":"tool_search_call","call_id":"s1","arguments":{"query":"git"}},
+			{"type":"tool_search_output","call_id":"s1","output":[{"type":"input_text","text":"found"}]}
+		]}`))
+	tc := NewResponseToolContext(r)
+	msgs, err := responsesInputToMessages(r.Input, r.Instructions, tc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("messages: %d %+v", len(msgs), msgs)
+	}
+	calls := msgs[0]["tool_calls"].([]map[string]any)
+	if len(calls) != 1 || calls[0]["id"] != "s1" {
+		t.Fatalf("tool_search call: %+v", calls)
+	}
+	fn := calls[0]["function"].(map[string]any)
+	if fn["name"] != "tool_search" {
+		t.Fatalf("tool_search name: %+v", fn)
+	}
+	var args map[string]any
+	if err := json.Unmarshal([]byte(fn["arguments"].(string)), &args); err != nil {
+		t.Fatalf("tool_search arguments must be JSON: %v (%+v)", err, fn)
+	}
+	if args["query"] != "git" {
+		t.Fatalf("tool_search arguments must pass through: %+v", args)
+	}
+	if msgs[1]["role"] != "tool" || msgs[1]["tool_call_id"] != "s1" {
+		t.Fatalf("tool_search result: %+v", msgs[1])
 	}
 }
 
