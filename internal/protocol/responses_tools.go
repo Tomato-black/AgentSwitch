@@ -150,8 +150,46 @@ func normalizeToolParameters(raw json.RawMessage) map[string]any {
 	return p
 }
 
+const (
+	customToolInputField        = "input"
+	customToolInputDescription  = "Raw string input for the original custom tool. Preserve formatting exactly and follow the original tool definition embedded in the description."
+	customToolDefinitionHeading = "Original tool definition:"
+)
+
+// addCustom 把 Responses 的 custom 工具（如 apply_patch 的自由文本输入）映射为
+// chat 函数工具：入参收敛为 {"input": string}，原始工具定义（含 format/grammar）
+// 原样嵌入 description，供上游模型理解自由文本语义。
+func (tc *ResponseToolContext) addCustom(raw json.RawMessage, t responseToolDef) {
+	name := strings.TrimSpace(t.Name)
+	if name == "" {
+		tc.dropped++
+		return
+	}
+	if _, exists := tc.specsByChatName[name]; exists {
+		tc.dropped++
+		return
+	}
+	def, _ := json.Marshal(json.RawMessage(raw))
+	fn := map[string]any{
+		"name":        name,
+		"description": customToolDefinitionHeading + "\n```json\n" + string(def) + "\n```",
+		"parameters": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				customToolInputField: map[string]any{
+					"type":        "string",
+					"description": customToolInputDescription,
+				},
+			},
+			"required": []string{customToolInputField},
+		},
+	}
+	tc.specsByChatName[name] = responseToolSpec{Kind: responseToolCustom, Name: name}
+	tc.chatNamesByKey["\x00"+name] = name
+	tc.tools = append(tc.tools, map[string]any{"type": "function", "function": fn})
+}
+
 // 以下工具类型在后续任务中实现，本任务先留空实现以保证包可编译。
-func (tc *ResponseToolContext) addCustom(raw json.RawMessage, t responseToolDef) {}
-func (tc *ResponseToolContext) addNamespace(t responseToolDef)                   {}
-func (tc *ResponseToolContext) addToolSearch()                                   {}
-func (tc *ResponseToolContext) addInputDeclaredTools(input json.RawMessage)      {}
+func (tc *ResponseToolContext) addNamespace(t responseToolDef)              {}
+func (tc *ResponseToolContext) addToolSearch()                              {}
+func (tc *ResponseToolContext) addInputDeclaredTools(input json.RawMessage) {}

@@ -83,6 +83,36 @@ func TestFlattenResponseToolNameDeterministic(t *testing.T) {
 	}
 }
 
+func TestToolContextCustomTool(t *testing.T) {
+	raw := `{
+		"type":"custom","name":"apply_patch",
+		"description":"Use the apply_patch tool",
+		"format":{"type":"grammar","syntax":"lark","definition":"start: patch"},
+		"parameters":{"type":"object"}}`
+	tc := toolCtx(t, "["+raw+"]")
+	got := tc.ChatTools()
+	if len(got) != 1 {
+		t.Fatalf("chat tools: %+v", got)
+	}
+	fn := got[0]["function"].(map[string]any)
+	if fn["name"] != "apply_patch" {
+		t.Fatalf("name: %+v", fn)
+	}
+	desc, _ := fn["description"].(string)
+	if !strings.Contains(desc, "Original tool definition:") || !strings.Contains(desc, "grammar") {
+		t.Fatalf("custom definition must be embedded: %q", desc)
+	}
+	params := fn["parameters"].(map[string]any)
+	props := params["properties"].(map[string]any)
+	if props["input"].(map[string]any)["type"] != "string" {
+		t.Fatalf("custom tool must accept {input:string}: %+v", params)
+	}
+	spec, ok := tc.Spec("apply_patch")
+	if !ok || spec.Kind != responseToolCustom || spec.Name != "apply_patch" {
+		t.Fatalf("spec: %+v ok=%v", spec, ok)
+	}
+}
+
 func TestToolContextChatNameFallback(t *testing.T) {
 	tc := toolCtx(t, `[{"type":"function","name":"exec"}]`)
 	if got := tc.ChatName("unknown", "ns"); got != "unknown" {
