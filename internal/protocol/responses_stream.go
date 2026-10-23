@@ -53,6 +53,7 @@ type chatToResponsesStream struct {
 	text        responsesTextState
 	finish      string
 	sawTerminal bool
+	doneSeen    bool // 已收到 data: [DONE]，可立即收口而不等连接关闭
 	usage       *chatUsage
 	tc          *ResponseToolContext
 }
@@ -220,6 +221,7 @@ func (t *chatToResponsesStream) handleEvent(event []byte) {
 			continue
 		}
 		if payload == "[DONE]" {
+			t.doneSeen = true
 			t.sawTerminal = true
 			continue
 		}
@@ -238,7 +240,13 @@ func (t *chatToResponsesStream) Feed(p []byte) []byte {
 		t.handleEvent(event)
 		t.raw = t.raw[consumed:]
 	}
-	return t.drain()
+	out := t.drain()
+	// [DONE] 即协议终止：立即收口，避免上游保持连接时空闲看门狗把正常完成
+	// 误判为 response.failed。EOF 路径仍作为无 [DONE] 的兜底。
+	if t.doneSeen && !t.finished {
+		out = append(out, t.Finish()...)
+	}
+	return out
 }
 
 // Finish 正常收口：补齐文本 done 事件并发出 response.completed。
@@ -247,7 +255,11 @@ func (t *chatToResponsesStream) Finish() []byte {
 		return nil
 	}
 	t.finished = true
+	t.ensureStarted()
 	output := t.closeText()
+	if output == nil {
+		output = []map[string]any{}
+	}
 	resp := t.baseResponse("completed")
 	resp["output"] = output
 	t.out.Write(responsesSSEEvent("response.completed", map[string]any{"type": "response.completed", "response": resp}))
@@ -261,7 +273,11 @@ func (t *chatToResponsesStream) Fail(message string) {
 		return
 	}
 	t.finished, t.failed = true, true
+	t.ensureStarted()
 	output := t.closeText()
+	if output == nil {
+		output = []map[string]any{}
+	}
 	resp := t.baseResponse("failed")
 	resp["output"] = output
 	resp["error"] = map[string]any{"message": message}
