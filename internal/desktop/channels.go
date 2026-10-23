@@ -31,9 +31,9 @@ type channelForm struct {
 	editID       string
 }
 
-// applyPreset 把预设回填进表单：protocol / base_url / 建议模型与 presetID
-// （取第一可用协议，openai 优先）；name、apiKey 等用户已填字段不动（预设只带
-// 连接默认值）。完整语义（name 空时回填 DisplayName）见预置配置 spec §5。
+// applyPreset 把预设回填进表单（spec §5）：presetID、第一可用协议（openai
+// 优先）的 base_url 与建议模型；name 空时回填 DisplayName（已填不覆盖）；
+// apiKey 等其余字段不动（预设只带连接默认值）。
 func applyPreset(form *channelForm, p presets.ChannelPreset) {
 	form.presetID = p.ID
 	proto, ep, ok := presets.FirstProtocol(p)
@@ -43,6 +43,9 @@ func applyPreset(form *channelForm, p presets.ChannelPreset) {
 	form.protocol = proto
 	form.baseURL = ep.BaseURL
 	form.suggestions = strings.Join(ep.DefaultModels, "\n")
+	if strings.TrimSpace(form.name) == "" {
+		form.name = p.DisplayName
+	}
 }
 
 // validate 校验表单：缺 name/key/base_url 依次报中文错误；编辑态

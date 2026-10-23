@@ -88,3 +88,40 @@ func TestDeleteWarnsWhenReferenced(t *testing.T) {
 		t.Fatalf("referencedBy(nope) = %v, want empty", got)
 	}
 }
+
+// TestApplyPresetDualProtocol 覆盖 spec §5 完整语义：第一可用协议回填
+// （openai 优先；仅 anthropic 时落 anthropic）+ name 空时回填 DisplayName、
+// 已填不覆盖。
+func TestApplyPresetDualProtocol(t *testing.T) {
+	dual := presets.ChannelPreset{
+		ID: "qwen", DisplayName: "阿里千问",
+		Protocols: map[string]presets.ProtocolEndpoint{
+			"openai":    {BaseURL: "https://o.example/v1", DefaultModels: []string{"m1"}},
+			"anthropic": {BaseURL: "https://a.example", DefaultModels: []string{"m2"}},
+		},
+	}
+	anthropicOnly := presets.ChannelPreset{
+		ID: "x", DisplayName: "仅Claude协议",
+		Protocols: map[string]presets.ProtocolEndpoint{
+			"anthropic": {BaseURL: "https://x.example", DefaultModels: []string{"m3"}},
+		},
+	}
+	f := channelForm{}
+	applyPreset(&f, dual)
+	if f.protocol != "openai" || f.baseURL != "https://o.example/v1" || f.suggestions != "m1" {
+		t.Fatalf("dual → %+v", f)
+	}
+	if f.name != "阿里千问" {
+		t.Fatalf("空 name 应回填 DisplayName, got %q", f.name)
+	}
+	f2 := channelForm{}
+	applyPreset(&f2, anthropicOnly)
+	if f2.protocol != "anthropic" || f2.baseURL != "https://x.example" || f2.suggestions != "m3" {
+		t.Fatalf("anthropicOnly → %+v", f2)
+	}
+	f3 := channelForm{name: "我的中转"}
+	applyPreset(&f3, dual)
+	if f3.name != "我的中转" {
+		t.Fatalf("已填 name 不得覆盖, got %q", f3.name)
+	}
+}
