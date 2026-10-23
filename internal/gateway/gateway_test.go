@@ -2042,3 +2042,89 @@ func TestResponsesOpenAIChannelStream(t *testing.T) {
 		}
 	}
 }
+
+// TestResponsesFailoverBeforeCommit：首候选 429（可转移失败）→ 冷却并切到次候选；
+// 非流式只回客户端一份 Responses 对象（docx §6.3 提交点前可切换）。
+func TestResponsesFailoverBeforeCommit(t *testing.T) {
+	var calls1, calls2 int
+	busy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls1++
+		w.WriteHeader(429)
+		w.Write([]byte(`{"error":{"message":"busy"}}`))
+	}))
+	defer busy.Close()
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls2++
+		w.Write([]byte(`{"id":"msg_2","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn"}`))
+	}))
+	defer good.Close()
+	tw, _ := twoCands(t, busy.URL, good.URL)
+	s := newGW(t, busy.URL, tw)
+	resp := postResponses(t, s, `{"model":"pub-1","input":"hi"}`, "tok")
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 || calls1 != 1 || calls2 != 1 {
+		t.Fatalf("status=%d calls1=%d calls2=%d body=%s", resp.StatusCode, calls1, calls2, b)
+	}
+	if strings.Count(string(b), `"object":"response"`) != 1 {
+		t.Fatalf("must produce exactly one response: %s", b)
+	}
+}
+
+// TestResponsesCommitNoReplay：anthropic 上游首 chunk 写出后断流——提交点已过，
+// 必须发 response.failed（不得伪造 completed），且绝不调第二目标。
+func TestResponsesCommitNoReplay(t *testing.T) {
+	var calls2 int
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls2++ }))
+	defer good.Close()
+	flaky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		w.Write([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m1\",\"usage\":{\"input_tokens\":1}}}\n\n" +
+			"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+			"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"partial\"}}\n\n"))
+		w.(http.Flusher).Flush()
+		panic(http.ErrAbortHandler) // 首 chunk 后断流（同 TestOpenAIInboundCommitNoReplay）
+	}))
+	defer flaky.Close()
+	tw, _ := twoCands(t, flaky.URL, good.URL)
+	s := newGW(t, flaky.URL, tw)
+	resp := postResponses(t, s, `{"model":"pub-1","input":"hi","stream":true}`, "tok")
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if calls2 != 0 {
+		t.Fatalf("must not replay after commit; second calls=%d", calls2)
+	}
+	if !strings.Contains(string(b), "event: response.failed") || strings.Contains(string(b), "event: response.completed") {
+		t.Fatalf("truncation must fail: %s", b)
+	}
+}
+
+// TestResponsesIdleTimeoutFails：上游首 chunk 后静默超过 RequestTimeout（流式语义
+// = 客户端可见输出空闲时限）→ 发 response.failed 且不重放第二目标。
+func TestResponsesIdleTimeoutFails(t *testing.T) {
+	var calls2 int
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls2++ }))
+	defer good.Close()
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		w.Write([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m1\",\"usage\":{\"input_tokens\":1}}}\n\n" +
+			"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+			"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"x\"}}\n\n"))
+		w.(http.Flusher).Flush()
+		time.Sleep(2 * time.Second)
+	}))
+	defer slow.Close()
+	tw, _ := twoCands(t, slow.URL, good.URL)
+	s := newGW(t, slow.URL, func(d *Deps) {
+		d.Limits = func() Limits { return Limits{MaxBodyBytes: 1 << 20, RequestTimeout: 100 * time.Millisecond} }
+		tw(d)
+	})
+	resp := postResponses(t, s, `{"model":"pub-1","input":"hi","stream":true}`, "tok")
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(b), "event: response.failed") || calls2 != 0 {
+		t.Fatalf("idle timeout must fail without replay: calls2=%d %s", calls2, b)
+	}
+}
