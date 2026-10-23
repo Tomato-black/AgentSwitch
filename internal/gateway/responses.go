@@ -160,6 +160,7 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		res, err := adapter.Do(ctx, provider.DoRequest{
 			BaseURL: c.BaseURL, AllowPrivate: c.AllowPrivate, APIKey: string(apiKey),
 			UpstreamModel: c.UpstreamModel, RawBody: rawBody, Stream: req.Stream,
+			UserAgent: r.Header.Get("User-Agent"),
 		})
 		if err != nil {
 			if ctx.Err() != nil {

@@ -2186,3 +2186,47 @@ func TestResponsesIdleTimeoutFails(t *testing.T) {
 		t.Fatalf("idle timeout must not replay; second calls=%d", calls2)
 	}
 }
+
+// TestGatewayUserAgentEndToEnd 覆盖 spec 2026-10-23 §6 检查项 2：入站
+// User-Agent 透传至上游同值（Kimi Code 合规）；入站不带 UA 时上游收到 Go
+// 默认 UA（非空），不发明空 UA 头。
+func TestGatewayUserAgentEndToEnd(t *testing.T) {
+	var gotUA string
+	var calls int
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		gotUA = r.Header.Get("User-Agent")
+		w.Write([]byte(`{"id":"ok","type":"message"}`))
+	}))
+	defer up.Close()
+	s := newGW(t, up.URL, nil)
+
+	do := func(ua string) {
+		t.Helper()
+		req, _ := http.NewRequest("POST", "/v1/messages",
+			strings.NewReader(`{"model":"pub-1","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`))
+		req.Header.Set("Authorization", "Bearer tok")
+		if ua != "" {
+			req.Header.Set("User-Agent", ua)
+		}
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, req)
+		resp := w.Result()
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("status %d", resp.StatusCode)
+		}
+	}
+
+	do("claude-cli/2.0.0 (test)")
+	if gotUA != "claude-cli/2.0.0 (test)" {
+		t.Fatalf("upstream UA = %q, want claude-cli/2.0.0 (test)", gotUA)
+	}
+	do("")
+	if gotUA == "" {
+		t.Fatal("入站无 UA 时上游收到空 UA 头，want Go 默认")
+	}
+	if calls != 2 {
+		t.Fatalf("calls = %d, want 2", calls)
+	}
+}

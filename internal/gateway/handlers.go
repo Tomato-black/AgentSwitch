@@ -229,6 +229,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		res, err := adapter.Do(ctx, provider.DoRequest{
 			BaseURL: c.BaseURL, AllowPrivate: c.AllowPrivate, APIKey: string(apiKey),
 			UpstreamModel: c.UpstreamModel, RawBody: rewritten, Stream: cr.Stream,
+			UserAgent: r.Header.Get("User-Agent"),
 		})
 		if err != nil {
 			// 客户端已取消：对候选零状态副作用，直接收尾（docx §6.3 取消即停）。
@@ -443,6 +444,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		res, err := adapter.Do(ctx, provider.DoRequest{
 			BaseURL: c.BaseURL, AllowPrivate: c.AllowPrivate, APIKey: string(apiKey),
 			UpstreamModel: c.UpstreamModel, RawBody: rawBody, Stream: oar.Stream,
+			UserAgent: r.Header.Get("User-Agent"),
 		})
 		if err != nil {
 			if ctx.Err() != nil {
@@ -578,6 +580,9 @@ func (a *openaiPassthrough) Do(ctx context.Context, r provider.DoRequest) (provi
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+r.APIKey)
+	if r.UserAgent != "" {
+		req.Header.Set("User-Agent", r.UserAgent)
+	}
 	if r.Stream {
 		req.Header.Set("Accept", "text/event-stream")
 	}
