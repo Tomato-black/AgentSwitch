@@ -1,92 +1,138 @@
-// Package presets 是内置渠道预设数据表（logical-models spec §7）：精选
-// 15～25 家官方渠道的一键导入模板，Go 内嵌静态表，供 bridge 与桌面预设网格
-// 消费。与 internal/provider.Preset（渠道类型/协议预设）不同：这里每条是
-// 具体供应商的 base_url、协议与默认模型建议。
+// Package presets 是渠道预设的加载与合并（spec 2026-10-23 §3/§4）：预置不再
+// 硬编码于 Go 源码，而是 JSON 数据（embed 默认表 + ~/.agentswitch/presets.json
+// 用户覆盖/追加），供 bridge 与桌面预设网格消费。每条预设按协议组织——
+// openai/anthropic 各自独立的 base_url 与默认模型建议。
 package presets
 
-// ChannelPreset 是一条渠道预设（spec §7 字段：id、显示名、协议、base_url、
-// 默认模型建议列表、官网/文档链接）。BaseURL 是渠道 API 前缀：经
-// provider.JoinAPIPath 路径感知拼接——无路径时插入 /v1 再拼 /chat/completions
-// 或 /messages；已含完整前缀（…/v1、智谱 …/api/paas/v4、豆包 …/api/v3、
-// Google …/v1beta/openai）时只拼后缀。
-type ChannelPreset struct {
-	ID            string   `json:"id"`
-	DisplayName   string   `json:"displayName"`
-	Protocol      string   `json:"protocol"`
+import (
+	"encoding/json"
+	"fmt"
+	"net/url"
+	"strings"
+
+	"AgentSwitch/internal/provider"
+)
+
+// ProtocolEndpoint 是某协议下的端点预设：base_url 与默认模型建议列表。
+type ProtocolEndpoint struct {
 	BaseURL       string   `json:"baseUrl"`
 	DefaultModels []string `json:"defaultModels"`
-	DocURL        string   `json:"docUrl"`
 }
 
-// All 返回全部预设，顺序即 UI 网格展示序（国内优先，再海外）。
-// URL 以各官方控制台/文档为准，且必须能过 provider.ValidateBaseURL(_, false)。
-func All() []ChannelPreset {
-	return []ChannelPreset{
-		{ID: "xiaomi", DisplayName: "小米 MiMo", Protocol: "openai",
-			BaseURL:       "https://api.xiaomi.com",
-			DefaultModels: []string{"mimo-7b-rl", "mimo-vl-7b"},
-			DocURL:        "https://dev.mi.com/"},
-		{ID: "qwen", DisplayName: "阿里千问", Protocol: "openai",
-			BaseURL:       "https://dashscope.aliyuncs.com/compatible-mode/v1",
-			DefaultModels: []string{"qwen-max", "qwen-plus", "qwen-turbo"},
-			DocURL:        "https://bailian.console.aliyun.com/"},
-		{ID: "deepseek", DisplayName: "DeepSeek", Protocol: "openai",
-			BaseURL:       "https://api.deepseek.com",
-			DefaultModels: []string{"deepseek-chat", "deepseek-reasoner"},
-			DocURL:        "https://platform.deepseek.com/"},
-		{ID: "kimi", DisplayName: "Kimi 月之暗面", Protocol: "openai",
-			BaseURL:       "https://api.moonshot.cn",
-			DefaultModels: []string{"moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"},
-			DocURL:        "https://platform.moonshot.cn/"},
-		{ID: "zhipu", DisplayName: "智谱 GLM", Protocol: "openai",
-			BaseURL:       "https://open.bigmodel.cn/api/paas/v4",
-			DefaultModels: []string{"glm-4-plus", "glm-4-air", "glm-4-flash"},
-			DocURL:        "https://open.bigmodel.cn/"},
-		{ID: "siliconflow", DisplayName: "硅基流动", Protocol: "openai",
-			BaseURL:       "https://api.siliconflow.cn",
-			DefaultModels: []string{"deepseek-ai/DeepSeek-V3", "Qwen/Qwen2.5-72B-Instruct"},
-			DocURL:        "https://cloud.siliconflow.cn/"},
-		{ID: "stepfun", DisplayName: "阶跃星辰", Protocol: "openai",
-			BaseURL:       "https://api.stepfun.com",
-			DefaultModels: []string{"step-2-16k", "step-1-8k"},
-			DocURL:        "https://platform.stepfun.com/"},
-		{ID: "doubao", DisplayName: "豆包", Protocol: "openai",
-			BaseURL:       "https://ark.cn-beijing.volces.com/api/v3",
-			DefaultModels: []string{"doubao-seed-1-6", "doubao-1-5-pro-32k"},
-			DocURL:        "https://console.volcengine.com/ark"},
-		{ID: "anthropic", DisplayName: "Anthropic", Protocol: "anthropic",
-			BaseURL:       "https://api.anthropic.com",
-			DefaultModels: []string{"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"},
-			DocURL:        "https://console.anthropic.com/"},
-		{ID: "openai", DisplayName: "OpenAI", Protocol: "openai",
-			BaseURL:       "https://api.openai.com",
-			DefaultModels: []string{"gpt-4o", "gpt-4o-mini", "o3"},
-			DocURL:        "https://platform.openai.com/"},
-		{ID: "google", DisplayName: "Google AI Studio", Protocol: "openai",
-			BaseURL:       "https://generativelanguage.googleapis.com/v1beta/openai",
-			DefaultModels: []string{"gemini-2.5-pro", "gemini-2.5-flash"},
-			DocURL:        "https://aistudio.google.com/"},
-		{ID: "groq", DisplayName: "Groq", Protocol: "openai",
-			BaseURL:       "https://api.groq.com/openai/v1",
-			DefaultModels: []string{"llama-3.3-70b-versatile", "deepseek-r1-distill-llama-70b"},
-			DocURL:        "https://console.groq.com/"},
-		{ID: "together", DisplayName: "Together AI", Protocol: "openai",
-			BaseURL:       "https://api.together.xyz",
-			DefaultModels: []string{"meta-llama/Llama-3.3-70B-Instruct-Turbo", "deepseek-ai/DeepSeek-V3"},
-			DocURL:        "https://api.together.ai/"},
-		{ID: "openrouter", DisplayName: "OpenRouter", Protocol: "openai",
-			BaseURL:       "https://openrouter.ai/api/v1",
-			DefaultModels: []string{"openai/gpt-4o", "anthropic/claude-sonnet-4.5", "meta-llama/llama-3.3-70b-instruct"},
-			DocURL:        "https://openrouter.ai/docs"},
+// ChannelPreset 是一条渠道预设：BaseURL 语义按协议区分（openai 经
+// provider.JoinAPIPath 拼后缀；anthropic 按 Anthropic SDK 约定拼 /v1/messages，
+// 见 provider.anthropicEndpoint）。
+type ChannelPreset struct {
+	ID          string                      `json:"id"`
+	DisplayName string                      `json:"displayName"`
+	DocURL      string                      `json:"docUrl"`
+	Protocols   map[string]ProtocolEndpoint `json:"protocols"` // 键: "openai"|"anthropic"
+}
+
+// 包内只读状态：应用启动时 Load 一次，此后 All/ById/Warning 只读（spec §4，
+// 不做热重载、不加锁）。
+var (
+	table   []ChannelPreset
+	warning string
+)
+
+// knownProtocols 是合法协议键（与渠道协议枚举一致）。
+var knownProtocols = map[string]bool{"openai": true, "anthropic": true}
+
+// Load 解析内嵌默认字节与用户文件（userFile 为空或不存在时只用内嵌），
+// 校验后更新包内表与警告。内嵌条目 baseUrl 必须过 provider.ValidateBaseURL
+// (_, false)；用户文件条目放宽（http/私网放行，仅要求可解析，Task 4 接入）。
+// 坏条目跳过并计入 Warning，整体解析失败降级用内嵌表——预置是辅助功能，
+// 绝不阻塞启动（spec §4）。
+func Load(embedded []byte, userFile string) {
+	table, warning = nil, ""
+	table = parse(embedded, true)
+	_ = userFile // 用户文件合并在 Task 4 实现
+}
+
+// parse 解析一段 JSON 到预设表：单条校验失败跳过并拼进警告；strict=true 时
+// baseUrl 跑 ValidateBaseURL（内嵌默认），false 时仅要求可解析（用户文件）。
+func parse(data []byte, strict bool) []ChannelPreset {
+	var raw []ChannelPreset
+	if err := json.Unmarshal(data, &raw); err != nil {
+		warning += fmt.Sprintf("预置数据解析失败已整体忽略：%v；", err)
+		return nil
 	}
+	out := make([]ChannelPreset, 0, len(raw))
+	for _, p := range raw {
+		if msg := validateEntry(p, strict); msg != "" {
+			warning += fmt.Sprintf("预置 %q 已跳过：%s；", p.ID, msg)
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
-// ById 按 id 查预设。
+// validateEntry 返回空串表示合法；strict 语义见 parse。
+func validateEntry(p ChannelPreset, strict bool) string {
+	if strings.TrimSpace(p.ID) == "" {
+		return "id 为空"
+	}
+	if len(p.Protocols) == 0 {
+		return "protocols 为空"
+	}
+	for proto, ep := range p.Protocols {
+		if !knownProtocols[proto] {
+			return "未知协议键 " + proto
+		}
+		if strict {
+			if err := provider.ValidateBaseURL(ep.BaseURL, false); err != nil {
+				return fmt.Sprintf("baseUrl %q 未过安全校验: %v", ep.BaseURL, err)
+			}
+		} else if err := parseableURL(ep.BaseURL); err != nil {
+			return fmt.Sprintf("baseUrl %q 不可解析: %v", ep.BaseURL, err)
+		}
+	}
+	return ""
+}
+
+// parseableURL 是用户文件条目的放宽校验（spec §4 用户决策 2026-10-23）：
+// 仅要求可解析且带 scheme/host，http/私网/localhost 放行。
+func parseableURL(raw string) error {
+	if raw == "" {
+		return fmt.Errorf("空 URL")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return err
+	}
+	if u.Scheme == "" || u.Host == "" {
+		return fmt.Errorf("缺少 scheme/host")
+	}
+	return nil
+}
+
+// All 返回合并后的全部预设，顺序即 UI 网格展示序；未 Load 时为空表。
+func All() []ChannelPreset { return table }
+
+// ById 按 id 查预设（重复 id 时首个命中）。
 func ById(id string) (ChannelPreset, bool) {
-	for _, p := range All() {
+	for _, p := range table {
 		if p.ID == id {
 			return p, true
 		}
 	}
 	return ChannelPreset{}, false
+}
+
+// Warning 返回最近一次 Load 的降级/跳过警告（空 = 无异常），供 UI 提示。
+func Warning() string { return warning }
+
+// protocolOrder 是「第一可用协议」的固定序（spec §5：openai 优先）。
+var protocolOrder = []string{"openai", "anthropic"}
+
+// FirstProtocol 返回预置的第一个可用协议与端点；无协议时 ok=false。
+func FirstProtocol(p ChannelPreset) (string, ProtocolEndpoint, bool) {
+	for _, proto := range protocolOrder {
+		if ep, ok := p.Protocols[proto]; ok {
+			return proto, ep, true
+		}
+	}
+	return "", ProtocolEndpoint{}, false
 }

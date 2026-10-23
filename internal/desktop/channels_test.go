@@ -19,18 +19,15 @@ func TestChannelStats(t *testing.T) {
 	}
 }
 
-// TestPresetPreselectFillsForm 覆盖预设网格点选回填：qwen 预设写入
-// presetID/protocol/base_url/建议模型，且不冲掉用户已填的名称。
+// TestPresetPreselectFillsForm 覆盖预设网格点选回填：双协议预置写入
+// presetID/第一可用协议（openai 优先）/base_url/建议模型，且不冲掉用户已填的名称。
 func TestPresetPreselectFillsForm(t *testing.T) {
-	var qwen presets.ChannelPreset
-	for _, p := range presets.All() {
-		if p.ID == "qwen" {
-			qwen = p
-			break
-		}
-	}
-	if qwen.ID == "" {
-		t.Fatal("qwen preset missing")
+	qwen := presets.ChannelPreset{
+		ID: "qwen", DisplayName: "阿里千问",
+		Protocols: map[string]presets.ProtocolEndpoint{
+			"openai":     {BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", DefaultModels: []string{"qwen3.8-max", "qwen3.8-flash"}},
+			"anthropic":  {BaseURL: "https://dashscope.aliyuncs.com/apps/anthropic", DefaultModels: []string{"qwen3.8-max"}},
+		},
 	}
 	f := channelForm{name: "我的渠道"}
 	applyPreset(&f, qwen)
@@ -40,11 +37,11 @@ func TestPresetPreselectFillsForm(t *testing.T) {
 	if f.protocol != "openai" {
 		t.Fatalf("protocol = %q, want openai", f.protocol)
 	}
-	if f.baseURL != qwen.BaseURL {
-		t.Fatalf("baseURL = %q, want %q", f.baseURL, qwen.BaseURL)
+	if f.baseURL != "https://dashscope.aliyuncs.com/compatible-mode/v1" {
+		t.Fatalf("baseURL = %q", f.baseURL)
 	}
-	if !strings.Contains(f.suggestions, "qwen-max") {
-		t.Fatalf("suggestions = %q, want qwen-max", f.suggestions)
+	if !strings.Contains(f.suggestions, "qwen3.8-max") {
+		t.Fatalf("suggestions = %q, want qwen3.8-max", f.suggestions)
 	}
 	if f.name != "我的渠道" {
 		t.Fatalf("applyPreset must not clobber name, got %q", f.name)
