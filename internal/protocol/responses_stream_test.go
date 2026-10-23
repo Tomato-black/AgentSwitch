@@ -167,6 +167,80 @@ func TestChatStreamToResponsesFailEnsuresStarted(t *testing.T) {
 	}
 }
 
+// function 工具调用：added（等 call_id 与 name 到齐）→ 参数增量 → done → completed。
+func TestChatStreamToResponsesFunctionCall(t *testing.T) {
+	r, _ := ParseResponsesRequest([]byte(`{"model":"m","tools":[{"type":"function","name":"exec_command"}]}`))
+	tc := NewResponseToolContext(r)
+	chat := `data: {"id":"chatcmpl_1","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"exec_command","arguments":""}}]}}]}` + "\n\n" +
+		`data: {"id":"chatcmpl_1","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"cmd\":"}}]}}]}` + "\n\n" +
+		`data: {"id":"chatcmpl_1","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"ls\"}"}}]}}]}` + "\n\n" +
+		`data: {"id":"chatcmpl_1","choices":[{"delta":{},"finish_reason":"tool_calls"}]}` + "\n\n" +
+		`data: [DONE]` + "\n\n"
+	rc := ChatStreamToResponsesStream(context.Background(), strings.NewReader(chat), "m", tc)
+	defer rc.Close()
+	b, _ := io.ReadAll(rc)
+	out := string(b)
+	for _, want := range []string{
+		`"type":"function_call"`, `"call_id":"call_1"`, `"name":"exec_command"`,
+		"response.function_call_arguments.delta", "response.function_call_arguments.done",
+		`"arguments":"{\"cmd\":\"ls\"}"`, "event: response.completed",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// 部分上游把 name 与 id 分在不同分片：参数先到必须缓冲，added 时一次性补发，
+// 且 added 必须先于任何 arguments.delta 发出。
+func TestChatStreamToResponsesToolArgsBufferedUntilName(t *testing.T) {
+	r, _ := ParseResponsesRequest([]byte(`{"model":"m","tools":[{"type":"function","name":"exec_command"}]}`))
+	tc := NewResponseToolContext(r)
+	chat := `data: {"id":"c","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"cmd\":"}}]}}]}` + "\n\n" +
+		`data: {"id":"c","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"exec_command"}}]}}]}` + "\n\n" +
+		`data: {"id":"c","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"ls\"}"}}]}}]}` + "\n\n" +
+		`data: {"id":"c","choices":[{"delta":{},"finish_reason":"tool_calls"}]}` + "\n\n" +
+		`data: [DONE]` + "\n\n"
+	out := func() string {
+		rc := ChatStreamToResponsesStream(context.Background(), strings.NewReader(chat), "m", tc)
+		defer rc.Close()
+		b, _ := io.ReadAll(rc)
+		return string(b)
+	}()
+	added := strings.Index(out, "event: response.output_item.added")
+	delta := strings.Index(out, "response.function_call_arguments.delta")
+	if added < 0 || delta < 0 || added > delta {
+		t.Fatalf("output_item.added must precede arguments.delta; output:\n%s", out)
+	}
+	// 缓冲的首片参数经 added 一次性补发，最终 done 携带完整参数。
+	if !strings.Contains(out, `"arguments":"{\"cmd\":\"ls\"}"`) {
+		t.Fatalf("buffered arguments lost; output:\n%s", out)
+	}
+}
+
+// 上游在 finish 时仍未给 call_id：必须合成非空 call_id，且先补 added 再收口，
+// 不能静默丢弃模型发出的工具调用。
+func TestChatStreamToResponsesToolCallIDSynthesized(t *testing.T) {
+	r, _ := ParseResponsesRequest([]byte(`{"model":"m","tools":[{"type":"function","name":"exec_command"}]}`))
+	tc := NewResponseToolContext(r)
+	chat := `data: {"id":"c","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"exec_command","arguments":"{}"}}]}}]}` + "\n\n" +
+		`data: {"id":"c","choices":[{"delta":{},"finish_reason":"tool_calls"}]}` + "\n\n" +
+		`data: [DONE]` + "\n\n"
+	rc := ChatStreamToResponsesStream(context.Background(), strings.NewReader(chat), "m", tc)
+	defer rc.Close()
+	b, _ := io.ReadAll(rc)
+	out := string(b)
+	if !strings.Contains(out, `"call_id":"call_0"`) {
+		t.Fatalf("missing synthesized call_id; output:\n%s", out)
+	}
+	data := sseEventData(t, out, "response.completed")
+	resp, _ := data["response"].(map[string]any)
+	output, _ := resp["output"].([]any)
+	if len(output) != 1 {
+		t.Fatalf("completed output must contain the tool call, got %#v", resp["output"])
+	}
+}
+
 // 上游无终止标记即结束（截断）时不得发 response.completed，必须发失败事件。
 func TestChatStreamToResponsesTruncatedFails(t *testing.T) {
 	chat := `data: {"id":"chatcmpl_1","choices":[{"delta":{"content":"partial"}}]}` + "\n\n"
