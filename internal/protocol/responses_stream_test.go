@@ -448,6 +448,109 @@ func TestChatStreamToResponsesReasoningAfterText(t *testing.T) {
 	}
 }
 
+// reasoning → 正文 → reasoning：第二段 reasoning 到达时首段已收口，
+// 迟到的 delta 必须丢弃（既不能下发、也不能只存在于流事件而不在 completed 快照里）。
+func TestChatStreamToResponsesLateReasoningDeltaDropped(t *testing.T) {
+	chat := `data: {"id":"c","choices":[{"delta":{"reasoning_content":"think"}}]}` + "\n\n" +
+		`data: {"id":"c","choices":[{"delta":{"content":"answer"}}]}` + "\n\n" +
+		`data: {"id":"c","choices":[{"delta":{"reasoning_content":"late"}}]}` + "\n\n" +
+		`data: {"id":"c","choices":[{"delta":{},"finish_reason":"stop"}]}` + "\n\n" +
+		`data: [DONE]` + "\n\n"
+	out := streamEvents(t, chat)
+	if n := strings.Count(out, "event: response.reasoning_summary_text.delta"); n != 1 {
+		t.Fatalf("late reasoning delta must be dropped, got %d deltas:\n%s", n, out)
+	}
+	if strings.Contains(out, `"delta":"late"`) {
+		t.Fatalf("late reasoning delta leaked into stream:\n%s", out)
+	}
+
+	data := sseEventData(t, out, "response.completed")
+	resp, _ := data["response"].(map[string]any)
+	output, _ := resp["output"].([]any)
+	if len(output) != 2 {
+		t.Fatalf("completed output must hold one reasoning + one message, got %#v", resp["output"])
+	}
+	reasoning, _ := output[0].(map[string]any)
+	if reasoning["type"] != "reasoning" || reasoning["id"] != "rs_resp_c" {
+		t.Fatalf("first item must be the reasoning item, got %#v", reasoning)
+	}
+	summary, _ := reasoning["summary"].([]any)
+	part, _ := summary[0].(map[string]any)
+	if part["text"] != "think" {
+		t.Fatalf("reasoning snapshot must keep only the closed text, got %#v", part)
+	}
+	message, _ := output[1].(map[string]any)
+	content, _ := message["content"].([]any)
+	textPart, _ := content[0].(map[string]any)
+	if message["type"] != "message" || textPart["text"] != "answer" {
+		t.Fatalf("second item must be the message, got %#v", message)
+	}
+}
+
+// 正文 → reasoning → 正文：第二段正文到达时首条 message 已收口，
+// 迟到的文本 delta 必须丢弃，completed 快照与流事件保持一致。
+func TestChatStreamToResponsesLateTextDeltaDropped(t *testing.T) {
+	chat := `data: {"id":"c","choices":[{"delta":{"content":"first"}}]}` + "\n\n" +
+		`data: {"id":"c","choices":[{"delta":{"reasoning_content":"think"}}]}` + "\n\n" +
+		`data: {"id":"c","choices":[{"delta":{"content":"late"}}]}` + "\n\n" +
+		`data: {"id":"c","choices":[{"delta":{},"finish_reason":"stop"}]}` + "\n\n" +
+		`data: [DONE]` + "\n\n"
+	out := streamEvents(t, chat)
+	if n := strings.Count(out, "event: response.output_text.delta"); n != 1 {
+		t.Fatalf("late text delta must be dropped, got %d deltas:\n%s", n, out)
+	}
+	if strings.Contains(out, `"delta":"late"`) {
+		t.Fatalf("late text delta leaked into stream:\n%s", out)
+	}
+
+	data := sseEventData(t, out, "response.completed")
+	resp, _ := data["response"].(map[string]any)
+	output, _ := resp["output"].([]any)
+	if len(output) != 2 {
+		t.Fatalf("completed output must hold one message + one reasoning, got %#v", resp["output"])
+	}
+	message, _ := output[0].(map[string]any)
+	content, _ := message["content"].([]any)
+	textPart, _ := content[0].(map[string]any)
+	if message["id"] != "resp_c_msg" || textPart["text"] != "first" {
+		t.Fatalf("message snapshot must keep only the closed text, got %#v", message)
+	}
+	if reasoning, _ := output[1].(map[string]any); reasoning["id"] != "rs_resp_c" {
+		t.Fatalf("second item must be the reasoning item, got %#v", output[1])
+	}
+}
+
+// reasoning 仍在流式中时上游截断：失败收尾必须先补齐 reasoning done 事件，
+// 且 response.failed 的 output 保留已收口的 reasoning item。
+func TestChatStreamToResponsesFailClosesOpenReasoning(t *testing.T) {
+	chat := `data: {"id":"c","choices":[{"delta":{"reasoning_content":"think"}}]}` + "\n\n"
+	out := streamEvents(t, chat)
+	if !strings.Contains(out, "event: response.failed") {
+		t.Fatalf("truncated reasoning stream must fail:\n%s", out)
+	}
+	doneIdx := strings.Index(out, "event: response.reasoning_summary_text.done")
+	failIdx := strings.Index(out, "event: response.failed")
+	if doneIdx < 0 || failIdx < 0 || doneIdx > failIdx {
+		t.Fatalf("reasoning must be closed before response.failed:\n%s", out)
+	}
+
+	data := sseEventData(t, out, "response.failed")
+	resp, _ := data["response"].(map[string]any)
+	if resp["status"] != "failed" {
+		t.Fatalf("failed response status mismatch: %#v", resp["status"])
+	}
+	output, _ := resp["output"].([]any)
+	if len(output) != 1 {
+		t.Fatalf("failed output must contain the closed reasoning item, got %#v", resp["output"])
+	}
+	item, _ := output[0].(map[string]any)
+	summary, _ := item["summary"].([]any)
+	part, _ := summary[0].(map[string]any)
+	if item["type"] != "reasoning" || part["text"] != "think" {
+		t.Fatalf("failed reasoning item mismatch, got %#v", item)
+	}
+}
+
 // 兼容只给 delta.reasoning（无 _content 后缀）的上游：同样按 reasoning 流式下发。
 func TestChatStreamToResponsesReasoningFallbackField(t *testing.T) {
 	chat := `data: {"id":"c","choices":[{"delta":{"reasoning":"why"}}]}` + "\n\n" +

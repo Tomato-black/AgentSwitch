@@ -170,6 +170,11 @@ func (t *chatToResponsesStream) ensureStarted() {
 
 // pushText 追加文本增量；首个增量触发 message 项与 content_part 的开启事件。
 func (t *chatToResponsesStream) pushText(delta string) {
+	// 文本项已收口（例如 reasoning 插入后正文再次到达）：迟到增量必须丢弃，
+	// 否则会发出 completed 快照中不存在的内容。
+	if t.text.done {
+		return
+	}
 	t.ensureStarted()
 	if !t.text.open {
 		t.text.index = t.nextIndex
@@ -232,6 +237,11 @@ func (t *chatToResponsesStream) closeText() []responseOutputItem {
 // pushReasoning 追加一段 reasoning 摘要；首个增量开启 reasoning 项，
 // 若此时文本项仍在流式中则先收口它（两段 item 各自独立收口）。
 func (t *chatToResponsesStream) pushReasoning(delta string) {
+	// reasoning 项已收口（正文开始之后 reasoning 再次到达）：迟到增量必须丢弃，
+	// 保持流事件与 completed 快照一致。
+	if t.reasoning.done {
+		return
+	}
 	t.ensureStarted()
 	if !t.reasoning.open {
 		t.closeText()
