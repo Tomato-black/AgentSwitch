@@ -216,9 +216,15 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 				src = protocol.ChatStreamToResponsesStream(ctx, res.Body, req.Model, tc)
 			}
 			onIdle := protocol.ResponsesFailedEvent("upstream stream idle timeout")
-			if copyStream(w, src, lim.RequestTimeout, onIdle) {
+			timedOut := copyStream(w, src, lim.RequestTimeout, onIdle)
+			if timedOut {
 				rec.ErrorClass = "stream"
 				s.logIdleTimeout(rec.ID, lim.RequestTimeout)
+			} else if rs, ok := src.(interface{ Failed() bool }); ok && rs.Failed() {
+				// 提交后的流中断（上游截断/流内 error）：客户端已收到 response.failed，
+				// 遥测同样必须标记；空闲超时路径已有自己的 WARN，这里不重复告警。
+				rec.ErrorClass = "stream"
+				s.logStreamFailed(rec.ID)
 			}
 			if mid != nil {
 				mid.Close() // 解除中间泵写端阻塞，避免 goroutine 泄漏
@@ -272,4 +278,13 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	}
 	rec.Status, rec.ErrorClass = 502, string(lastClass)
 	writeErrOpenAI(w, 502, protocol.ErrTypeAPI, "all targets failed")
+}
+
+// logStreamFailed 为提交后的流中断（上游截断/流内 error）落一行 WARN。
+// 空闲超时另有 logIdleTimeout，调用方须保证二者不重复触发。
+func (s *Server) logStreamFailed(requestID string) {
+	if s.deps.Log == nil {
+		return
+	}
+	s.deps.Log.Warn("responses stream failed", "request_id", requestID)
 }

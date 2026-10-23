@@ -179,7 +179,7 @@ AgentSwitch 的两个位置因此失效：
 | 首个 reasoning 增量 | `response.output_item.added`（reasoning）→ `response.reasoning_summary_part.added` → `response.reasoning_summary_text.delta`；正文开始或回合结束时关闭 reasoning item |
 | 工具调用首次出现 | `response.output_item.added`：`function_call`（`status: in_progress`，空 `arguments`）/ `custom_tool_call` / `tool_search_call` |
 | 函数参数增量 | `response.function_call_arguments.delta`（custom / tool_search 不逐片下发，收口时给最终值） |
-| `finish_reason` 到达 | 关闭正文/推理 item（`output_text.done` → `content_part.done` → `output_item.done`）；按 index 收口工具调用（`function_call_arguments.done` / `custom_tool_call_input.done` → `output_item.done`）；随后 `response.completed`（含完整 `output` 与 usage） |
+| `finish_reason` 到达 | 关闭正文/推理 item（`output_text.done` → `content_part.done` → `output_item.done`）；按 index 收口工具调用（`function_call_arguments.done` / `custom_tool_call_input.done` → `output_item.done`）；随后按 `finish_reason` 发终态事件：`finish_reason="length"` → `response.incomplete`（`status: "incomplete"` + `incomplete_details.reason: "max_output_tokens"`，与非流式 §3.4.1 一致），其余 → `response.completed`（含完整 `output` 与 usage） |
 | 上游 error chunk / 流被截断 / 空闲超时 | `response.failed`（`status: "failed"`，`error: {message, type?}`，`output` 为已完成的 item）；**不发** `response.completed` |
 
 item 形状与 Codex 探针/cc-switch 一致：
@@ -190,7 +190,7 @@ item 形状与 Codex 探针/cc-switch 一致：
 {"type":"tool_search_call","status":"completed","call_id":"call_x","execution":"client","arguments":{"query":"..."}}
 ```
 
-`response.completed` 的 `response` 携带按 `output_index` 排序的完整 `output`、`usage`、`status`、`model`（逻辑模型名，不泄露上游名）、`id`、`created_at`。
+`response.completed` 的 `response` 携带按 `output_index` 排序的完整 `output`、`usage`、`status`、`model`（逻辑模型名，不泄露上游名）、`id`、`created_at`；`response.incomplete` 形状相同，额外带 `incomplete_details`。
 
 空闲超时由 `copyStream` 现有 watchdog 触发，`onIdle` 为一条 `response.failed` 事件；截断判据沿用「未见 `finish_reason`/`[DONE]` 即截断」。
 

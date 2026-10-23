@@ -68,7 +68,7 @@ config.toml 受管键：`model`、`model_provider = "agentswitch"`、`[model_pro
 | 入站 | 端点 | 面向 |
 |------|------|------|
 | Anthropic | `POST /v1/messages` | Claude Code 等 |
-| OpenAI | `POST /v1/chat/completions` | Codex 等 |
+| OpenAI | `POST /v1/chat/completions` | 其他 OpenAI Chat 客户端 |
 | OpenAI Responses | `POST /v1/responses` | Codex CLI 0.143+ |
 
 另有 `GET /v1/models` 列出启用的逻辑模型名。客户端协议与上游渠道协议不一致时在网关适配层互转；故障转移不变量（首字节前可切换、首字节后不重放、400 不重试、客户端取消不上抛）对三套入站一致。

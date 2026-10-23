@@ -191,6 +191,47 @@ func TestChatStreamToResponsesFunctionCall(t *testing.T) {
 	}
 }
 
+// finish_reason=length 表示上游因输出上限截断：流式也必须收口为 response.incomplete
+// （status=incomplete + incomplete_details.reason=max_output_tokens），不得发
+// response.completed——否则客户端会把半截工具参数当成正常结果执行。
+func TestChatStreamToResponsesLengthEmitsIncomplete(t *testing.T) {
+	r, _ := ParseResponsesRequest([]byte(`{"model":"m","tools":[{"type":"function","name":"exec_command"}]}`))
+	tc := NewResponseToolContext(r)
+	chat := `data: {"id":"chatcmpl_1","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"exec_command","arguments":"{\"cmd\":"}}]}}]}` + "\n\n" +
+		`data: {"id":"chatcmpl_1","choices":[{"delta":{},"finish_reason":"length"}]}` + "\n\n" +
+		`data: [DONE]` + "\n\n"
+	rc := ChatStreamToResponsesStream(context.Background(), strings.NewReader(chat), "m", tc)
+	defer rc.Close()
+	b, _ := io.ReadAll(rc)
+	out := string(b)
+	if strings.Contains(out, "event: response.completed") {
+		t.Fatalf("length must not complete:\n%s", out)
+	}
+	if !strings.Contains(out, "event: response.incomplete") {
+		t.Fatalf("length must emit response.incomplete:\n%s", out)
+	}
+	data := sseEventData(t, out, "response.incomplete")
+	resp, _ := data["response"].(map[string]any)
+	if resp["status"] != "incomplete" {
+		t.Fatalf("status must be incomplete, got %#v", resp["status"])
+	}
+	details, _ := resp["incomplete_details"].(map[string]any)
+	if details["reason"] != "max_output_tokens" {
+		t.Fatalf("incomplete reason mismatch: %#v", resp["incomplete_details"])
+	}
+	output, _ := resp["output"].([]any)
+	found := false
+	for _, it := range output {
+		item, _ := it.(map[string]any)
+		if item["type"] == "function_call" && item["call_id"] == "call_1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("incomplete output must keep the truncated function_call: %#v", resp["output"])
+	}
+}
+
 // 部分上游把 name 与 id 分在不同分片：参数先到必须缓冲，added 时一次性补发，
 // 且 added 必须先于任何 arguments.delta 发出。
 func TestChatStreamToResponsesToolArgsBufferedUntilName(t *testing.T) {

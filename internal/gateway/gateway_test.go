@@ -2110,6 +2110,38 @@ func TestResponsesCommitNoReplay(t *testing.T) {
 	}
 }
 
+// TestResponsesStreamFailureTelemetry：提交后流中断（上游截断/流内 error）除了
+// 发 response.failed，还必须把遥测 error_class 置为 stream 并落 WARN——否则故障
+// 在观测面上完全不可见。
+func TestResponsesStreamFailureTelemetry(t *testing.T) {
+	flaky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		w.Write([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m1\",\"usage\":{\"input_tokens\":1}}}\n\n" +
+			"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+			"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"partial\"}}\n\n"))
+		w.(http.Flusher).Flush()
+		panic(http.ErrAbortHandler) // 首 chunk 后断流（同 TestResponsesCommitNoReplay）
+	}))
+	defer flaky.Close()
+	var recs []telemetry.RequestRecord
+	s := newGW(t, flaky.URL, func(d *Deps) {
+		d.OnRecord = func(rec telemetry.RequestRecord) { recs = append(recs, rec) }
+	})
+	resp := postResponses(t, s, `{"model":"pub-1","input":"hi","stream":true}`, "tok")
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(b), "event: response.failed") {
+		t.Fatalf("stream must fail: %s", b)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("expected exactly one request record, got %d", len(recs))
+	}
+	if recs[0].ErrorClass != "stream" {
+		t.Fatalf("error_class must be stream, got %q", recs[0].ErrorClass)
+	}
+}
+
 // TestResponsesIdleTimeoutFails：上游首 chunk 后静默超过 RequestTimeout（流式语义
 // = 客户端可见输出空闲时限）→ 空闲看门狗发 response.failed 且不重放第二目标。
 func TestResponsesIdleTimeoutFails(t *testing.T) {

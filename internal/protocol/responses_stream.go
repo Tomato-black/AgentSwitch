@@ -8,6 +8,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"sync/atomic"
 )
 
 // responsesSSEEvent 生成一条 Responses SSE 帧（event: 行 + data: 行 + 空行）。
@@ -94,7 +95,7 @@ type chatToResponsesStream struct {
 	raw         []byte
 	started     bool
 	finished    bool
-	failed      bool
+	failed      atomic.Bool // pump goroutine 写，网关读（Failed()）
 	respID      string
 	model       string
 	createdAt   int64
@@ -110,10 +111,20 @@ type chatToResponsesStream struct {
 	tc          *ResponseToolContext
 }
 
+// ResponsesStream 包装转换器的读端，并把转换器内部的失败状态暴露给调用方
+// （网关据此区分「正常结束」与「提交后流中断」，补齐遥测与告警）。
+type ResponsesStream struct {
+	io.ReadCloser
+	state *chatToResponsesStream
+}
+
+// Failed 报告流是否以失败（response.failed）收口。可在读端 EOF/Close 后安全调用。
+func (s *ResponsesStream) Failed() bool { return s.state.failed.Load() }
+
 // ChatStreamToResponsesStream 把 chat.completion.chunk SSE 泵成 Responses SSE。
 // 调用方必须关闭返回的 ReadCloser；上游 body 由调用方负责关闭
 // （同 AnthropicStreamToOpenAIStream）。
-func ChatStreamToResponsesStream(ctx context.Context, r io.Reader, requestedModel string, tc *ResponseToolContext) io.ReadCloser {
+func ChatStreamToResponsesStream(ctx context.Context, r io.Reader, requestedModel string, tc *ResponseToolContext) *ResponsesStream {
 	pr, pw := io.Pipe()
 	t := &chatToResponsesStream{
 		respID: "resp_local", model: requestedModel, tc: tc,
@@ -149,7 +160,7 @@ func ChatStreamToResponsesStream(ctx context.Context, r io.Reader, requestedMode
 			return
 		}
 	}()
-	return pr
+	return &ResponsesStream{ReadCloser: pr, state: t}
 }
 
 func (t *chatToResponsesStream) baseResponse(status string) map[string]any {
@@ -614,7 +625,10 @@ func (t *chatToResponsesStream) Feed(p []byte) []byte {
 	return out
 }
 
-// Finish 正常收口：补齐文本 done 事件并发出 response.completed。
+// Finish 正常收口：补齐文本 done 事件后按 finish_reason 发出终态事件。
+// finish_reason=length 表示上游因输出上限截断，必须收口为 response.incomplete
+// （与非流式 ChatCompletionToResponses 一致），绝不伪装成 completed——否则客户端
+// 会把半截工具参数当成正常结果执行。其余 finish_reason 维持 completed。
 func (t *chatToResponsesStream) Finish() []byte {
 	if t.finished {
 		return nil
@@ -624,9 +638,16 @@ func (t *chatToResponsesStream) Finish() []byte {
 	items := t.closeText()
 	items = append(items, t.closeReasoning()...)
 	items = append(items, t.closeTools()...)
-	resp := t.baseResponse("completed")
+	status, event := "completed", "response.completed"
+	if t.finish == "length" {
+		status, event = "incomplete", "response.incomplete"
+	}
+	resp := t.baseResponse(status)
 	resp["output"] = sortedOutputItems(items)
-	t.out.Write(responsesSSEEvent("response.completed", map[string]any{"type": "response.completed", "response": resp}))
+	if status == "incomplete" {
+		resp["incomplete_details"] = map[string]any{"reason": "max_output_tokens"}
+	}
+	t.out.Write(responsesSSEEvent(event, map[string]any{"type": event, "response": resp}))
 	return t.drain()
 }
 
@@ -636,7 +657,8 @@ func (t *chatToResponsesStream) Fail(message string) {
 	if t.finished {
 		return
 	}
-	t.finished, t.failed = true, true
+	t.finished = true
+	t.failed.Store(true)
 	t.ensureStarted()
 	items := t.closeText()
 	// reasoning 内容已完整到达，失败收尾时正常收口并保留。

@@ -1,5 +1,7 @@
 # Agent 接入配置管理设计（2026-10-18）
 
+> 注：Codex 接入的 `wire_api` 已于 2026-10-23 改为 `responses`（见 `2026-10-23-openai-responses-inbound-design.md`），本文中 `wire_api = "chat"` 的表述已被取代。
+
 > **状态（2026-10-19）：存储形态（overrides）、合成输入与 Claude 持久文件格式已被 `2026-10-19-access-full-settings-ccswitch-design.md` 取代；其余机制（应用投影、备份、令牌轮换联动、启动命令/打开终端、全局 env 层）仍有效。**
 
 ## 背景与意图
