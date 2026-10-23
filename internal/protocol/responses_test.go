@@ -183,3 +183,74 @@ func TestResponsesInputString(t *testing.T) {
 		t.Fatalf("string input: %+v err=%v", msgs, err)
 	}
 }
+
+func TestResponsesRequestToChat(t *testing.T) {
+	r, _ := ParseResponsesRequest([]byte(`{
+		"model":"logical","stream":true,"instructions":"sys","max_output_tokens":512,
+		"temperature":0.3,"top_p":0.9,
+		"tools":[{"type":"function","name":"exec_command","parameters":{"type":"object"}}],
+		"tool_choice":{"type":"function","name":"exec_command"},
+		"input":[{"type":"message","role":"user","content":"hi"}],
+		"store":false,"reasoning":{"effort":"high"},"include":["reasoning.encrypted_content"]}`))
+	tc := NewResponseToolContext(r)
+	b, err := ResponsesRequestToChat(r, tc, "upstream-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["model"] != "upstream-model" || out["stream"] != true {
+		t.Fatalf("model/stream: %+v", out)
+	}
+	if out["max_tokens"] != float64(512) || out["temperature"] != 0.3 || out["top_p"] != 0.9 {
+		t.Fatalf("limits: %+v", out)
+	}
+	if _, ok := out["store"]; ok {
+		t.Fatalf("store must not be forwarded: %+v", out)
+	}
+	if _, ok := out["reasoning"]; ok {
+		t.Fatalf("reasoning must not be forwarded: %+v", out)
+	}
+	choice := out["tool_choice"].(map[string]any)
+	if choice["function"].(map[string]any)["name"] != "exec_command" {
+		t.Fatalf("tool_choice: %+v", choice)
+	}
+	msgs := out["messages"].([]any)
+	if len(msgs) != 2 || msgs[0].(map[string]any)["role"] != "system" {
+		t.Fatalf("messages: %+v", msgs)
+	}
+}
+
+func TestMapResponsesToolChoice(t *testing.T) {
+	r, _ := ParseResponsesRequest([]byte(`{
+		"model":"m",
+		"tools":[{"type":"custom","name":"apply_patch"},{"type":"tool_search"},
+		         {"type":"namespace","name":"ns","tools":[{"type":"function","name":"run"}]}]}`))
+	tc := NewResponseToolContext(r)
+
+	// 字符串形式（auto/none/required）原样透传。
+	if got := mapResponsesToolChoice(json.RawMessage(`"auto"`), tc); string(got) != `"auto"` {
+		t.Fatalf("auto passthrough: %s", got)
+	}
+	// custom 工具在 chat 侧仍是同名函数。
+	if got := string(mapResponsesToolChoice(json.RawMessage(`{"type":"custom","name":"apply_patch"}`), tc)); got != `{"function":{"name":"apply_patch"},"type":"function"}` {
+		t.Fatalf("custom choice: %s", got)
+	}
+	// tool_search 托管工具映射为代理函数。
+	if got := string(mapResponsesToolChoice(json.RawMessage(`{"type":"tool_search"}`), tc)); got != `{"function":{"name":"tool_search"},"type":"function"}` {
+		t.Fatalf("tool_search choice: %s", got)
+	}
+	// namespace 内 function 使用拍平后的 chat 名。
+	if got := string(mapResponsesToolChoice(json.RawMessage(`{"type":"function","name":"run","namespace":"ns"}`), tc)); got != `{"function":{"name":"ns__run"},"type":"function"}` {
+		t.Fatalf("namespace choice: %s", got)
+	}
+	// 缺失/null 返回 nil，调用方据此不下发 tool_choice。
+	if got := mapResponsesToolChoice(nil, tc); got != nil {
+		t.Fatalf("nil choice: %s", got)
+	}
+	if got := mapResponsesToolChoice(json.RawMessage(`null`), tc); got != nil {
+		t.Fatalf("null choice: %s", got)
+	}
+}

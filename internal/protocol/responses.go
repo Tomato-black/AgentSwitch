@@ -187,6 +187,74 @@ func responsesOutputText(raw json.RawMessage) string {
 	return string(raw)
 }
 
+// ResponsesRequestToChat 把 Responses 请求转换成 chat.completions 请求体。
+// 只下发 chat 上游可理解的字段；store/reasoning/include 等一律丢弃。
+func ResponsesRequestToChat(req ResponsesRequest, tc *ResponseToolContext, chatModel string) ([]byte, error) {
+	msgs, err := responsesInputToMessages(req.Input, req.Instructions, tc)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]any{
+		"model":    chatModel,
+		"stream":   req.Stream,
+		"messages": msgs,
+	}
+	if req.MaxOutputTokens != nil && *req.MaxOutputTokens > 0 {
+		out["max_tokens"] = *req.MaxOutputTokens
+	}
+	if req.Temperature != nil {
+		out["temperature"] = *req.Temperature
+	}
+	if req.TopP != nil {
+		out["top_p"] = *req.TopP
+	}
+	if tools := tc.ChatTools(); len(tools) > 0 {
+		out["tools"] = tools
+	}
+	if choice := mapResponsesToolChoice(req.ToolChoice, tc); len(choice) > 0 {
+		out["tool_choice"] = choice
+	}
+	return json.Marshal(out)
+}
+
+// mapResponsesToolChoice 把 Responses 侧的 tool_choice 映射为 chat 形状：
+// 字符串形式（auto/none/required）原样透传，工具对象改成 chat function 选择。
+func mapResponsesToolChoice(raw json.RawMessage, tc *ResponseToolContext) json.RawMessage {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var obj struct {
+		Type      string `json:"type"`
+		Name      string `json:"name"`
+		Namespace string `json:"namespace"`
+	}
+	if json.Unmarshal(raw, &obj) != nil || obj.Type == "" {
+		return raw // "auto"/"none"/"required" 原样
+	}
+	switch obj.Type {
+	case "function":
+		b, _ := json.Marshal(map[string]any{
+			"type":     "function",
+			"function": map[string]any{"name": tc.ChatName(obj.Name, obj.Namespace)},
+		})
+		return b
+	case "custom":
+		b, _ := json.Marshal(map[string]any{
+			"type":     "function",
+			"function": map[string]any{"name": obj.Name},
+		})
+		return b
+	case "tool_search":
+		b, _ := json.Marshal(map[string]any{
+			"type":     "function",
+			"function": map[string]any{"name": "tool_search"},
+		})
+		return b
+	default:
+		return raw
+	}
+}
+
 // responsesContentText 提取 Responses 内容分片的文本（input_text/output_text/text）。
 func responsesContentText(raw json.RawMessage) string {
 	if len(raw) == 0 || string(raw) == "null" {
