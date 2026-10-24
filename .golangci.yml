@@ -1,0 +1,11 @@
+version: "2"
+
+# 保守集：v2 默认 linters（errcheck/govet/ineffassign/staticcheck），
+# 不加风格类门槛，避免卡贡献者。
+linters:
+  exclusions:
+    rules:
+      # 测试：错误可忽略与未用变量（t.Fatal 已表达意图）常见且合理
+      - path: _test\.go
+        linters:
+          - errcheck

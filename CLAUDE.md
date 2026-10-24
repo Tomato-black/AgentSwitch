@@ -14,11 +14,9 @@ AgentSwitch：面向本地 AI Agent 的**模型 API 网关**——为 Claude Cod
 
 **Responses 入站（2026-10-23）**：Codex CLI 0.143 起移除 `wire_api="chat"`，网关新增 `POST /v1/responses` 入站；渠道协议仍为 anthropic/openai(chat)，请求与响应在 `internal/protocol/responses*.go` 双向转换；工具映射对齐 cc-switch（function/custom/namespace/tool_search，web_search 丢弃）；Codex 接入配置写 `wire_api="responses"`。设计见 `docs/superpowers/specs/2026-10-23-openai-responses-inbound-design.md`，实现计划见 `docs/superpowers/plans/2026-10-23-openai-responses-inbound.md`。
 
-**权威设计文档**是仓库根目录的 docx（磁盘上文件名经 URL 编码，实际为 `AgentSwitch_MyGo桌面应用重新设计方案_v2.0.docx`）。任何功能实现前先查文档对应章节；代码与文档冲突时，以文档为准并指出来。文档是 zip 格式，可用以下命令提取纯文本：
+**权威设计文档（2026-10-23 更新）**：原仓库根目录的 v2.0 docx 设计稿已随开源准备移出仓库（历史版本仍在 git log 中；正文中「docx §x」的旧引用指该稿）。现行权威设计是 `docs/superpowers/specs/` 下按日期命名的各 spec（功能实现前先查对应 spec；代码与 spec 冲突时，以 spec 为准并指出来）。
 
-```bash
-python3 -c "import zipfile,re,html,sys; x=zipfile.ZipFile(sys.argv[1]).read('word/document.xml').decode().replace('</w:p>','\n'); print(html.unescape(re.sub(r'<[^>]+>','',x)))" <file.docx>
-```
+**开源卫生（2026-10-23）**：`.idea/`、`.claude/`、`.superpowers/`、`*.iml` 已停止跟踪并加入 `.gitignore`（个人工作区不入库）；CLAUDE.md 中的网关令牌样例已占位符化——真实令牌只存 SQLite `auth.gateway_token`，泄露后于设置页「重新生成令牌」作废旧值。
 
 **Claude Desktop 接入（2026-10-22）**：接入页第三种 Agent 类型 `claude_desktop`——配置为角色映射（sonnet/opus/haiku/fable → 逻辑模型，无 env 层）；「应用」把网关 profile（`inferenceProvider=gateway`、`inferenceGatewayBaseUrl/ApiKey`、`inferenceGatewayAuthScheme=bearer`、`inferenceModels`）patch 合并进 `~/.config/Claude/claude_desktop_config.json`（MCP 等键原样保留、写前备份），并把「claude-sonnet-5 → 逻辑模型」别名表持久化到 settings（`access.desktop_aliases`，last-applied-wins）；网关 candidates 解析入站名前先查别名表、`/v1/models` 追加别名（跟随逻辑模型启用态）。Desktop 只接受 claude-* 角色路由 ID（白名单参照 cc-switch：sonnet/opus/haiku/fable）。参考 cc-switch 的 inferenceGateway 方案。
 
@@ -90,8 +88,11 @@ P0-A 核心网关（单协议端到端）→ P0-B 账号池与故障转移 → P
 
 - 网关单进程 vs 独立子进程**未定**——先做生命周期抽象，验证 MyGo 运行模型后再决定。
 - MyGo 具体 API、托盘/开机启动等能力未经验证，以选定版本官方文档与仓库实现为准。
+
+本机 Agent 接入环境变量（真实令牌不入库；当前会话值见 `~/.claude/settings.json` 的 env，泄露后于设置页「重新生成令牌」作废）：
+
   ANTHROPIC_BASE_URL=http://127.0.0.1:17890
-  ANTHROPIC_AUTH_TOKEN=c66487c337858e611756bc818e52f151c3fcf5847e54db4fff67eb8b128e6e5f
+  ANTHROPIC_AUTH_TOKEN=<gateway-token>
   ANTHROPIC_MODEL=my-code
   ANTHROPIC_SMALL_FAST_MODEL=my-code
 

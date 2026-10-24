@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<project version="4">
-  <component name="JavaScriptLibraryMappings">
-    <excludedPredefinedLibrary name="AgentSwitch/build/.staging-darwin-amd64-3161177032/.dmg-3294117863/src/Applications/Accio.app/Contents/Resources/app.asar.unpacked/node_modules" />
-    <excludedPredefinedLibrary name="AgentSwitch/build/.staging-darwin-amd64-3161177032/.dmg-3294117863/src/Applications/QQ.app/Contents/Resources/app/node_modules" />
-  </component>
-</project>
