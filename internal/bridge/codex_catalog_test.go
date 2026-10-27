@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pelletier/go-toml/v2"
@@ -121,7 +122,9 @@ func TestCodexCatalogIncludesEnabledModelsBoundFirst(t *testing.T) {
 // TestCodexCatalogFailureAbortsWithoutWriting 模板不可用时必须中止，config.toml
 // 保持原样且不留下半份目录文件。
 func TestCodexCatalogFailureAbortsWithoutWriting(t *testing.T) {
-	acc := AccessConfigs{A: tempApp(t), Home: t.TempDir()}
+	a := tempApp(t)
+	seedLogicalModel(t, a, "m")
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
 	dir := filepath.Join(acc.Home, ".codex")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -148,6 +151,137 @@ func TestCodexCatalogFailureAbortsWithoutWriting(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, codexModelCatalogFileName)); !os.IsNotExist(err) {
 		t.Fatal("失败后不应留下目录文件")
+	}
+}
+
+// TestBuildCodexCatalogUsesMetadata 钉死目录条目的元数据投影：显示名、
+// 描述、上下文窗口、思考等级、默认等级与自动审批覆盖（spec §4.4）。
+func TestBuildCodexCatalogUsesMetadata(t *testing.T) {
+	b, err := buildCodexModelCatalog(testCodexCatalogTemplate(), []codexCatalogModel{
+		{Name: "my-code", DisplayName: "My Code", Description: "主模型", ContextWindow: 1000000,
+			ReasoningLevels: []string{"low", "high"}, DefaultReasoningLevel: "high"},
+		{Name: "test"},
+	}, "my-code")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Models []map[string]any `json:"models"`
+	}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Models) != 2 {
+		t.Fatalf("目录条目 = %d，应为 2: %s", len(doc.Models), b)
+	}
+	m := doc.Models[0]
+	if m["display_name"] != "My Code" || m["description"] != "主模型" ||
+		m["context_window"] != float64(1000000) ||
+		m["max_context_window"] != float64(1000000) ||
+		m["default_reasoning_level"] != "high" ||
+		m["auto_review_model_override"] != "my-code" {
+		t.Fatalf("%v", m)
+	}
+	levels, ok := m["supported_reasoning_levels"].([]any)
+	if !ok || len(levels) != 2 {
+		t.Fatalf("思考等级 = %v", m["supported_reasoning_levels"])
+	}
+	if lv, _ := levels[1].(map[string]any); lv["effort"] != "high" || lv["description"] != "high" {
+		t.Fatalf("思考等级条目 = %v", lv)
+	}
+	if doc.Models[1]["display_name"] != "test" {
+		t.Fatalf("%v", doc.Models[1])
+	}
+	if doc.Models[1]["auto_review_model_override"] != "my-code" {
+		t.Fatalf("每一行都应写自动审批覆盖: %v", doc.Models[1])
+	}
+}
+
+// TestBuildCodexCatalogDefaults 覆盖缺省值：显示名/描述回退、默认思考等级
+// 取列表首项；context_window 未声明时保留模板值；模板遗留的升级/引导/自动
+// 审批字段必须清除，避免桌面版提示升级到网关不认识的模型。
+func TestBuildCodexCatalogDefaults(t *testing.T) {
+	tpl := testCodexCatalogTemplate()
+	tpl["upgrade_info"] = map[string]any{"message": "upgrade"}
+	tpl["availability_nux"] = map[string]any{"message": "nux"}
+	tpl["auto_review_model_override"] = "stale-template-model"
+	b, err := buildCodexModelCatalog(tpl, []codexCatalogModel{
+		{Name: "plain", ReasoningLevels: []string{"low", "medium"}},
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Models []map[string]any `json:"models"`
+	}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	m := doc.Models[0]
+	if m["display_name"] != "plain" || m["description"] != "AgentSwitch 逻辑模型：plain" {
+		t.Fatalf("%v", m)
+	}
+	if m["default_reasoning_level"] != "low" {
+		t.Fatalf("默认等级应回退到首项: %v", m)
+	}
+	if m["context_window"] != float64(128000) || m["max_context_window"] != float64(128000) {
+		t.Fatalf("未声明窗口时应保留模板值: %v", m)
+	}
+	for _, k := range []string{"upgrade", "upgrade_info", "availability_nux", "auto_review_model_override"} {
+		if _, ok := m[k]; ok {
+			t.Fatalf("%s 不应出现: %v", k, m)
+		}
+	}
+}
+
+// TestCodexCatalogModelsResolvesMetadataAndDedupes 覆盖从存储解析目录元数据：
+// 保持传入顺序、按去空白后的名字防御性去重、携带显示名/窗口/思考等级。
+func TestCodexCatalogModelsResolvesMetadataAndDedupes(t *testing.T) {
+	a := tempApp(t)
+	for _, lm := range []storage.LogicalModel{
+		{ID: "lm-a", Name: "my-code", DisplayName: "My Code", Description: "主模型",
+			ContextWindow: 1000000, ReasoningLevels: []string{"low", "high"},
+			DefaultReasoningLevel: "high", Enabled: true},
+		{ID: "lm-b", Name: "test", Enabled: true},
+	} {
+		if _, err := a.Store().LogicalModels().Save(lm); err != nil {
+			t.Fatal(err)
+		}
+	}
+	acc := AccessConfigs{A: a}
+	got, err := acc.codexCatalogModels([]string{"test", "my-code", " test "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Name != "test" || got[1].Name != "my-code" {
+		t.Fatalf("顺序/去重错误: %+v", got)
+	}
+	if got[1].DisplayName != "My Code" || got[1].Description != "主模型" ||
+		got[1].ContextWindow != 1000000 || got[1].DefaultReasoningLevel != "high" ||
+		len(got[1].ReasoningLevels) != 2 || got[1].ReasoningLevels[1] != "high" {
+		t.Fatalf("元数据未透传: %+v", got[1])
+	}
+	if got[0].DisplayName != "" || got[0].ContextWindow != 0 || len(got[0].ReasoningLevels) != 0 {
+		t.Fatalf("未配置元数据应为空: %+v", got[0])
+	}
+}
+
+// TestCodexCatalogModelsRejectsMissingOrDisabled 覆盖校验：模型不存在或已停用
+// 时报中文错误并指明模型名（目录不得为不可用模型生成条目）。
+func TestCodexCatalogModelsRejectsMissingOrDisabled(t *testing.T) {
+	a := tempApp(t)
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{
+		ID: "lm-off", Name: "off", Enabled: false}); err != nil {
+		t.Fatal(err)
+	}
+	acc := AccessConfigs{A: a}
+	if _, err := acc.codexCatalogModels([]string{"ghost"}); err == nil ||
+		!strings.Contains(err.Error(), "ghost") || !strings.Contains(err.Error(), "不存在") {
+		t.Fatalf("缺失模型错误 = %v", err)
+	}
+	if _, err := acc.codexCatalogModels([]string{"off"}); err == nil ||
+		!strings.Contains(err.Error(), "off") || !strings.Contains(err.Error(), "已停用") {
+		t.Fatalf("停用模型错误 = %v", err)
 	}
 }
 

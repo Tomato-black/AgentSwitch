@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"AgentSwitch/internal/storage"
 )
 
 // Codex 桌面版的模型选择器只读 config.toml 的 model_catalog_json 指向的
@@ -51,23 +53,104 @@ func (s AccessConfigs) codexLogicalModelsForCatalog(bound string) ([]string, err
 	return append([]string{bound}, others...), nil
 }
 
-// buildCodexModelCatalog 为每个逻辑模型克隆一条模板，替换可变的展示字段。
-// 模板里的 upgrade/upgrade_info 指向官方 GPT 模型，必须去掉，否则桌面版会
-// 提示升级到网关不认识的模型。
-func buildCodexModelCatalog(template map[string]any, models []string) ([]byte, error) {
+// codexCatalogModel 是目录条目所需的逻辑模型元数据（spec 2026-10-27 §4.4）。
+// Name 是网关对外模型名（slug），其余字段为空/零值时按模板或名字回退。
+type codexCatalogModel struct {
+	Name                  string
+	DisplayName           string
+	Description           string
+	ContextWindow         int64
+	ReasoningLevels       []string
+	DefaultReasoningLevel string
+}
+
+// codexCatalogModels 把有序模型名解析为目录元数据：保持传入顺序（首项为
+// 默认模型），按去空白后的名字防御性去重（宽松读取的旧文档可能带重复），
+// 每个名字必须对应存在且启用的逻辑模型——目录不能为不可用模型生成条目。
+func (s AccessConfigs) codexCatalogModels(names []string) ([]codexCatalogModel, error) {
+	lms, err := s.A.Store().LogicalModels().List()
+	if err != nil {
+		return nil, err
+	}
+	byName := make(map[string]storage.LogicalModel, len(lms))
+	for _, lm := range lms {
+		byName[lm.Name] = lm
+	}
+	out := make([]codexCatalogModel, 0, len(names))
+	seen := make(map[string]bool, len(names))
+	for _, raw := range names {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			return nil, fmt.Errorf("模型列表中的模型名不能为空")
+		}
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		lm, ok := byName[name]
+		if !ok {
+			return nil, fmt.Errorf("模型 %s 不存在，请先在逻辑模型页创建", name)
+		}
+		if !lm.Enabled {
+			return nil, fmt.Errorf("模型 %s 已停用，请启用或从模型列表中移除", name)
+		}
+		out = append(out, codexCatalogModel{
+			Name:                  name,
+			DisplayName:           strings.TrimSpace(lm.DisplayName),
+			Description:           strings.TrimSpace(lm.Description),
+			ContextWindow:         lm.ContextWindow,
+			ReasoningLevels:       append([]string(nil), lm.ReasoningLevels...),
+			DefaultReasoningLevel: strings.TrimSpace(lm.DefaultReasoningLevel),
+		})
+	}
+	return out, nil
+}
+
+// buildCodexModelCatalog 为每个逻辑模型克隆一条模板，替换可变的展示字段与
+// 元数据。模板里的 upgrade/upgrade_info/availability_nux 指向官方 GPT 模型，
+// 必须去掉，否则桌面版会提示升级到网关不认识的模型；auto-review 覆盖未配置
+// 时也清除，避免沿用模板里的官方模型名。
+func buildCodexModelCatalog(template map[string]any, models []codexCatalogModel, autoReviewModel string) ([]byte, error) {
 	entries := make([]any, 0, len(models))
-	for i, name := range models {
+	for i, m := range models {
 		entry, err := cloneCodexCatalogEntry(template)
 		if err != nil {
 			return nil, err
 		}
-		entry["slug"] = name
-		entry["display_name"] = name
-		entry["description"] = "AgentSwitch 逻辑模型：" + name
+		displayName := m.DisplayName
+		if displayName == "" {
+			displayName = m.Name
+		}
+		description := m.Description
+		if description == "" {
+			description = "AgentSwitch 逻辑模型：" + m.Name
+		}
+		entry["slug"] = m.Name
+		entry["display_name"] = displayName
+		entry["description"] = description
 		entry["priority"] = 1000 + i
 		entry["visibility"] = "list"
-		for _, k := range []string{"upgrade", "upgrade_info", "availability_nux"} {
+		if m.ContextWindow > 0 {
+			entry["context_window"] = m.ContextWindow
+			entry["max_context_window"] = m.ContextWindow
+		}
+		if len(m.ReasoningLevels) > 0 {
+			levels := make([]any, 0, len(m.ReasoningLevels))
+			for _, lv := range m.ReasoningLevels {
+				levels = append(levels, map[string]any{"effort": lv, "description": lv})
+			}
+			entry["supported_reasoning_levels"] = levels
+			defaultLevel := m.DefaultReasoningLevel
+			if defaultLevel == "" {
+				defaultLevel = m.ReasoningLevels[0]
+			}
+			entry["default_reasoning_level"] = defaultLevel
+		}
+		for _, k := range []string{"upgrade", "upgrade_info", "availability_nux", "auto_review_model_override"} {
 			delete(entry, k)
+		}
+		if autoReviewModel != "" {
+			entry["auto_review_model_override"] = autoReviewModel
 		}
 		entries = append(entries, entry)
 	}

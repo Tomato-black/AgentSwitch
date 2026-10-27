@@ -10,8 +10,18 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 
+	"AgentSwitch/internal/app"
 	"AgentSwitch/internal/storage"
 )
+
+// seedLogicalModel 在测试库中建一个启用的逻辑模型：写 config.toml 的目录
+// 自 2026-10-27 起按显式模型解析，模型必须存在且启用。
+func seedLogicalModel(t *testing.T, a *app.App, name string) {
+	t.Helper()
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{Name: name, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestClaudeLiveProjectionPreservesAndMerges(t *testing.T) {
 	acc := AccessConfigs{A: tempApp(t), Home: t.TempDir()}
@@ -81,7 +91,9 @@ func TestClaudeLiveWritesDocTopLevelKeys(t *testing.T) {
 }
 
 func TestCodexLiveProjectionPreservesAndMerges(t *testing.T) {
-	acc := AccessConfigs{A: tempApp(t), Home: t.TempDir()}
+	a := tempApp(t)
+	seedLogicalModel(t, a, "my-code")
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
 	dir := filepath.Join(acc.Home, ".codex")
 	os.MkdirAll(dir, 0o755)
 	os.WriteFile(filepath.Join(dir, "config.toml"), []byte("preferred_auth_method = \"apikey\"\n\n[mcp_servers.foo]\ncommand = \"mcp\"\n"), 0o600)
@@ -125,7 +137,9 @@ func TestCodexLiveProjectionPreservesAndMerges(t *testing.T) {
 // Codex 第三方 Key 只写 config.toml；auth.json 是官方 ChatGPT 登录文件，
 // 接入配置绝不改写它（2026-10-27 修订）。
 func TestCodexLiveLeavesAuthJSONUntouched(t *testing.T) {
-	acc := AccessConfigs{A: tempApp(t), Home: t.TempDir()}
+	a := tempApp(t)
+	seedLogicalModel(t, a, "m")
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
 	dir := filepath.Join(acc.Home, ".codex")
 	os.MkdirAll(dir, 0o755)
 	original := `{"tokens":{"access_token":"official"},"OPENAI_API_KEY":"user-key"}`
@@ -160,7 +174,9 @@ func TestCodexLiveProjectionInvalidTOMLAborts(t *testing.T) {
 // auth.json 不再读也不写：即使它本身非法，也不应阻塞接入配置写入（登录
 // 文件由 Codex 自己维护），且内容保持原样。
 func TestCodexLiveIgnoresInvalidAuthJSON(t *testing.T) {
-	acc := AccessConfigs{A: tempApp(t), Home: t.TempDir()}
+	a := tempApp(t)
+	seedLogicalModel(t, a, "m")
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
 	dir := filepath.Join(acc.Home, ".codex")
 	os.MkdirAll(dir, 0o755)
 	os.WriteFile(filepath.Join(dir, "auth.json"), []byte("{broken"), 0o600)

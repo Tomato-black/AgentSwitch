@@ -526,7 +526,11 @@ func (s AccessConfigs) writeCodexLive(env map[string]string, model string) error
 
 	// 模型目录：桌面版模型选择器只读 model_catalog_json，不读网关 /v1/models。
 	// 先备齐目录内容再落盘，模板缺失时整次写入中止（不留下指向半份目录的配置）。
-	models, err := s.codexLogicalModelsForCatalog(model)
+	names, err := s.codexLogicalModelsForCatalog(model)
+	if err != nil {
+		return err
+	}
+	models, err := s.codexCatalogModels(names)
 	if err != nil {
 		return err
 	}
@@ -534,7 +538,9 @@ func (s AccessConfigs) writeCodexLive(env map[string]string, model string) error
 	if err != nil {
 		return err
 	}
-	catalogBytes, err := buildCodexModelCatalog(template, models)
+	// 自动审批模型由接入文档 codex.auto_review_model 决定；本路径尚未持有
+	// 文档（Task 7 改为投影管线），先不写覆盖。
+	catalogBytes, err := buildCodexModelCatalog(template, models, "")
 	if err != nil {
 		return err
 	}
