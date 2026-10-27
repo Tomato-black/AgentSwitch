@@ -1236,6 +1236,111 @@ func TestPreviewDocErrors(t *testing.T) {
 	}
 }
 
+// TestPreviewCodexConfigDoesNotWrite 钉死只读预览：返回最终 config.toml 文本
+// （含默认模型与目录引用），但不创建/改写 <home>/.codex 下的任何文件。
+func TestPreviewCodexConfigDoesNotWrite(t *testing.T) {
+	a := tempApp(t)
+	lm, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	got, err := acc.PreviewCodexConfig(lm.ID, `{"models":["my-code"]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// go-toml v2 对普通字符串输出单引号字面量，按解析结果断言（同既有测试）。
+	var cfg map[string]any
+	if err := toml.Unmarshal([]byte(got), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg["model"] != "my-code" || cfg["model_catalog_json"] != codexModelCatalogFileName {
+		t.Fatalf("%s", got)
+	}
+	if _, err := os.Stat(filepath.Join(acc.Home, ".codex", "config.toml")); !os.IsNotExist(err) {
+		t.Fatal("预览不应写 live 文件")
+	}
+	if _, err := os.Stat(filepath.Join(acc.Home, ".codex", codexModelCatalogFileName)); !os.IsNotExist(err) {
+		t.Fatal("预览不应写模型目录文件")
+	}
+}
+
+// TestPreviewCodexConfigMergesUserKeysAndToken 钉死预览内容：现有 config.toml
+// 的用户键原样保留、受管键就位、provider 表带真实网关令牌；预览后原文件
+// 逐字节不变（不写盘）。
+func TestPreviewCodexConfigMergesUserKeysAndToken(t *testing.T) {
+	a := tempApp(t)
+	lm, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	dir := filepath.Join(acc.Home, ".codex")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := "preferred_auth_method = \"apikey\"\n\n[mcp_servers.foo]\ncommand = \"mcp\"\n"
+	cfgPath := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(cfgPath, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := acc.PreviewCodexConfig(lm.ID, `{"models":["my-code"]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := toml.Unmarshal([]byte(got), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg["preferred_auth_method"] != "apikey" || cfg["mcp_servers"] == nil {
+		t.Fatalf("用户键应保留: %s", got)
+	}
+	if cfg["model"] != "my-code" || cfg["model_provider"] != "agentswitch" ||
+		cfg["model_catalog_json"] != codexModelCatalogFileName ||
+		cfg["disable_response_storage"] != true || cfg["web_search"] != "disabled" {
+		t.Fatalf("受管键应就位: %s", got)
+	}
+	mp := cfg["model_providers"].(map[string]any)["agentswitch"].(map[string]any)
+	wantToken := Gateway{A: a}.Status().Token
+	if wantToken == "" {
+		t.Fatal("前提不成立：网关令牌应已生成")
+	}
+	if mp["experimental_bearer_token"] != wantToken || mp["wire_api"] != "responses" {
+		t.Fatalf("provider 表应带真实网关令牌与 responses 线路: %v", mp)
+	}
+	after, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != original {
+		t.Fatalf("预览不应改写现有 config.toml: %s", after)
+	}
+}
+
+// TestPreviewCodexConfigErrors 钉死中文错误：逻辑模型不存在、配置 JSON 非法、
+// 模型列表语义非法（首项不是绑定模型）均在预览阶段返回，不落盘。
+func TestPreviewCodexConfigErrors(t *testing.T) {
+	a := tempApp(t)
+	lm, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm2", Name: "other", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	if _, err := acc.PreviewCodexConfig("nope", `{}`); err == nil || !strings.Contains(err.Error(), "逻辑模型不存在") {
+		t.Fatalf("逻辑模型不存在应报中文错误: %v", err)
+	}
+	if _, err := acc.PreviewCodexConfig(lm.ID, `{bad`); err == nil || !strings.Contains(err.Error(), "配置 JSON 格式错误") {
+		t.Fatalf("非法 JSON 应报解析错误: %v", err)
+	}
+	if _, err := acc.PreviewCodexConfig(lm.ID, `{"models":["other"]}`); err == nil ||
+		!strings.Contains(err.Error(), "第一个模型必须是绑定的默认模型") {
+		t.Fatalf("首项非绑定模型应报中文错误: %v", err)
+	}
+}
+
 // TestRebaseAccessDoc 覆盖 Important#1 的合成基线重定位纯函数：值等于旧基线
 // 的继承键删除（切换模型/更新全局后不再冻结）、不同值与其他键原样保留；
 // 解析失败返回 error（调用方保留原文）。

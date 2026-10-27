@@ -233,6 +233,39 @@ func (s AccessConfigs) PreviewDoc(appType, logicalModelID, settingsJSON string) 
 	return string(b), nil
 }
 
+// PreviewCodexConfig 返回「应用该文档后 Codex config.toml 的样子」：Get 逻辑
+// 模型（不存在报中文错误）→ parseAccessDoc("codex") → GlobalConfig →
+// composeAccessEnv（含真实网关令牌）→ projectCodex。projectCodex 会读取并合并
+// 现有 <home>/.codex/config.toml 的用户键，但本方法**不写任何文件**（不建目录、
+// 不落 config.toml、不落模型目录），仅供 UI 只读预览。保存路径仍由 Apply
+// 负责写入。
+func (s AccessConfigs) PreviewCodexConfig(logicalModelID, settingsJSON string) (string, error) {
+	lm, err := s.A.Store().LogicalModels().Get(logicalModelID)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return "", fmt.Errorf("逻辑模型不存在")
+		}
+		return "", err
+	}
+	doc, env, err := parseAccessDoc("codex", settingsJSON)
+	if err != nil {
+		return "", err
+	}
+	global, err := s.GlobalConfig("codex")
+	if err != nil {
+		return "", err
+	}
+	composed, err := composeAccessEnv("codex", Gateway{A: s.A}.Status(), lm.Name, global, env)
+	if err != nil {
+		return "", err
+	}
+	cfgBytes, _, err := s.projectCodex(composed, lm.Name, doc)
+	if err != nil {
+		return "", err
+	}
+	return string(cfgBytes), nil
+}
+
 // prepareDoc 解析+归一化接入文档并序列化（Create/Update 共用）：parseAccessDoc
 // 校验 → （Codex）模型列表语义校验与回退固化、子代理/自动审批归属校验 →
 // normalizeAccessEnv 剔除锁定键与未定制键 → env 写回文档 → 2 空格缩进。
