@@ -988,8 +988,8 @@ func TestParseAccessDocValidation(t *testing.T) {
 	if _, _, err := parseAccessDoc("claude", `{"env":{"A":1}}`); err == nil || !strings.Contains(err.Error(), "env 值必须是字符串") {
 		t.Fatalf("env 值非字符串应报错: %v", err)
 	}
-	// codex 仅允许 env 键
-	if _, _, err := parseAccessDoc("codex", `{"env":{},"mcpServers":{}}`); err == nil || !strings.Contains(err.Error(), "Codex 配置仅支持 env 键") {
+	// codex 仅允许 env、models、codex 键
+	if _, _, err := parseAccessDoc("codex", `{"env":{},"mcpServers":{}}`); err == nil || !strings.Contains(err.Error(), "Codex 配置仅支持 env、models、codex 键") {
 		t.Fatalf("codex 顶层键应报错: %v", err)
 	}
 	// 非法 appType

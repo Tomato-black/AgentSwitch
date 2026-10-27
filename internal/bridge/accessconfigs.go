@@ -293,11 +293,11 @@ func validateAccessAppType(appType string) error {
 	return nil
 }
 
-// parseAccessDoc 解析接入配置文档（spec 2026-10-19 §5.2）：根必须是 JSON 对象
-// （空串视为空对象）；env 缺省/null 视为空对象、必须是字符串值对象；Codex 仅
-// 允许 env 键（其 live 是 TOML，顶层文档编辑仅 Claude 享受）。UseNumber 保留
-// 大整数原文（避免 float64 往返丢精度）；尾随垃圾/多余 JSON 值拒绝。返回解析
-// 后的文档与提取的 env 字符串 map。
+// parseAccessDoc 解析接入配置文档（spec 2026-10-19 §5.2、2026-10-27 §4.2）：
+// 根必须是 JSON 对象（空串视为空对象）；env 缺省/null 视为空对象、必须是
+// 字符串值对象；Codex 仅允许 env、models、codex 三个顶层键，models/codex 的
+// 结构校验见 parseCodexSettings。UseNumber 保留大整数原文（避免 float64 往返
+// 丢精度）；尾随垃圾/多余 JSON 值拒绝。返回解析后的文档与提取的 env 字符串 map。
 func parseAccessDoc(appType, raw string) (map[string]any, map[string]string, error) {
 	if err := validateAccessAppType(appType); err != nil {
 		return nil, nil, err
@@ -342,9 +342,12 @@ func parseAccessDoc(appType, raw string) (map[string]any, map[string]string, err
 	}
 	if appType == "codex" {
 		for k := range doc {
-			if k != "env" {
-				return nil, nil, fmt.Errorf("Codex 配置仅支持 env 键")
+			if k != "env" && k != "models" && k != "codex" {
+				return nil, nil, fmt.Errorf("Codex 配置仅支持 env、models、codex 键")
 			}
+		}
+		if _, err := parseCodexSettings(doc); err != nil {
+			return nil, nil, err
 		}
 	}
 	return doc, env, nil
