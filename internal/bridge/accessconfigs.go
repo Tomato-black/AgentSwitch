@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -233,7 +234,8 @@ func (s AccessConfigs) PreviewDoc(appType, logicalModelID, settingsJSON string) 
 }
 
 // prepareDoc 解析+归一化接入文档并序列化（Create/Update 共用）：parseAccessDoc
-// 校验 → normalizeAccessEnv 剔除锁定键与未定制键 → env 写回文档 → 2 空格缩进。
+// 校验 → （Codex）模型列表语义校验与回退固化、子代理/自动审批归属校验 →
+// normalizeAccessEnv 剔除锁定键与未定制键 → env 写回文档 → 2 空格缩进。
 func (s AccessConfigs) prepareDoc(appType, modelName, settingsJSON string) (string, error) {
 	doc, env, err := parseAccessDoc(appType, settingsJSON)
 	if err != nil {
@@ -247,6 +249,34 @@ func (s AccessConfigs) prepareDoc(appType, modelName, settingsJSON string) (stri
 			return "", err
 		}
 		return string(b), nil
+	}
+	if appType == "codex" {
+		// Codex 模型列表语义校验（spec 2026-10-27 §4.2）：显式列表须存在/
+		// 启用且首项为绑定模型；缺省则在此固化回退列表，旧 env-only 配置
+		// 保存后即拥有显式列表。子代理/自动审批模型必须落在列表内。
+		settings, err := parseCodexSettings(doc)
+		if err != nil {
+			return "", err
+		}
+		models, err := s.resolveCodexModels(modelName, settings)
+		if err != nil {
+			return "", err
+		}
+		if settings.SubagentModel != "" && !slices.Contains(models, settings.SubagentModel) {
+			return "", fmt.Errorf("子代理模型 %s 不在模型列表中", settings.SubagentModel)
+		}
+		if settings.AutoReviewModel != "" && !slices.Contains(models, settings.AutoReviewModel) {
+			return "", fmt.Errorf("自动审批模型 %s 不在模型列表中", settings.AutoReviewModel)
+		}
+		doc["models"] = toAnyStrings(models)
+		// codex 字段去空白后写回；未知键已在 parseAccessDoc 拒绝。
+		if v, ok := doc["codex"]; ok && v != nil {
+			doc["codex"] = map[string]any{
+				"subagent_model":            settings.SubagentModel,
+				"subagent_reasoning_effort": settings.SubagentReasoningEffort,
+				"auto_review_model":         settings.AutoReviewModel,
+			}
+		}
 	}
 	global, err := s.GlobalConfig(appType)
 	if err != nil {

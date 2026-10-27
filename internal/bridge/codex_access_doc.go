@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -34,16 +35,19 @@ func parseCodexSettings(doc map[string]any) (codexAccessSettings, error) {
 			return out, fmt.Errorf("models 必须是非空字符串数组")
 		}
 		seen := make(map[string]bool, len(models))
-		for _, name := range models {
-			if strings.TrimSpace(name) == "" {
+		trimmed := make([]string, 0, len(models))
+		for _, raw := range models {
+			name := strings.TrimSpace(raw)
+			if name == "" {
 				return out, fmt.Errorf("models 中的模型名不能为空")
 			}
 			if seen[name] {
 				return out, fmt.Errorf("models 中存在重复模型：%s", name)
 			}
 			seen[name] = true
+			trimmed = append(trimmed, name)
 		}
-		out.Models = models
+		out.Models = trimmed
 	}
 
 	if v, ok := doc["codex"]; ok && v != nil {
@@ -73,7 +77,7 @@ func parseCodexSettings(doc map[string]any) (codexAccessSettings, error) {
 			if !ok {
 				return out, fmt.Errorf("codex.%s 必须是字符串", f.key)
 			}
-			*f.dst = s
+			*f.dst = strings.TrimSpace(s)
 		}
 		if out.SubagentReasoningEffort != "" && !reasoningLevelWhitelist[out.SubagentReasoningEffort] {
 			return out, fmt.Errorf("未知思考等级：%s", out.SubagentReasoningEffort)
@@ -93,10 +97,16 @@ func codexSettingsFromDoc(doc map[string]any) codexAccessSettings {
 	if !ok {
 		return out
 	}
-	out.SubagentModel, _ = m["subagent_model"].(string)
-	out.SubagentReasoningEffort, _ = m["subagent_reasoning_effort"].(string)
-	out.AutoReviewModel, _ = m["auto_review_model"].(string)
+	out.SubagentModel = lenientTrimmedString(m["subagent_model"])
+	out.SubagentReasoningEffort = lenientTrimmedString(m["subagent_reasoning_effort"])
+	out.AutoReviewModel = lenientTrimmedString(m["auto_review_model"])
 	return out
+}
+
+// lenientTrimmedString 取字符串值并去首尾空白；非字符串/缺失按空处理。
+func lenientTrimmedString(v any) string {
+	s, _ := v.(string)
+	return strings.TrimSpace(s)
 }
 
 // codexModelsFromDoc 提取文档显式声明的模型列表；第二个返回值表示是否
@@ -111,12 +121,87 @@ func codexModelsFromDoc(doc map[string]any) ([]string, bool) {
 	if !ok || len(models) == 0 {
 		return nil, false
 	}
-	for _, name := range models {
-		if strings.TrimSpace(name) == "" {
+	trimmed := make([]string, 0, len(models))
+	for _, raw := range models {
+		name := strings.TrimSpace(raw)
+		if name == "" {
 			return nil, false
 		}
+		trimmed = append(trimmed, name)
 	}
-	return models, true
+	return trimmed, true
+}
+
+// resolveCodexModels 把 Codex 接入文档的模型列表解析为最终生效的有序列表
+//（spec 2026-10-27 §4.2、§7）：
+//   - 显式列表非空：每项必须存在且启用，首项必须是绑定的默认模型；
+//   - 缺省/空列表：回退为「绑定模型 + 全部启用逻辑模型（按名排序）」，
+//     供旧 env-only 配置在保存时固化下来。
+//
+// 绑定的默认模型必须存在且启用，否则报错（指明改绑/启用动作）。
+func (s AccessConfigs) resolveCodexModels(bound string, settings codexAccessSettings) ([]string, error) {
+	bound = strings.TrimSpace(bound)
+	if bound == "" {
+		return nil, fmt.Errorf("请先选择逻辑模型")
+	}
+	lms, err := s.A.Store().LogicalModels().List()
+	if err != nil {
+		return nil, err
+	}
+	enabled := make(map[string]bool, len(lms))
+	for _, lm := range lms {
+		enabled[lm.Name] = lm.Enabled
+	}
+	boundEnabled, ok := enabled[bound]
+	if !ok {
+		return nil, fmt.Errorf("绑定的默认模型 %s 不存在，请改绑", bound)
+	}
+	if !boundEnabled {
+		return nil, fmt.Errorf("绑定的默认模型 %s 已停用，请启用或改绑", bound)
+	}
+	if len(settings.Models) == 0 {
+		rest := make([]string, 0, len(lms))
+		for _, lm := range lms {
+			if lm.Enabled && lm.Name != bound {
+				rest = append(rest, lm.Name)
+			}
+		}
+		sort.Strings(rest)
+		return append([]string{bound}, rest...), nil
+	}
+	out := make([]string, 0, len(settings.Models))
+	seen := make(map[string]bool, len(settings.Models))
+	for i, raw := range settings.Models {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			return nil, fmt.Errorf("模型列表中的模型名不能为空")
+		}
+		if seen[name] {
+			return nil, fmt.Errorf("模型列表中存在重复模型：%s", name)
+		}
+		seen[name] = true
+		supported, ok := enabled[name]
+		if !ok {
+			return nil, fmt.Errorf("模型 %s 不存在，请先在逻辑模型页创建", name)
+		}
+		if !supported {
+			return nil, fmt.Errorf("模型 %s 已停用，请启用或从模型列表中移除", name)
+		}
+		if i == 0 && name != bound {
+			return nil, fmt.Errorf("第一个模型必须是绑定的默认模型 %s", bound)
+		}
+		out = append(out, name)
+	}
+	return out, nil
+}
+
+// toAnyStrings 把 []string 转为 JSON 编码用 []any（写回文档 models 键）。
+func toAnyStrings(xs []string) []any {
+	out := make([]any, len(xs))
+	for i, x := range xs {
+		out[i] = x
+	}
+	return out
 }
 
 // asStringList 接受 JSON 解码得到的 []any 或内部构造的 []string。

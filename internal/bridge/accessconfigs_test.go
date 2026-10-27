@@ -366,6 +366,77 @@ func TestComposeForCodexResolvesModelAndErrorsOnMissing(t *testing.T) {
 	}
 }
 
+func TestPrepareCodexResolvesModelsAndValidates(t *testing.T) {
+	a := tempApp(t)
+	for _, lm := range []storage.LogicalModel{
+		{ID: "lm1", Name: "my-code", Enabled: true},
+		{ID: "lm2", Name: "test", Enabled: true},
+		{ID: "lm3", Name: "off", Enabled: false},
+	} {
+		if _, err := a.Store().LogicalModels().Save(lm); err != nil {
+			t.Fatal(err)
+		}
+	}
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+
+	// 旧 env-only 配置：保存时写入回退列表 [bound + 启用模型]；
+	// 锁定 env 键仍被剔除。
+	raw, err := acc.prepareDoc("codex", "my-code", `{"env":{"RUST_LOG":"debug","OPENAI_API_KEY":"steal"}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		t.Fatal(err)
+	}
+	models, ok := doc["models"].([]any)
+	if !ok || len(models) != 2 || models[0] != "my-code" || models[1] != "test" {
+		t.Fatalf("fallback models 应写回文档: %s", raw)
+	}
+	env, _ := doc["env"].(map[string]any)
+	if env["RUST_LOG"] != "debug" {
+		t.Fatalf("自定义 env 应保留: %s", raw)
+	}
+	if _, locked := env["OPENAI_API_KEY"]; locked {
+		t.Fatalf("锁定 env 键应剔除: %s", raw)
+	}
+
+	// 显式列表去空白后保留顺序，codex 字段归一化。
+	raw, err = acc.prepareDoc("codex", "my-code",
+		`{"models":[" my-code ","test"],"codex":{"subagent_model":" test ","subagent_reasoning_effort":" high ","auto_review_model":""}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc = nil
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		t.Fatal(err)
+	}
+	models, _ = doc["models"].([]any)
+	if len(models) != 2 || models[0] != "my-code" || models[1] != "test" {
+		t.Fatalf("%s", raw)
+	}
+	codex, _ := doc["codex"].(map[string]any)
+	if codex["subagent_model"] != "test" || codex["subagent_reasoning_effort"] != "high" || codex["auto_review_model"] != "" {
+		t.Fatalf("codex 字段应去空白: %s", raw)
+	}
+
+	cases := []struct {
+		raw  string
+		want string
+	}{
+		{`{"models":["test","my-code"]}`, "第一个模型必须是绑定的默认模型"},
+		{`{"models":["my-code","off"]}`, "已停用"},
+		{`{"models":["my-code","ghost"]}`, "不存在"},
+		{`{"codex":{"subagent_model":"ghost"}}`, "子代理模型 ghost 不在模型列表中"},
+		{`{"codex":{"auto_review_model":"ghost"}}`, "自动审批模型 ghost 不在模型列表中"},
+	}
+	for _, tc := range cases {
+		if _, err := acc.prepareDoc("codex", "my-code", tc.raw); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("%s: err=%v，应包含 %q", tc.raw, err, tc.want)
+		}
+	}
+}
+
 func TestAccessConfigsCRUDAndView(t *testing.T) {
 	a := tempApp(t)
 	acc := AccessConfigs{A: a, Home: t.TempDir()}

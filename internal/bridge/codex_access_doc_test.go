@@ -3,6 +3,8 @@ package bridge
 import (
 	"strings"
 	"testing"
+
+	"AgentSwitch/internal/storage"
 )
 
 func TestParseCodexSettings(t *testing.T) {
@@ -99,6 +101,105 @@ func TestParseAccessDocCodexRejectsBadModels(t *testing.T) {
 	} {
 		if _, _, err := parseAccessDoc("codex", raw); err == nil {
 			t.Fatalf("应拒绝: %s", raw)
+		}
+	}
+}
+
+func TestParseCodexSettingsTrimsInputs(t *testing.T) {
+	got, err := parseCodexSettings(map[string]any{
+		"models": []any{" my-code ", "test\t"},
+		"codex": map[string]any{
+			"subagent_model":            "  test  ",
+			"subagent_reasoning_effort": " high ",
+			"auto_review_model":         "   ",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Models) != 2 || got.Models[0] != "my-code" || got.Models[1] != "test" {
+		t.Fatalf("models 应去首尾空白: %v", got.Models)
+	}
+	if got.SubagentModel != "test" || got.SubagentReasoningEffort != "high" || got.AutoReviewModel != "" {
+		t.Fatalf("codex 字段应去首尾空白: %+v", got)
+	}
+	// 去空白后重复仍须拒绝。
+	if _, err := parseCodexSettings(map[string]any{"models": []any{"a", " a"}}); err == nil {
+		t.Fatal("去空白后重复应报错")
+	}
+	// 纯空白思考等级视为空（Codex 默认），不触发白名单错误。
+	if _, err := parseCodexSettings(map[string]any{
+		"codex": map[string]any{"subagent_reasoning_effort": "   "},
+	}); err != nil {
+		t.Fatalf("纯空白思考等级应视为空: %v", err)
+	}
+}
+
+func TestResolveCodexModelsFallbackAndValidation(t *testing.T) {
+	a := tempApp(t)
+	for _, lm := range []storage.LogicalModel{
+		{ID: "lm1", Name: "my-code", Enabled: true},
+		{ID: "lm2", Name: "test", Enabled: true},
+		{ID: "lm3", Name: "off", Enabled: false},
+	} {
+		if _, err := a.Store().LogicalModels().Save(lm); err != nil {
+			t.Fatal(err)
+		}
+	}
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	got, err := acc.resolveCodexModels("my-code", codexAccessSettings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] != "my-code" || got[1] != "test" {
+		t.Fatalf("%v", got)
+	}
+	if _, err := acc.resolveCodexModels("my-code", codexAccessSettings{Models: []string{"test"}}); err == nil {
+		t.Fatal("第一项不是绑定的默认模型应报错")
+	}
+	if _, err := acc.resolveCodexModels("my-code", codexAccessSettings{Models: []string{"my-code", "off"}}); err == nil {
+		t.Fatal("停用模型应报错")
+	}
+}
+
+func TestResolveCodexModelsEdgeCases(t *testing.T) {
+	a := tempApp(t)
+	for _, lm := range []storage.LogicalModel{
+		{ID: "lm1", Name: "my-code", Enabled: true},
+		{ID: "lm2", Name: "test", Enabled: true},
+		{ID: "lm3", Name: "off", Enabled: false},
+	} {
+		if _, err := a.Store().LogicalModels().Save(lm); err != nil {
+			t.Fatal(err)
+		}
+	}
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+
+	// 显式列表去空白后保留用户顺序。
+	got, err := acc.resolveCodexModels("my-code", codexAccessSettings{Models: []string{" my-code ", "test "}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] != "my-code" || got[1] != "test" {
+		t.Fatalf("%v", got)
+	}
+
+	cases := []struct {
+		name     string
+		bound    string
+		settings codexAccessSettings
+		want     string
+	}{
+		{"去空白后重复", "my-code", codexAccessSettings{Models: []string{"my-code", " my-code "}}, "重复"},
+		{"显式列表含未知模型", "my-code", codexAccessSettings{Models: []string{"my-code", "ghost"}}, "ghost"},
+		{"显式列表含纯空白名", "my-code", codexAccessSettings{Models: []string{"my-code", "  "}}, "不能为空"},
+		{"绑定的默认模型不存在", "ghost", codexAccessSettings{}, "改绑"},
+		{"绑定的默认模型已停用", "off", codexAccessSettings{}, "已停用"},
+	}
+	for _, tc := range cases {
+		_, err := acc.resolveCodexModels(tc.bound, tc.settings)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("%s: err=%v，应包含 %q", tc.name, err, tc.want)
 		}
 	}
 }
