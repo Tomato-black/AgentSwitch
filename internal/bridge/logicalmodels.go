@@ -21,9 +21,47 @@ type TargetSpec struct {
 	Priority  int
 }
 
+// ModelMeta 是逻辑模型元数据（codex-access-models-metadata spec §4）：供
+// 模型目录生成使用；上下文窗口/思考等级由用户声明，网关不校验上游能力。
+type ModelMeta struct {
+	DisplayName           string
+	ContextWindow         int64
+	ReasoningLevels       []string
+	DefaultReasoningLevel string
+}
+
+// reasoningLevelWhitelist 是 Codex 认可的思考等级（spec §4）。
+var reasoningLevelWhitelist = map[string]bool{
+	"none": true, "minimal": true, "low": true, "medium": true,
+	"high": true, "xhigh": true, "max": true,
+}
+
+// validateModelMeta 校验元数据：思考等级须在白名单内、默认等级须属于列表、
+// 上下文窗口不得为负（0 表示沿用模板）。
+func validateModelMeta(meta ModelMeta) error {
+	if meta.ContextWindow < 0 {
+		return fmt.Errorf("上下文窗口不能为负数")
+	}
+	known := make(map[string]bool, len(meta.ReasoningLevels))
+	for _, lv := range meta.ReasoningLevels {
+		if !reasoningLevelWhitelist[lv] {
+			return fmt.Errorf("未知思考等级：%s", lv)
+		}
+		known[lv] = true
+	}
+	if meta.DefaultReasoningLevel != "" && !known[meta.DefaultReasoningLevel] {
+		return fmt.Errorf("默认思考等级必须属于思考等级列表")
+	}
+	return nil
+}
+
 // ModelView 是逻辑模型视图；Targets 按 priority 升序（故障转移链顺序）。
 type ModelView struct {
 	ID, Name, Description string
+	DisplayName           string
+	ContextWindow         int64
+	ReasoningLevels       []string
+	DefaultReasoningLevel string
 	Enabled               bool
 	Targets               []TargetView
 }
@@ -83,6 +121,8 @@ func (s LogicalModels) targetsView(modelID string) []TargetView {
 
 func (s LogicalModels) view(m storage.LogicalModel) ModelView {
 	return ModelView{ID: m.ID, Name: m.Name, Description: m.Description,
+		DisplayName: m.DisplayName, ContextWindow: m.ContextWindow,
+		ReasoningLevels: m.ReasoningLevels, DefaultReasoningLevel: m.DefaultReasoningLevel,
 		Enabled: m.Enabled, Targets: s.targetsView(m.ID)}
 }
 
@@ -122,16 +162,22 @@ func (s LogicalModels) writeTargets(modelID string, targets []TargetSpec) error 
 	return nil
 }
 
-// Create 建逻辑模型：name 匹配 ^[a-zA-Z0-9._-]+$，targets 非空；新建默认 enabled。
-func (s LogicalModels) Create(name, description string, targets []TargetSpec) (ModelView, error) {
+// Create 建逻辑模型：name 匹配 ^[a-zA-Z0-9._-]+$，targets 非空，meta 合法；
+// 新建默认 enabled。
+func (s LogicalModels) Create(name, description string, meta ModelMeta, targets []TargetSpec) (ModelView, error) {
 	if err := validateLogicalName(name); err != nil {
 		return ModelView{}, err
 	}
 	if len(targets) == 0 {
 		return ModelView{}, fmt.Errorf("至少需要一个目标")
 	}
+	if err := validateModelMeta(meta); err != nil {
+		return ModelView{}, err
+	}
 	m, err := s.A.Store().LogicalModels().Save(storage.LogicalModel{
 		Name: name, Description: description, Enabled: true,
+		DisplayName: meta.DisplayName, ContextWindow: meta.ContextWindow,
+		ReasoningLevels: meta.ReasoningLevels, DefaultReasoningLevel: meta.DefaultReasoningLevel,
 	})
 	if err != nil {
 		return ModelView{}, friendlyModelError(err)
@@ -145,7 +191,7 @@ func (s LogicalModels) Create(name, description string, targets []TargetSpec) (M
 }
 
 // Update 改逻辑模型字段并全量替换目标链（空 targets=清空链；非空校验只在 Create）。
-func (s LogicalModels) Update(id, name, description string, enabled bool, targets []TargetSpec) error {
+func (s LogicalModels) Update(id, name, description string, meta ModelMeta, enabled bool, targets []TargetSpec) error {
 	m, err := s.A.Store().LogicalModels().Get(id)
 	if err != nil {
 		return err
@@ -153,7 +199,12 @@ func (s LogicalModels) Update(id, name, description string, enabled bool, target
 	if err := validateLogicalName(name); err != nil {
 		return err
 	}
+	if err := validateModelMeta(meta); err != nil {
+		return err
+	}
 	m.Name, m.Description, m.Enabled = name, description, enabled
+	m.DisplayName, m.ContextWindow = meta.DisplayName, meta.ContextWindow
+	m.ReasoningLevels, m.DefaultReasoningLevel = meta.ReasoningLevels, meta.DefaultReasoningLevel
 	if _, err := s.A.Store().LogicalModels().Save(m); err != nil {
 		return friendlyModelError(err)
 	}

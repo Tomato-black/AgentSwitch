@@ -205,7 +205,7 @@ func (u *uiState) saveLogicalModel() {
 	}
 	name := strings.TrimSpace(u.lmEdit.name)
 	if u.editModelID == "" {
-		if _, err := u.svc.Logical.Create(name, u.lmEdit.description, targets); err != nil {
+		if _, err := u.svc.Logical.Create(name, u.lmEdit.description, bridge.ModelMeta{}, targets); err != nil {
 			u.lmEdit.msg = err.Error()
 			return
 		}
@@ -214,7 +214,7 @@ func (u *uiState) saveLogicalModel() {
 		if m, err := u.svc.Logical.Get(u.editModelID); err == nil {
 			enabled = m.Enabled
 		}
-		if err := u.svc.Logical.Update(u.editModelID, name, u.lmEdit.description, enabled, targets); err != nil {
+		if err := u.svc.Logical.Update(u.editModelID, name, u.lmEdit.description, bridge.ModelMeta{}, enabled, targets); err != nil {
 			u.lmEdit.msg = err.Error()
 			return
 		}
