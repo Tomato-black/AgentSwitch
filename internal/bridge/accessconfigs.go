@@ -452,59 +452,82 @@ func (s AccessConfigs) writeClaudeLive(doc map[string]any, env map[string]string
 	return atomicWriteFile0600(path, b)
 }
 
-// writeCodexLive 把合成 env 与逻辑模型名投影到 <home>/.codex/config.toml
-// （Codex CLI / 桌面版 / IDE 插件共用这一份文件）。语义：先「读-解析-合并」
-// 成功后再落盘，解析失败绝不改动原文件（先读后写，不猜测修复）：
-//   - 不存在建空；解析为 map[string]any（go-toml/v2：TOML 表对应嵌套
-//     map[string]any）；受管键 model=<model>、model_provider="agentswitch"、
-//     model_providers.agentswitch 子表
+// projectCodex 把合成 env、绑定的默认模型与接入文档投影为 Codex 的
+// config.toml 与模型目录字节（不落盘，供 Apply 写入与 UI 预览共用）。
+// 投影顺序（spec 2026-10-27 §4.3、§5）：
+//   - 先读取并解析现有 <home>/.codex/config.toml：解析失败在模型列表/目录
+//     生成之前中止，失败路径不产生半状态；文件不存在视为空表；未知用户
+//     键/表语义保留（TOML 注释允许丢失）。
+//   - 模型列表取文档显式 models；缺省回退「绑定模型 + 全部启用模型」并按名
+//     排序（resolveCodexModels），每项必须存在且启用——目录只为可用模型
+//     生成条目。目录条目取这些模型的元数据（codexCatalogModels），自动审批
+//     覆盖取 codex.auto_review_model（空则不写，Codex 回落主模型）。
+//   - 受管键：model=models[0]、model_provider="agentswitch"、
+//     model_catalog_json=agentswitch-model-catalog.json（桌面版模型选择器
+//     只认该文件，不读网关 /v1/models）、disable_response_storage=true、
+//     web_search="disabled"、model_providers.agentswitch 子表
 //     {name: "agentswitch"（Codex 0.143+ 必填且非空）,
 //     base_url: env["OPENAI_BASE_URL"], wire_api: "responses"
 //     （Codex 0.143+ 仅支持 Responses 线路）, requires_openai_auth: false,
 //     experimental_bearer_token: env["OPENAI_API_KEY"]}（同键替换，子表内
-//     非受管键保留）；受管键 model_catalog_json 指向本工具生成的
-//     agentswitch-model-catalog.json（桌面版模型选择器只认该文件，不读网关
-//     /v1/models）；其余顶层键/表语义保留（TOML 注释允许丢失）；0600 原子写。
+//     非受管键保留）。
 //
-// auth.json 不再读也不再写：它是官方 ChatGPT 登录文件，接入配置只把第三方
-// Key 写进 config.toml 的 provider 表（Codex 0.149 起自定义 provider 不再从
+// auth.json 不读也不写：它是官方 ChatGPT 登录文件，接入配置只把第三方 Key
+// 写进 config.toml 的 provider 表（Codex 0.149 起自定义 provider 不再从
 // auth.json 继承凭据；桌面版从 Dock 启动也不继承 shell env，故不能用
-// env_key）。模型目录模板取不到时中止，不留下半份文件。本方法不写任何日志
-// ——写入值含网关令牌（spec §9 脱敏）。
-func (s AccessConfigs) writeCodexLive(env map[string]string, model string) error {
+// env_key）。模型目录模板取不到时整次投影中止。本方法不写任何日志——写入
+// 值含网关令牌（spec §9 脱敏）。
+func (s AccessConfigs) projectCodex(env map[string]string, model string, doc map[string]any) (cfgBytes, catalogBytes []byte, err error) {
 	home := s.Home
 	if home == "" {
-		var err error
 		if home, err = os.UserHomeDir(); err != nil {
-			return err
+			return nil, nil, err
 		}
 	}
-	dir := filepath.Join(home, ".codex")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	cfgPath := filepath.Join(dir, "config.toml")
+	cfgPath := filepath.Join(home, ".codex", "config.toml")
 
 	cfg := map[string]any{}
 	if b, err := os.ReadFile(cfgPath); err == nil {
-		// 解析失败必须在任何写动作前返回，原文件保持不动。
+		// 解析失败必须在模型解析/目录生成前返回，原文件保持不动。
 		if err := toml.Unmarshal(b, &cfg); err != nil {
-			return err
+			return nil, nil, fmt.Errorf("config.toml 解析失败，请修复后重试: %w", err)
 		}
 		if cfg == nil { // 空文档 → 视为空表
 			cfg = map[string]any{}
 		}
 	} else if !errors.Is(err, fs.ErrNotExist) {
-		return err
+		return nil, nil, err
 	}
-	cfg["model"] = model
+
+	settings := codexSettingsFromDoc(doc)
+	names, err := s.resolveCodexModels(model, settings)
+	if err != nil {
+		return nil, nil, err
+	}
+	models, err := s.codexCatalogModels(names)
+	if err != nil {
+		return nil, nil, err
+	}
+	template, err := codexModelCatalogTemplateLoader()
+	if err != nil {
+		return nil, nil, err
+	}
+	catalogBytes, err = buildCodexModelCatalog(template, models, settings.AutoReviewModel)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	cfg["model"] = names[0] // models[0] 即绑定的默认模型
 	cfg["model_provider"] = "agentswitch"
+	cfg["model_catalog_json"] = codexModelCatalogFileName
+	cfg["disable_response_storage"] = true
+	cfg["web_search"] = "disabled"
 	// model_providers 子表：已存在但非表则报错（不猜测修复）。
 	providers := map[string]any{}
 	if v, ok := cfg["model_providers"]; ok && v != nil {
 		m, ok := v.(map[string]any)
 		if !ok {
-			return fmt.Errorf("config.toml 的 model_providers 不是表")
+			return nil, nil, fmt.Errorf("config.toml 的 model_providers 不是表")
 		}
 		providers = m
 	}
@@ -512,7 +535,7 @@ func (s AccessConfigs) writeCodexLive(env map[string]string, model string) error
 	if v, ok := providers["agentswitch"]; ok && v != nil {
 		m, ok := v.(map[string]any)
 		if !ok {
-			return fmt.Errorf("config.toml 的 model_providers.agentswitch 不是表")
+			return nil, nil, fmt.Errorf("config.toml 的 model_providers.agentswitch 不是表")
 		}
 		agent = m
 	}
@@ -524,29 +547,30 @@ func (s AccessConfigs) writeCodexLive(env map[string]string, model string) error
 	providers["agentswitch"] = agent
 	cfg["model_providers"] = providers
 
-	// 模型目录：桌面版模型选择器只读 model_catalog_json，不读网关 /v1/models。
-	// 先备齐目录内容再落盘，模板缺失时整次写入中止（不留下指向半份目录的配置）。
-	names, err := s.codexLogicalModelsForCatalog(model)
-	if err != nil {
-		return err
+	if cfgBytes, err = toml.Marshal(cfg); err != nil {
+		return nil, nil, err
 	}
-	models, err := s.codexCatalogModels(names)
-	if err != nil {
-		return err
-	}
-	template, err := codexModelCatalogTemplateLoader()
-	if err != nil {
-		return err
-	}
-	// 自动审批模型由接入文档 codex.auto_review_model 决定；本路径尚未持有
-	// 文档（Task 7 改为投影管线），先不写覆盖。
-	catalogBytes, err := buildCodexModelCatalog(template, models, "")
-	if err != nil {
-		return err
-	}
-	cfg["model_catalog_json"] = codexModelCatalogFileName
+	return cfgBytes, catalogBytes, nil
+}
 
-	cfgBytes, err := toml.Marshal(cfg)
+// writeCodexLive 把投影结果落到 <home>/.codex/config.toml 与模型目录
+// （Codex CLI / 桌面版 / IDE 插件共用这一份文件）。语义：先「读-解析-投影」
+// 全部成功后再落盘，解析/校验失败绝不改动原文件（不猜测修复）；目录先写、
+// config.toml 后写（配置指向目录，目录写失败时配置保持原样）；两者均 0600
+// 原子写。
+func (s AccessConfigs) writeCodexLive(env map[string]string, model string, doc map[string]any) error {
+	home := s.Home
+	if home == "" {
+		var err error
+		if home, err = os.UserHomeDir(); err != nil {
+			return err
+		}
+	}
+	dir := filepath.Join(home, ".codex")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	cfgBytes, catalogBytes, err := s.projectCodex(env, model, doc)
 	if err != nil {
 		return err
 	}
@@ -554,7 +578,7 @@ func (s AccessConfigs) writeCodexLive(env map[string]string, model string) error
 	if err := atomicWriteFile0600(filepath.Join(dir, codexModelCatalogFileName), catalogBytes); err != nil {
 		return err
 	}
-	return atomicWriteFile0600(cfgPath, cfgBytes)
+	return atomicWriteFile0600(filepath.Join(dir, "config.toml"), cfgBytes)
 }
 
 // liveBackupFiles 返回 appType 对应的 live 文件相对路径列表（简报钉死）：
@@ -820,7 +844,7 @@ func (s AccessConfigs) Remove(id string) error {
 
 // Apply 把配置合成后投影到 Agent live 文件并置为 current：Get(id) →
 // composeFor → backupLive(appType) → 按 appType 写 live（claude→
-// writeClaudeLive(doc, env)；codex→writeCodexLive(env, model)）→ SetCurrent
+// writeClaudeLive(doc, env)；codex→writeCodexLive(env, model, doc)）→ SetCurrent
 // (appType, id)。任一步失败即停——含备份失败（不写 live、不置 current），
 // 失败路径不产生半状态；composeFor 的逻辑模型缺失错误直接透传。
 // 审计行绝不记录 env/overrides 值或 token（spec §9 脱敏）。
@@ -854,7 +878,7 @@ func (s AccessConfigs) Apply(id string) error {
 	case "claude":
 		err = s.writeClaudeLive(doc, env)
 	case "codex":
-		err = s.writeCodexLive(env, model)
+		err = s.writeCodexLive(env, model, doc)
 	}
 	if err != nil {
 		return err
@@ -1165,7 +1189,7 @@ func (s AccessConfigs) RegenerateDerived() {
 			if appType == "claude" {
 				err = s.writeClaudeLive(doc, env)
 			} else {
-				err = s.writeCodexLive(env, model)
+				err = s.writeCodexLive(env, model, doc)
 			}
 			if err != nil {
 				s.A.Log().Error("access derived refresh failed", "app", appType, "stage", "live", "err", err)

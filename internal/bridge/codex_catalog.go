@@ -27,33 +27,6 @@ const codexModelCatalogFileName = "agentswitch-model-catalog.json"
 // 可执行文件跑 `debug models --bundled`；测试替换为固定模板，保持离线。
 var codexModelCatalogTemplateLoader = loadCodexModelCatalogTemplate
 
-// codexLogicalModelsForCatalog 返回目录应包含的逻辑模型名：绑定模型恒在
-// 第一位（桌面版默认选它），其余启用的按名排序；禁用的不收录。绑定/默认
-// 模型也必须启用——codexCatalogModels 会校验，停用时目录生成失败并报中文
-// 错误，避免生成指向不可用模型的目录。
-func (s AccessConfigs) codexLogicalModelsForCatalog(bound string) ([]string, error) {
-	bound = strings.TrimSpace(bound)
-	if bound == "" {
-		return nil, fmt.Errorf("逻辑模型名为空")
-	}
-	lms, err := s.A.Store().LogicalModels().List()
-	if err != nil {
-		return nil, err
-	}
-	seen := map[string]bool{bound: true}
-	var others []string
-	for _, lm := range lms {
-		name := strings.TrimSpace(lm.Name)
-		if !lm.Enabled || name == "" || seen[name] {
-			continue
-		}
-		seen[name] = true
-		others = append(others, name)
-	}
-	sort.Strings(others)
-	return append([]string{bound}, others...), nil
-}
-
 // codexCatalogModel 是目录条目所需的逻辑模型元数据（spec 2026-10-27 §4.4）。
 // Name 是网关对外模型名（slug），其余字段为空/零值时按模板或名字回退。
 type codexCatalogModel struct {

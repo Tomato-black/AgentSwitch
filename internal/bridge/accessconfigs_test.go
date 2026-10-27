@@ -98,7 +98,7 @@ func TestCodexLiveProjectionPreservesAndMerges(t *testing.T) {
 	os.MkdirAll(dir, 0o755)
 	os.WriteFile(filepath.Join(dir, "config.toml"), []byte("preferred_auth_method = \"apikey\"\n\n[mcp_servers.foo]\ncommand = \"mcp\"\n"), 0o600)
 	if err := acc.writeCodexLive(map[string]string{
-		"OPENAI_BASE_URL": "http://127.0.0.1:17890/v1", "OPENAI_API_KEY": "tok"}, "my-code"); err != nil {
+		"OPENAI_BASE_URL": "http://127.0.0.1:17890/v1", "OPENAI_API_KEY": "tok"}, "my-code", nil); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(filepath.Join(dir, "config.toml"))
@@ -145,7 +145,7 @@ func TestCodexLiveLeavesAuthJSONUntouched(t *testing.T) {
 	original := `{"tokens":{"access_token":"official"},"OPENAI_API_KEY":"user-key"}`
 	os.WriteFile(filepath.Join(dir, "auth.json"), []byte(original), 0o600)
 	if err := acc.writeCodexLive(map[string]string{
-		"OPENAI_BASE_URL": "http://127.0.0.1:17890/v1", "OPENAI_API_KEY": "tok"}, "m"); err != nil {
+		"OPENAI_BASE_URL": "http://127.0.0.1:17890/v1", "OPENAI_API_KEY": "tok"}, "m", nil); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(filepath.Join(dir, "auth.json"))
@@ -162,7 +162,7 @@ func TestCodexLiveProjectionInvalidTOMLAborts(t *testing.T) {
 	dir := filepath.Join(acc.Home, ".codex")
 	os.MkdirAll(dir, 0o755)
 	os.WriteFile(filepath.Join(dir, "config.toml"), []byte("model = "), 0o600)
-	if err := acc.writeCodexLive(map[string]string{"OPENAI_API_KEY": "x"}, "m"); err == nil {
+	if err := acc.writeCodexLive(map[string]string{"OPENAI_API_KEY": "x"}, "m", nil); err == nil {
 		t.Fatal("非法 TOML 应中止")
 	}
 	b, _ := os.ReadFile(filepath.Join(dir, "config.toml"))
@@ -181,7 +181,7 @@ func TestCodexLiveIgnoresInvalidAuthJSON(t *testing.T) {
 	os.MkdirAll(dir, 0o755)
 	os.WriteFile(filepath.Join(dir, "auth.json"), []byte("{broken"), 0o600)
 	if err := acc.writeCodexLive(map[string]string{
-		"OPENAI_BASE_URL": "http://127.0.0.1:17890/v1", "OPENAI_API_KEY": "x"}, "m"); err != nil {
+		"OPENAI_BASE_URL": "http://127.0.0.1:17890/v1", "OPENAI_API_KEY": "x"}, "m", nil); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(filepath.Join(dir, "config.toml"))
@@ -195,6 +195,86 @@ func TestCodexLiveIgnoresInvalidAuthJSON(t *testing.T) {
 	ab, _ := os.ReadFile(filepath.Join(dir, "auth.json"))
 	if string(ab) != "{broken" {
 		t.Fatalf("auth.json 不应被改动: %s", ab)
+	}
+}
+
+// TestProjectCodexBaseManagedKeys 钉死基础受管键（spec 2026-10-27 §4.3、§5）：
+// 默认模型、提供方、目录引用与两个网关兼容项固定写入。
+func TestProjectCodexBaseManagedKeys(t *testing.T) {
+	a := tempApp(t)
+	seedLogicalModel(t, a, "my-code")
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	if err := acc.writeCodexLive(map[string]string{
+		"OPENAI_BASE_URL": "http://127.0.0.1:17890/v1", "OPENAI_API_KEY": "tok"},
+		"my-code", map[string]any{"models": []any{"my-code"}}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(acc.Home, ".codex", "config.toml"))
+	var cfg map[string]any
+	if err := toml.Unmarshal(b, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg["model"] != "my-code" || cfg["model_provider"] != "agentswitch" ||
+		cfg["model_catalog_json"] != codexModelCatalogFileName ||
+		cfg["disable_response_storage"] != true || cfg["web_search"] != "disabled" {
+		t.Fatalf("%v", cfg)
+	}
+}
+
+// TestProjectCodexUsesExplicitModelList 钉死投影使用文档显式模型列表：只列
+// 一个已启用模型时目录只含该模型（不再回退为「全部启用模型」）。
+func TestProjectCodexUsesExplicitModelList(t *testing.T) {
+	a := tempApp(t)
+	seedLogicalModel(t, a, "my-code")
+	seedLogicalModel(t, a, "other")
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	if err := acc.writeCodexLive(map[string]string{
+		"OPENAI_BASE_URL": "http://127.0.0.1:17890/v1", "OPENAI_API_KEY": "tok"},
+		"my-code", map[string]any{"models": []any{"my-code"}}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(acc.Home, ".codex", codexModelCatalogFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var catalog struct {
+		Models []map[string]any `json:"models"`
+	}
+	if err := json.Unmarshal(b, &catalog); err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.Models) != 1 || catalog.Models[0]["slug"] != "my-code" {
+		t.Fatalf("显式模型列表未生效（应只含 my-code）: %s", b)
+	}
+}
+
+// TestProjectCodexCatalogAutoReview 钉死目录自动审批覆盖取自文档
+// codex.auto_review_model（Task 6 交接：投影路径必须传入该值）。
+func TestProjectCodexCatalogAutoReview(t *testing.T) {
+	a := tempApp(t)
+	seedLogicalModel(t, a, "my-code")
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	doc := map[string]any{
+		"models": []any{"my-code"},
+		"codex":  map[string]any{"auto_review_model": "my-code"},
+	}
+	if err := acc.writeCodexLive(map[string]string{
+		"OPENAI_BASE_URL": "http://127.0.0.1:17890/v1", "OPENAI_API_KEY": "tok"},
+		"my-code", doc); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(acc.Home, ".codex", codexModelCatalogFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var catalog struct {
+		Models []map[string]any `json:"models"`
+	}
+	if err := json.Unmarshal(b, &catalog); err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.Models) != 1 || catalog.Models[0]["auto_review_model_override"] != "my-code" {
+		t.Fatalf("auto_review_model_override 未写入: %s", b)
 	}
 }
 

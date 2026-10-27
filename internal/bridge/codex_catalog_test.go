@@ -59,7 +59,7 @@ func TestCodexCatalogIncludesEnabledModelsBoundFirst(t *testing.T) {
 	}
 	acc := AccessConfigs{A: a, Home: t.TempDir()}
 	if err := acc.writeCodexLive(map[string]string{
-		"OPENAI_BASE_URL": "http://127.0.0.1:17890/v1", "OPENAI_API_KEY": "tok"}, "my-code"); err != nil {
+		"OPENAI_BASE_URL": "http://127.0.0.1:17890/v1", "OPENAI_API_KEY": "tok"}, "my-code", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -139,7 +139,7 @@ func TestCodexCatalogFailureAbortsWithoutWriting(t *testing.T) {
 	}
 	defer func() { codexModelCatalogTemplateLoader = old }()
 
-	if err := acc.writeCodexLive(map[string]string{"OPENAI_API_KEY": "x"}, "m"); err == nil {
+	if err := acc.writeCodexLive(map[string]string{"OPENAI_API_KEY": "x"}, "m", nil); err == nil {
 		t.Fatal("模板缺失应报错")
 	}
 	got, err := os.ReadFile(filepath.Join(dir, "config.toml"))
@@ -325,7 +325,7 @@ func TestCodexCatalogRejectsDisabledBound(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := acc.writeCodexLive(map[string]string{"OPENAI_API_KEY": "x"}, "off")
+	err := acc.writeCodexLive(map[string]string{"OPENAI_API_KEY": "x"}, "off", nil)
 	if err == nil || !strings.Contains(err.Error(), "off") || !strings.Contains(err.Error(), "已停用") {
 		t.Fatalf("停用绑定模型错误 = %v", err)
 	}
