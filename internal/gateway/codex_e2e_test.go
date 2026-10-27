@@ -74,8 +74,8 @@ name = "agentswitch"
 base_url = "`+gw.URL+`/v1"
 wire_api = "responses"
 requires_openai_auth = false
+experimental_bearer_token = "tok"
 `), 0o600)
-	os.WriteFile(filepath.Join(home, ".codex", "auth.json"), []byte(`{"OPENAI_API_KEY":"tok"}`), 0o600)
 
 	cmd := exec.Command(codexPath, "exec", "--skip-git-repo-check",
 		"--dangerously-bypass-approvals-and-sandbox", "run echo hi")

@@ -213,16 +213,20 @@ item 形状与 Codex 探针/cc-switch 一致：
 ```toml
 model = "<逻辑模型名>"
 model_provider = "agentswitch"
+model_catalog_json = "agentswitch-model-catalog.json"
 
 [model_providers.agentswitch]
 name = "agentswitch"
 base_url = "<OPENAI_BASE_URL>"
 wire_api = "responses"
 requires_openai_auth = false
+experimental_bearer_token = "<OPENAI_API_KEY>"
 ```
 
 - `name` 是 Codex 0.143+ 的必填键（非空；缺失时报 `provider name must not be empty`），由 AgentSwitch 作为受管键写入。
-- 只修改受管键，其余键保留；写前备份语义不变。
+- **2026-10-27 修订**：第三方 Key 写入 provider 表的 `experimental_bearer_token`（Codex 0.149 起自定义 provider 不再从 `auth.json` 继承凭据；桌面版从 Dock/开始菜单启动也不继承 shell env，故不用 `env_key`）。`auth.json` 只由 Codex 维护官方 ChatGPT 登录，接入配置不读写它；Codex CLI / 桌面版 / IDE 插件共用本文件。
+- **2026-10-27 模型目录**：同时生成 `agentswitch-model-catalog.json`（用 Codex 自带 `debug models --bundled` 模板克隆逻辑模型条目，绑定模型排第一，其余启用的在后），并写 `model_catalog_json`。桌面版模型选择器只读该文件、不读网关 `/v1/models`；没有它时桌面版会把旧目录里的模型名回写进 `model`，网关收到未登记模型直接 404。
+- 只修改受管键，其余键保留；写前备份语义不变（Codex 只备份 `config.toml`）。
 - 老配置迁移：**仅当用户重新「应用」接入配置（或保存/令牌/端口联动）时改写**；不新增启动自愈、不做启动时写入用户文件。
 - README 与 CLAUDE.md 同步说明「Codex 需 0.143+ 的 responses 线路；旧配置需重新应用一次」。
 

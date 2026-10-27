@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,6 +21,10 @@ import (
 	"AgentSwitch/internal/app"
 	"AgentSwitch/internal/storage"
 )
+
+// accessPlatform 是接入相关平台分支的注入点（默认当前平台）：测试在
+// 非 Windows 主机上替换它，覆盖 Windows 路径/启动器/终端分派。
+var accessPlatform = runtime.GOOS
 
 // AccessConfigs 是接入配置管理面（agent-access-config spec）：把
 // 「逻辑模型 × Agent」的配置合成与投影整理为桌面可调用的服务。
@@ -414,23 +419,25 @@ func (s AccessConfigs) writeClaudeLive(doc map[string]any, env map[string]string
 	return atomicWriteFile0600(path, b)
 }
 
-// writeCodexLive 把合成 env 与逻辑模型名投影到 <home>/.codex/ 的两个 live
-// 文件（config.toml + auth.json）。语义：两个文件都各自「读-解析-合并」成功
-// 后才开始落盘——**任一解析失败则两个文件都不写**（一败俱不写），解析失败
-// 绝不改动原文件（先读后写，不猜测修复）：
-//   - config.toml：不存在建空；解析为 map[string]any（go-toml/v2：TOML 表
-//     对应嵌套 map[string]any）；受管键 model=<model>、
-//     model_provider="agentswitch"、model_providers.agentswitch 子表
+// writeCodexLive 把合成 env 与逻辑模型名投影到 <home>/.codex/config.toml
+// （Codex CLI / 桌面版 / IDE 插件共用这一份文件）。语义：先「读-解析-合并」
+// 成功后再落盘，解析失败绝不改动原文件（先读后写，不猜测修复）：
+//   - 不存在建空；解析为 map[string]any（go-toml/v2：TOML 表对应嵌套
+//     map[string]any）；受管键 model=<model>、model_provider="agentswitch"、
+//     model_providers.agentswitch 子表
 //     {name: "agentswitch"（Codex 0.143+ 必填且非空）,
 //     base_url: env["OPENAI_BASE_URL"], wire_api: "responses"
-//     （Codex 0.143+ 仅支持 Responses 线路）, requires_openai_auth: false}
-//     （同键替换，子表内非受管键保留）；其余
-//     顶层键/表语义保留（TOML 注释允许丢失）；0600 原子写。
-//   - auth.json：不存在建空对象；JSON 解析失败中止；受管键 OPENAI_API_KEY
-//     = env["OPENAI_API_KEY"]；其余键保留；0600 原子写。
+//     （Codex 0.143+ 仅支持 Responses 线路）, requires_openai_auth: false,
+//     experimental_bearer_token: env["OPENAI_API_KEY"]}（同键替换，子表内
+//     非受管键保留）；受管键 model_catalog_json 指向本工具生成的
+//     agentswitch-model-catalog.json（桌面版模型选择器只认该文件，不读网关
+//     /v1/models）；其余顶层键/表语义保留（TOML 注释允许丢失）；0600 原子写。
 //
-// 落盘顺序：任一写失败即中止、不写第二个。本方法不写任何日志——写入值
-// 含网关令牌（spec §9 脱敏）。
+// auth.json 不再读也不再写：它是官方 ChatGPT 登录文件，接入配置只把第三方
+// Key 写进 config.toml 的 provider 表（Codex 0.149 起自定义 provider 不再从
+// auth.json 继承凭据；桌面版从 Dock 启动也不继承 shell env，故不能用
+// env_key）。模型目录模板取不到时中止，不留下半份文件。本方法不写任何日志
+// ——写入值含网关令牌（spec §9 脱敏）。
 func (s AccessConfigs) writeCodexLive(env map[string]string, model string) error {
 	home := s.Home
 	if home == "" {
@@ -444,9 +451,7 @@ func (s AccessConfigs) writeCodexLive(env map[string]string, model string) error
 		return err
 	}
 	cfgPath := filepath.Join(dir, "config.toml")
-	authPath := filepath.Join(dir, "auth.json")
 
-	// —— 1. config.toml 读-解析-合并（失败即返回，尚未写任何文件）——
 	cfg := map[string]any{}
 	if b, err := os.ReadFile(cfgPath); err == nil {
 		// 解析失败必须在任何写动作前返回，原文件保持不动。
@@ -482,46 +487,46 @@ func (s AccessConfigs) writeCodexLive(env map[string]string, model string) error
 	agent["base_url"] = env["OPENAI_BASE_URL"]
 	agent["wire_api"] = "responses"
 	agent["requires_openai_auth"] = false
+	agent["experimental_bearer_token"] = env["OPENAI_API_KEY"]
 	providers["agentswitch"] = agent
 	cfg["model_providers"] = providers
+
+	// 模型目录：桌面版模型选择器只读 model_catalog_json，不读网关 /v1/models。
+	// 先备齐目录内容再落盘，模板缺失时整次写入中止（不留下指向半份目录的配置）。
+	models, err := s.codexLogicalModelsForCatalog(model)
+	if err != nil {
+		return err
+	}
+	template, err := codexModelCatalogTemplateLoader()
+	if err != nil {
+		return err
+	}
+	catalogBytes, err := buildCodexModelCatalog(template, models)
+	if err != nil {
+		return err
+	}
+	cfg["model_catalog_json"] = codexModelCatalogFileName
+
 	cfgBytes, err := toml.Marshal(cfg)
 	if err != nil {
 		return err
 	}
-
-	// —— 2. auth.json 读-解析-合并（失败即返回，两个文件都还没写）——
-	auth := map[string]any{}
-	if b, err := os.ReadFile(authPath); err == nil {
-		if err := json.Unmarshal(b, &auth); err != nil {
-			return err
-		}
-		if auth == nil { // 合法 JSON null → 视为空对象
-			auth = map[string]any{}
-		}
-	} else if !errors.Is(err, fs.ErrNotExist) {
+	// 目录先写：config.toml 指向它；目录写失败时配置保持原样。
+	if err := atomicWriteFile0600(filepath.Join(dir, codexModelCatalogFileName), catalogBytes); err != nil {
 		return err
 	}
-	auth["OPENAI_API_KEY"] = env["OPENAI_API_KEY"]
-	authBytes, err := json.MarshalIndent(auth, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	// —— 3. 两个文件都解析成功后才落盘；任一写失败即中止、不写第二个 ——
-	if err := atomicWriteFile0600(cfgPath, cfgBytes); err != nil {
-		return err
-	}
-	return atomicWriteFile0600(authPath, authBytes)
+	return atomicWriteFile0600(cfgPath, cfgBytes)
 }
 
 // liveBackupFiles 返回 appType 对应的 live 文件相对路径列表（简报钉死）：
-// claude 仅 settings.json；codex 为 config.toml 与 auth.json。
+// claude 仅 settings.json；codex 仅 config.toml（auth.json 由 Codex 自己
+// 维护官方登录，接入配置不读写它）。
 func liveBackupFiles(appType string) []string {
 	switch appType {
 	case "claude":
 		return []string{filepath.Join(".claude", "settings.json")}
 	case "codex":
-		return []string{filepath.Join(".codex", "config.toml"), filepath.Join(".codex", "auth.json")}
+		return []string{filepath.Join(".codex", "config.toml")}
 	case "claude_desktop":
 		// Desktop 配置在 config 目录而非 home 直下，由 backupLive 以
 		// desktopPathsFor(home) 的 4 个文件由 backupLive 单独补入，这里返回空。
@@ -866,20 +871,47 @@ func (s AccessConfigs) SaveGlobalConfig(appType string, env map[string]string) e
 	return nil
 }
 
+// persistFiles 是 writePersistEnv 的产物：claude/codex 为对应平台持久文件，
+// launcher 为 Windows .cmd 启动器（非 Windows 为空）。按 appType 只生成对应
+// 一项持久文件，其余为空串。
+type persistFiles struct {
+	claude   string
+	codex    string
+	launcher string
+}
+
+// codexEnvKeys 校验并返回字典序的 env 键：键不得含 = / 换行，值不得含
+// 换行（KEY=VALUE 行与批处理 set 都无法安全表达）。
+func codexEnvKeys(env map[string]string) ([]string, error) {
+	keys := make([]string, 0, len(env))
+	for k, v := range env {
+		if strings.ContainsAny(v, "\r\n") {
+			return nil, fmt.Errorf("配置值不能包含换行符: %s", k)
+		}
+		if k == "" || strings.ContainsAny(k, "=\r\n") {
+			return nil, fmt.Errorf("配置键含非法字符: %q", k)
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys, nil
+}
+
 // writePersistEnv 把合成 env 落成该配置的持久文件（spec「持久文件」）：
 // claude → <home>/.agentswitch/access/claude/<id>.json（**整份合成文档**：
 // doc 顶层键 + env 替换为合成结果，供 `claude --settings` 引用）；codex →
 // <home>/.agentswitch/access/codex/<id>.env（KEY=VALUE 行，键按字典序，供
 // shell source 后启动 codex；doc 参数忽略——codex 持久文件是行格式无文档
-// 语义，且 codex 配置本身仅允许 env 键）。按 appType 只生成对应一种，另一
-// 种路径返回空串。.env 任一值含换行符即报错中止（行格式无法安全表达）。
+// 语义，且 codex 配置本身仅允许 env 键）。Windows 改用 .cmd 启动器
+// （见 writeWindowsLauncher）：claude 仍写 .json，另加一份 .cmd 供
+// 「复制启动命令/打开终端」使用；codex 只写 .cmd（Windows 无 sh source）。
 // 文件 0600（含网关令牌，不写日志）。
-func (s AccessConfigs) writePersistEnv(c storage.AccessConfig, env map[string]string, doc map[string]any) (string, string, error) {
+func (s AccessConfigs) writePersistEnv(c storage.AccessConfig, env map[string]string, doc map[string]any, model string) (persistFiles, error) {
 	home := s.Home
 	if home == "" {
 		var err error
 		if home, err = os.UserHomeDir(); err != nil {
-			return "", "", err
+			return persistFiles{}, err
 		}
 	}
 	switch c.AppType {
@@ -895,29 +927,37 @@ func (s AccessConfigs) writePersistEnv(c storage.AccessConfig, env map[string]st
 		docFull["env"] = envAny
 		b, err := json.MarshalIndent(docFull, "", "  ")
 		if err != nil {
-			return "", "", err
+			return persistFiles{}, err
 		}
 		p := filepath.Join(home, ".agentswitch", "access", "claude", c.ID+".json")
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			return "", "", err
+			return persistFiles{}, err
 		}
 		if err := atomicWriteFile0600(p, b); err != nil {
-			return "", "", err
+			return persistFiles{}, err
 		}
-		return p, "", nil
+		f := persistFiles{claude: p}
+		if accessPlatform == "windows" {
+			lp := filepath.Join(filepath.Dir(p), c.ID+".cmd")
+			if err := s.writeWindowsLauncherFile(lp, "claude", env, model, p); err != nil {
+				return persistFiles{}, err
+			}
+			f.launcher = lp
+		}
+		return f, nil
 	case "codex":
-		keys := make([]string, 0, len(env))
-		for k := range env {
-			if strings.ContainsAny(env[k], "\r\n") {
-				return "", "", fmt.Errorf("配置值不能包含换行符: %s", k)
-			}
-			// 键不得含 = / 换行（KEY=VALUE 行格式无法安全表达）。
-			if k == "" || strings.ContainsAny(k, "=\r\n") {
-				return "", "", fmt.Errorf("配置键含非法字符: %q", k)
-			}
-			keys = append(keys, k)
+		keys, err := codexEnvKeys(env)
+		if err != nil {
+			return persistFiles{}, err
 		}
-		sort.Strings(keys)
+		dir := filepath.Join(home, ".agentswitch", "access", "codex")
+		if accessPlatform == "windows" {
+			lp := filepath.Join(dir, c.ID+".cmd")
+			if err := s.writeWindowsLauncherFile(lp, "codex", env, model, ""); err != nil {
+				return persistFiles{}, err
+			}
+			return persistFiles{launcher: lp}, nil
+		}
 		var sb strings.Builder
 		for _, k := range keys {
 			// 值用单引号包裹（' 换成 '\''）：source 时空格/元字符不再被
@@ -927,17 +967,69 @@ func (s AccessConfigs) writePersistEnv(c storage.AccessConfig, env map[string]st
 			sb.WriteString(strings.ReplaceAll(env[k], "'", `'\''`))
 			sb.WriteString("'\n")
 		}
-		p := filepath.Join(home, ".agentswitch", "access", "codex", c.ID+".env")
+		p := filepath.Join(dir, c.ID+".env")
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			return "", "", err
+			return persistFiles{}, err
 		}
 		if err := atomicWriteFile0600(p, []byte(sb.String())); err != nil {
-			return "", "", err
+			return persistFiles{}, err
 		}
-		return "", p, nil
+		return persistFiles{codex: p}, nil
 	default:
-		return "", "", fmt.Errorf("不支持的接入类型: %q", c.AppType)
+		return persistFiles{}, fmt.Errorf("不支持的接入类型: %q", c.AppType)
 	}
+}
+
+// writeWindowsLauncherFile 把 Windows .cmd 启动器原子写入磁盘（0600）。
+func (s AccessConfigs) writeWindowsLauncherFile(path, appType string, env map[string]string, model, settingsPath string) error {
+	b, err := writeWindowsLauncher(appType, env, model, settingsPath)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return atomicWriteFile0600(path, b)
+}
+
+// writeWindowsLauncher 生成 Windows .cmd 启动器（CRLF）：
+//
+//	claude → claude --settings "<json>" %*
+//	codex  → set "KEY=VALUE"（字典序）+ codex -m "<model>" %*
+//
+// 批处理无 argv 式 env 注入，故用 set；% 是变量前缀，统一转义为 %%。
+// 值/模型含双引号或换行时拒绝生成（行格式无法安全表达）。
+func writeWindowsLauncher(appType string, env map[string]string, model, settingsPath string) ([]byte, error) {
+	var sb strings.Builder
+	sb.WriteString("@echo off\r\nsetlocal\r\n")
+	switch appType {
+	case "claude":
+		sb.WriteString(`claude --settings "` + batchEscape(settingsPath) + `" %*` + "\r\n")
+		return []byte(sb.String()), nil
+	case "codex":
+		keys, err := codexEnvKeys(env)
+		if err != nil {
+			return nil, err
+		}
+		for _, k := range keys {
+			if strings.Contains(env[k], `"`) {
+				return nil, fmt.Errorf("配置值不能包含双引号（Windows）: %s", k)
+			}
+			sb.WriteString(`set "` + k + `=` + batchEscape(env[k]) + `"` + "\r\n")
+		}
+		if strings.ContainsAny(model, "\"\r\n") {
+			return nil, fmt.Errorf("模型名不能包含双引号或换行符（Windows）: %q", model)
+		}
+		sb.WriteString(`codex -m "` + batchEscape(model) + `" %*` + "\r\n")
+		return []byte(sb.String()), nil
+	default:
+		return nil, fmt.Errorf("不支持的接入类型: %q", appType)
+	}
+}
+
+// batchEscape 转义批处理中的 %（变量展开前缀）。
+func batchEscape(v string) string {
+	return strings.ReplaceAll(v, "%", "%%")
 }
 
 // shellDQ 转义值用于双引号 shell 片段内（\ " $ ` 五个有语义字符）；
@@ -959,10 +1051,11 @@ func shellSQ(v string) string {
 
 // LaunchCommand 返回展示/复制用的启动命令：每次调用都重写持久文件
 // （保证令牌与模型最新——令牌轮换联动的单配置版）。命令拼装：
-// claude：`claude --settings "<json>"`（--settings 未给的键回落
-// ~/.claude/settings.json）；codex：`sh -c 'set -a; . "<env>"; set +a;
+// macOS/Linux：claude `claude --settings "<json>"`（--settings 未给的键回落
+// ~/.claude/settings.json）；codex `sh -c 'set -a; . "<env>"; set +a;
 // exec codex -m "<model>"'`（env 文件内容保持命令跨令牌轮换有效）。
-// 嵌入值经 shellDQ/shellSQ 转义——模型名含 ' $ ` " \ 时命令仍安全可执行。
+// Windows：`cmd /c call "<launcher>.cmd"`——cmd 与 PowerShell 均可直接粘贴，
+// 令牌只存在 0600 的启动器文件里，不出现在命令文本中。
 func (s AccessConfigs) LaunchCommand(id string) (string, error) {
 	c, err := s.A.Store().AccessConfigs().Get(id)
 	if err != nil {
@@ -972,18 +1065,29 @@ func (s AccessConfigs) LaunchCommand(id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	claudePath, codexPath, err := s.writePersistEnv(c, env, doc)
+	files, err := s.writePersistEnv(c, env, doc, model)
 	if err != nil {
 		return "", err
 	}
-	switch c.AppType {
+	return launchCommandFor(accessPlatform, c.AppType, files, model)
+}
+
+// launchCommandFor 按平台拼装启动命令（纯函数，便于在任意主机覆盖平台）。
+func launchCommandFor(platform, appType string, f persistFiles, model string) (string, error) {
+	if platform == "windows" {
+		if f.launcher == "" {
+			return "", fmt.Errorf("生成 Windows 启动器失败")
+		}
+		return `cmd /c call "` + f.launcher + `"`, nil
+	}
+	switch appType {
 	case "claude":
-		return `claude --settings "` + shellDQ(claudePath) + `"`, nil
+		return `claude --settings "` + shellDQ(f.claude) + `"`, nil
 	case "codex":
-		inner := `set -a; . "` + shellDQ(codexPath) + `"; set +a; exec codex -m "` + shellDQ(model) + `"`
+		inner := `set -a; . "` + shellDQ(f.codex) + `"; set +a; exec codex -m "` + shellDQ(model) + `"`
 		return `sh -c '` + shellSQ(inner) + `'`, nil
 	default:
-		return "", fmt.Errorf("不支持的接入类型: %q", c.AppType)
+		return "", fmt.Errorf("不支持的接入类型: %q", appType)
 	}
 }
 
@@ -1013,7 +1117,7 @@ func (s AccessConfigs) RegenerateDerived() {
 			// 持久文件失败不跳过 current 的 live 重写——令牌轮换后 live
 			// 仍是 Agent 实际使用的文件，陈旧令牌比持久文件缺失更糟
 			// （评审 Minor#8）。
-			if _, _, perr := s.writePersistEnv(c, env, doc); perr != nil {
+			if _, perr := s.writePersistEnv(c, env, doc, model); perr != nil {
 				s.A.Log().Error("access derived refresh failed", "app", appType, "stage", "persist", "err", perr)
 			}
 			if cur.ID != c.ID {
@@ -1031,22 +1135,62 @@ func (s AccessConfigs) RegenerateDerived() {
 	}
 }
 
-// openTerminalExec 是 OpenTerminal 的终端拉起注入点（测试替换断言脚本，
-// 不真开终端）；默认经 osascript 让 Terminal.app 执行 do script。
-var openTerminalExec = func(script string) error {
-	return exec.Command("osascript", "-e", script).Run()
+// openTerminalExec 是 OpenTerminal 的终端拉起注入点（测试替换断言参数，
+// 不真开终端）；默认执行平台终端命令。
+var openTerminalExec = func(name string, args ...string) error {
+	return exec.Command(name, args...).Run()
 }
 
-// OpenTerminal 用指定配置拉起一个终端（spec「打开终端」，仅 macOS）：
-// 先经 LaunchCommand 刷新持久文件并取启动命令，再组装 AppleScript
-// do script；命令内的双引号按 AppleScript 语义转义。不存在的配置报错。
+// OpenTerminal 用指定配置拉起一个终端（spec「打开终端」，macOS/Windows）：
+// 先刷新持久文件。macOS 组装 AppleScript do script；Windows 用
+// `cmd /c start "" "<launcher>.cmd"`（start 的空标题参数不可省）。其他
+// 平台明确报不支持。不存在的配置报错。
 func (s AccessConfigs) OpenTerminal(id string) error {
-	cmd, err := s.LaunchCommand(id)
+	c, err := s.A.Store().AccessConfigs().Get(id)
 	if err != nil {
 		return err
 	}
-	escaped := strings.ReplaceAll(cmd, `\`, `\\`)
-	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
-	script := `tell application "Terminal" to do script "` + escaped + `"`
-	return openTerminalExec(script)
+	env, doc, model, err := s.composeFor(c)
+	if err != nil {
+		return err
+	}
+	files, err := s.writePersistEnv(c, env, doc, model)
+	if err != nil {
+		return err
+	}
+	var target string
+	switch accessPlatform {
+	case "windows":
+		target = files.launcher
+	case "darwin":
+		if target, err = launchCommandFor(accessPlatform, c.AppType, files, model); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("当前平台不支持打开终端")
+	}
+	name, args, err := openTerminalInvocation(accessPlatform, target)
+	if err != nil {
+		return err
+	}
+	return openTerminalExec(name, args...)
+}
+
+// openTerminalInvocation 按平台组装终端拉起命令（纯函数，便于跨平台测试）。
+// target：macOS 为启动命令文本，Windows 为 .cmd 启动器路径。
+func openTerminalInvocation(platform, target string) (string, []string, error) {
+	switch platform {
+	case "darwin":
+		escaped := strings.ReplaceAll(target, `\`, `\\`)
+		escaped = strings.ReplaceAll(escaped, `"`, `\"`)
+		script := `tell application "Terminal" to do script "` + escaped + `"`
+		return "osascript", []string{"-e", script}, nil
+	case "windows":
+		if target == "" {
+			return "", nil, fmt.Errorf("Windows 启动器路径为空")
+		}
+		return "cmd", []string{"/c", "start", "", target}, nil
+	default:
+		return "", nil, fmt.Errorf("当前平台不支持打开终端")
+	}
 }

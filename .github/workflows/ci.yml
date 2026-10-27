@@ -24,6 +24,25 @@ jobs:
         run: go vet ./...
       - name: Test (offline, race)
         run: go test -race ./... -count=1
+      - name: Cross-compile (windows/amd64)
+        if: runner.os == 'Linux'
+        run: GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build ./...
+
+  windows-build:
+    name: Build (windows-latest)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: go build ./...
+      - name: Vet
+        run: go vet ./...
+      # 真实 Windows 工具链打包：exe + NSIS 安装包（runner 上自动下载 NSIS）。
+      - name: Package (exe + installer)
+        run: go tool mygo build -platform windows/amd64
 
   lint:
     name: Lint

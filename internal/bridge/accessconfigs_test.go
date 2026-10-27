@@ -112,11 +112,34 @@ func TestCodexLiveProjectionPreservesAndMerges(t *testing.T) {
 	if mp["base_url"] != "http://127.0.0.1:17890/v1" {
 		t.Fatal(mp)
 	}
-	ab, _ := os.ReadFile(filepath.Join(dir, "auth.json"))
-	var auth map[string]any
-	json.Unmarshal(ab, &auth)
-	if auth["OPENAI_API_KEY"] != "tok" {
-		t.Fatal(string(ab))
+	// Codex 0.149 起自定义 provider 不再从 auth.json 继承凭据：第三方 Key
+	// 必须写在 provider 表的 experimental_bearer_token（桌面版同样生效）。
+	if mp["experimental_bearer_token"] != "tok" {
+		t.Fatal(mp)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "auth.json")); !os.IsNotExist(err) {
+		t.Fatal("不应创建 auth.json（官方 ChatGPT 登录文件由 Codex 自己维护）")
+	}
+}
+
+// Codex 第三方 Key 只写 config.toml；auth.json 是官方 ChatGPT 登录文件，
+// 接入配置绝不改写它（2026-10-27 修订）。
+func TestCodexLiveLeavesAuthJSONUntouched(t *testing.T) {
+	acc := AccessConfigs{A: tempApp(t), Home: t.TempDir()}
+	dir := filepath.Join(acc.Home, ".codex")
+	os.MkdirAll(dir, 0o755)
+	original := `{"tokens":{"access_token":"official"},"OPENAI_API_KEY":"user-key"}`
+	os.WriteFile(filepath.Join(dir, "auth.json"), []byte(original), 0o600)
+	if err := acc.writeCodexLive(map[string]string{
+		"OPENAI_BASE_URL": "http://127.0.0.1:17890/v1", "OPENAI_API_KEY": "tok"}, "m"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "auth.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != original {
+		t.Fatalf("auth.json 不应被改写: %s", got)
 	}
 }
 
@@ -134,23 +157,28 @@ func TestCodexLiveProjectionInvalidTOMLAborts(t *testing.T) {
 	}
 }
 
-// 双文件一致性：auth.json 非法时 config.toml 也绝不落盘（一败俱不写）。
-func TestCodexLiveProjectionInvalidAuthJSONAbortsBoth(t *testing.T) {
+// auth.json 不再读也不写：即使它本身非法，也不应阻塞接入配置写入（登录
+// 文件由 Codex 自己维护），且内容保持原样。
+func TestCodexLiveIgnoresInvalidAuthJSON(t *testing.T) {
 	acc := AccessConfigs{A: tempApp(t), Home: t.TempDir()}
 	dir := filepath.Join(acc.Home, ".codex")
 	os.MkdirAll(dir, 0o755)
-	os.WriteFile(filepath.Join(dir, "config.toml"), []byte("model = \"keep\"\n"), 0o600)
 	os.WriteFile(filepath.Join(dir, "auth.json"), []byte("{broken"), 0o600)
-	if err := acc.writeCodexLive(map[string]string{"OPENAI_API_KEY": "x"}, "m"); err == nil {
-		t.Fatal("非法 auth.json 应中止")
+	if err := acc.writeCodexLive(map[string]string{
+		"OPENAI_BASE_URL": "http://127.0.0.1:17890/v1", "OPENAI_API_KEY": "x"}, "m"); err != nil {
+		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(filepath.Join(dir, "config.toml"))
-	if string(b) != "model = \"keep\"\n" {
-		t.Fatal("config.toml 失败后不得改动")
+	var got map[string]any
+	if err := toml.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["model"] != "m" {
+		t.Fatalf("config.toml 应写入: %s", b)
 	}
 	ab, _ := os.ReadFile(filepath.Join(dir, "auth.json"))
 	if string(ab) != "{broken" {
-		t.Fatal("auth.json 失败后不得改动")
+		t.Fatalf("auth.json 不应被改动: %s", ab)
 	}
 }
 
@@ -173,6 +201,14 @@ func TestBackupLiveCopiesAndRotates(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join(bdir, ents[0].Name()))
 	if err != nil || string(b) != `{"a":1}` {
 		t.Fatalf("%v %s", err, b)
+	}
+}
+
+// Codex 接入不再写 auth.json，备份清单只应包含 config.toml（2026-10-27 修订）。
+func TestLiveBackupFilesCodexOnlyConfigTOML(t *testing.T) {
+	files := liveBackupFiles("codex")
+	if len(files) != 1 || files[0] != filepath.Join(".codex", "config.toml") {
+		t.Fatal(files)
 	}
 }
 
@@ -627,18 +663,191 @@ func TestOpenTerminalAssemblesScript(t *testing.T) {
 		t.Fatal(err)
 	}
 	v, _ := acc.Create("claude", "工作", "lm1", "")
-	var got string
+	oldPlatform := accessPlatform
+	accessPlatform = "darwin"
+	defer func() { accessPlatform = oldPlatform }()
+	var gotName string
+	var gotArgs []string
 	old := openTerminalExec
-	openTerminalExec = func(script string) error { got = script; return nil }
+	openTerminalExec = func(name string, args ...string) error {
+		gotName, gotArgs = name, args
+		return nil
+	}
 	defer func() { openTerminalExec = old }()
 	if err := acc.OpenTerminal(v.ID); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(got, `tell application "Terminal" to do script "claude --settings`) {
-		t.Fatal(got)
+	if gotName != "osascript" || len(gotArgs) != 2 || gotArgs[0] != "-e" {
+		t.Fatalf("终端命令 = %q %v", gotName, gotArgs)
+	}
+	if !strings.Contains(gotArgs[1], `tell application "Terminal" to do script "claude --settings`) {
+		t.Fatal(gotArgs[1])
 	}
 	if err := acc.OpenTerminal("missing"); err == nil {
 		t.Fatal("不存在的配置应报错")
+	}
+}
+
+// --- 2026-10-26 Windows 适配：启动器 / 启动命令 / 终端分派 ---
+
+// TestWindowsLauncherForClaude 钉死 Claude 的 .cmd 内容：引用 settings JSON，
+// 转发额外参数，CRLF 行尾。
+func TestWindowsLauncherForClaude(t *testing.T) {
+	settings := `C:\Users\me\.agentswitch\access\claude\cfg1.json`
+	b, err := writeWindowsLauncher("claude", map[string]string{"ANTHROPIC_MODEL": "my-code"}, "my-code", settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(b)
+	want := "@echo off\r\nsetlocal\r\nclaude --settings \"" + settings + "\" %*\r\n"
+	if got != want {
+		t.Fatalf("launcher = %q, want %q", got, want)
+	}
+}
+
+// TestWindowsLauncherForCodex 钉死 Codex 的 .cmd：env 按字典序 set，% 转义为
+// %%，最后以当前逻辑模型启动。
+func TestWindowsLauncherForCodex(t *testing.T) {
+	env := map[string]string{
+		"OPENAI_BASE_URL": "http://127.0.0.1:17890",
+		"OPENAI_API_KEY":  "tok%en",
+	}
+	b, err := writeWindowsLauncher("codex", env, "my-code", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(b)
+	want := "@echo off\r\nsetlocal\r\n" +
+		"set \"OPENAI_API_KEY=tok%%en\"\r\n" +
+		"set \"OPENAI_BASE_URL=http://127.0.0.1:17890\"\r\n" +
+		"codex -m \"my-code\" %*\r\n"
+	if got != want {
+		t.Fatalf("launcher = %q, want %q", got, want)
+	}
+}
+
+// TestWindowsLauncherRejectsUnsafeValues 覆盖批处理注入面：值/模型含双引号
+// 或换行时拒绝生成（行格式无法安全表达）。
+func TestWindowsLauncherRejectsUnsafeValues(t *testing.T) {
+	if _, err := writeWindowsLauncher("codex", map[string]string{"K": `a"b`}, "m", ""); err == nil {
+		t.Fatal("值含双引号应报错")
+	}
+	if _, err := writeWindowsLauncher("codex", map[string]string{"K": "a\nb"}, "m", ""); err == nil {
+		t.Fatal("值含换行应报错")
+	}
+	if _, err := writeWindowsLauncher("codex", map[string]string{"K": "v"}, `a"b`, ""); err == nil {
+		t.Fatal("模型含双引号应报错")
+	}
+	if _, err := writeWindowsLauncher("codex", map[string]string{"K": "v"}, "a%b", ""); err != nil {
+		t.Fatalf("模型含 %% 应转义而非报错: %v", err)
+	}
+}
+
+// TestLaunchCommandForWindows 钉死展示命令：经 cmd /c call 引用 .cmd，
+// 在 cmd 与 PowerShell 中都可直接执行。
+func TestLaunchCommandForWindows(t *testing.T) {
+	f := persistFiles{launcher: `C:\Users\me\.agentswitch\access\claude\cfg1.cmd`}
+	cmd, err := launchCommandFor("windows", "claude", f, "my-code")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `cmd /c call "` + f.launcher + `"`
+	if cmd != want {
+		t.Fatalf("命令 = %q, want %q", cmd, want)
+	}
+}
+
+// TestLaunchCommandWindowsWritesLauncher 是跨平台集成测试：替换平台后
+// LaunchCommand 必须落 .cmd 并返回 cmd /c call 命令（claude 与 codex）。
+func TestLaunchCommandWindowsWritesLauncher(t *testing.T) {
+	oldPlatform := accessPlatform
+	accessPlatform = "windows"
+	defer func() { accessPlatform = oldPlatform }()
+
+	a := tempApp(t)
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	cv, _ := acc.Create("claude", "工作", "lm1", "")
+	cmd, err := acc.LaunchCommand(cv.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lc := filepath.Join(acc.Home, ".agentswitch", "access", "claude", cv.ID+".cmd")
+	if cmd != `cmd /c call "`+lc+`"` {
+		t.Fatalf("claude 命令 = %q", cmd)
+	}
+	b, err := os.ReadFile(lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "claude --settings ") || !strings.Contains(string(b), cv.ID+".json") {
+		t.Fatalf("claude 启动器 = %q", b)
+	}
+
+	xv, _ := acc.Create("codex", "x", "lm1", "")
+	cmd2, err := acc.LaunchCommand(xv.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lx := filepath.Join(acc.Home, ".agentswitch", "access", "codex", xv.ID+".cmd")
+	if cmd2 != `cmd /c call "`+lx+`"` {
+		t.Fatalf("codex 命令 = %q", cmd2)
+	}
+	b2, err := os.ReadFile(lx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b2), `codex -m "my-code"`) || !strings.Contains(string(b2), "OPENAI_BASE_URL") {
+		t.Fatalf("codex 启动器 = %q", b2)
+	}
+}
+
+// TestOpenTerminalWindowsStartsLauncher 钉死 Windows 的终端拉起参数：
+// cmd /c start "" <launcher.cmd>（start 的空标题参数不可省）。
+func TestOpenTerminalWindowsStartsLauncher(t *testing.T) {
+	oldPlatform := accessPlatform
+	accessPlatform = "windows"
+	defer func() { accessPlatform = oldPlatform }()
+
+	a := tempApp(t)
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "m", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	v, _ := acc.Create("claude", "工作", "lm1", "")
+	var gotName string
+	var gotArgs []string
+	old := openTerminalExec
+	openTerminalExec = func(name string, args ...string) error {
+		gotName, gotArgs = name, args
+		return nil
+	}
+	defer func() { openTerminalExec = old }()
+	if err := acc.OpenTerminal(v.ID); err != nil {
+		t.Fatal(err)
+	}
+	launcher := filepath.Join(acc.Home, ".agentswitch", "access", "claude", v.ID+".cmd")
+	if gotName != "cmd" || len(gotArgs) != 4 || gotArgs[0] != "/c" || gotArgs[1] != "start" || gotArgs[2] != "" || gotArgs[3] != launcher {
+		t.Fatalf("终端命令 = %q %v", gotName, gotArgs)
+	}
+}
+
+// TestOpenTerminalUnsupportedPlatform 钉死非 macOS/Windows 的明确错误。
+func TestOpenTerminalUnsupportedPlatform(t *testing.T) {
+	oldPlatform := accessPlatform
+	accessPlatform = "linux"
+	defer func() { accessPlatform = oldPlatform }()
+
+	a := tempApp(t)
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "m", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	v, _ := acc.Create("claude", "工作", "lm1", "")
+	if err := acc.OpenTerminal(v.ID); err == nil || !strings.Contains(err.Error(), "不支持") {
+		t.Fatalf("Linux 打开终端应明确报不支持: %v", err)
 	}
 }
 

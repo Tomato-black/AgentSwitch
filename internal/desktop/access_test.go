@@ -13,7 +13,7 @@ import (
 
 // TestAccessTabTitles 覆盖接入页三个 Agent tab 标题快照。
 func TestAccessTabTitles(t *testing.T) {
-	if a, b, d := accessTabTitles(); a != "Claude Code" || b != "Codex CLI" || d != "Claude Desktop" {
+	if a, b, d := accessTabTitles(); a != "Claude Code" || b != "Codex" || d != "Claude Desktop" {
 		t.Fatal(a, b, d)
 	}
 }
@@ -55,13 +55,27 @@ func TestAccessPageRenders(t *testing.T) {
 	u, _ := testUI(t)
 	u.page = "access"
 	tt := ui.NewTester(u.view, 900, 600)
-	for _, want := range []string{"Claude Code", "Codex CLI", "全局配置", "实际配置", "还没有配置", "网关未运行"} {
+	for _, want := range []string{"Claude Code", "Codex", "全局配置", "实际配置", "还没有配置", "网关未运行"} {
 		if !tt.HasText(want) {
 			t.Fatalf("missing %q in %v", want, tt.Texts())
 		}
 	}
 	if tt.HasText("当前逻辑模型") {
 		t.Fatalf("旧片段页元素泄漏: %v", tt.Texts())
+	}
+}
+
+// TestAccessCodexPageMentionsDesktop 覆盖 Codex 页签的桌面版说明：Codex CLI /
+// 桌面版 / IDE 插件共用同一份 ~/.codex/config.toml，应用后需完全退出重启。
+func TestAccessCodexPageMentionsDesktop(t *testing.T) {
+	u, _ := testUI(t)
+	u.page = "access"
+	u.accessApp = "codex"
+	tt := ui.NewTester(u.view, 900, 600)
+	for _, want := range []string{"桌面版", "~/.codex/config.toml", "完全退出", "模型选择器", "新建对话"} {
+		if !tt.HasText(want) {
+			t.Fatalf("missing %q in %v", want, tt.Texts())
+		}
 	}
 }
 

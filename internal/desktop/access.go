@@ -1,5 +1,6 @@
 // access.go 是接入页（spec 2026-10-18-agent-access-config-design）：每 Agent
-// （Claude Code / Codex CLI）多实际配置 + 全局配置（合并进所有实际配置），
+// （Claude Code / Codex，后者覆盖 CLI / 桌面版 / IDE 插件）多实际配置 +
+// 全局配置（合并进所有实际配置），
 // 「应用」即受管键投影写入 agent 真实配置文件；未应用的配置经持久文件 +
 // 启动命令 / 「打开终端」在启动 Agent 时手动指定。取代旧「片段复制」页
 // （旧 bridge.Access 已删除）。编辑器默认渲染真实网关令牌（2026-10-21 用户
@@ -39,7 +40,9 @@ type accessForm struct {
 }
 
 // accessTabTitles 返回三个 Agent tab 的标题（字符串快照锚点）。
-func accessTabTitles() (claude, codex, desktop string) { return "Claude Code", "Codex CLI", "Claude Desktop" }
+func accessTabTitles() (claude, codex, desktop string) {
+	return "Claude Code", "Codex", "Claude Desktop"
+}
 
 // accessRowBadge 返回配置行「使用中」徽标文本（非 current 为空串）。
 func accessRowBadge(isCurrent bool) string {
@@ -323,59 +326,63 @@ func (u *uiState) accessPage(c *ui.Context) {
 			// 全局配置卡（Desktop 无 env 合成层，不显示）
 			if u.accessApp != "claude_desktop" {
 				card(c, t, func() {
-				ui.Column(c).Gap(10).Children(func() {
-					ui.Text(c, "全局配置").Bold()
-					ui.Text(c, "以下环境变量会应用到本 Agent 的所有实际配置（实际配置的同名覆盖项优先）").TextColor(t.TextMuted)
-					// 行内删除只记下标，循环结束后统一应用——构建中改切片会
-					// 越界（logicalmodels.go 同款注释与模式）。
-					globDel := -1
-					for i := range u.accessGlob {
-						row := &u.accessGlob[i]
-						ui.Row(c).Gap(8).Children(func() {
-							ui.TextInput(c, &row[0]).Width(220).Placeholder("键")
-							ui.TextInput(c, &row[1]).Grow(1).Placeholder("值")
-							if softButton(c, t, s, "danger", "删除").Clicked() {
-								globDel = i
-							}
-						})
-					}
-					if globDel >= 0 {
-						u.accessGlob = append(u.accessGlob[:globDel], u.accessGlob[globDel+1:]...)
-					}
-					ui.Row(c).Gap(8).Children(func() {
-						if softButton(c, t, s, "gray", "＋ 添加一项").Clicked() {
-							u.accessGlob = append(u.accessGlob, [2]string{})
+					ui.Column(c).Gap(10).Children(func() {
+						ui.Text(c, "全局配置").Bold()
+						ui.Text(c, "以下环境变量会应用到本 Agent 的所有实际配置（实际配置的同名覆盖项优先）").TextColor(t.TextMuted)
+						// 行内删除只记下标，循环结束后统一应用——构建中改切片会
+						// 越界（logicalmodels.go 同款注释与模式）。
+						globDel := -1
+						for i := range u.accessGlob {
+							row := &u.accessGlob[i]
+							ui.Row(c).Gap(8).Children(func() {
+								ui.TextInput(c, &row[0]).Width(220).Placeholder("键")
+								ui.TextInput(c, &row[1]).Grow(1).Placeholder("值")
+								if softButton(c, t, s, "danger", "删除").Clicked() {
+									globDel = i
+								}
+							})
 						}
-						if softButton(c, t, s, "act", "保存全局配置").Clicked() {
-							// 行绑定随输入即时更新，此处 u.accessGlob 已是待保存
-							// 的新值；重定位旧派生值需要保存前的持久基线。
-							oldGlobal, _ := acc.GlobalConfig(u.accessApp)
-							if err := acc.SaveGlobalConfig(u.accessApp, accessOverridesFromRows(u.accessGlob)); err != nil {
-								u.accessGlobMsg = err.Error()
-							} else {
-								u.accessGlobMsg = "已保存"
-								// 编辑器打开时全局基线变了：删除旧基线派生值并
-								// 按新基线与当前表单模型重预览（Important#1）。
-								if u.accessForm.open {
-									if rebased, err := bridge.RebaseAccessDoc(u.accessApp, u.accessForm.docJSON, oldGlobal); err == nil {
-										u.accessForm.docJSON = rebased
+						if globDel >= 0 {
+							u.accessGlob = append(u.accessGlob[:globDel], u.accessGlob[globDel+1:]...)
+						}
+						ui.Row(c).Gap(8).Children(func() {
+							if softButton(c, t, s, "gray", "＋ 添加一项").Clicked() {
+								u.accessGlob = append(u.accessGlob, [2]string{})
+							}
+							if softButton(c, t, s, "act", "保存全局配置").Clicked() {
+								// 行绑定随输入即时更新，此处 u.accessGlob 已是待保存
+								// 的新值；重定位旧派生值需要保存前的持久基线。
+								oldGlobal, _ := acc.GlobalConfig(u.accessApp)
+								if err := acc.SaveGlobalConfig(u.accessApp, accessOverridesFromRows(u.accessGlob)); err != nil {
+									u.accessGlobMsg = err.Error()
+								} else {
+									u.accessGlobMsg = "已保存"
+									// 编辑器打开时全局基线变了：删除旧基线派生值并
+									// 按新基线与当前表单模型重预览（Important#1）。
+									if u.accessForm.open {
+										if rebased, err := bridge.RebaseAccessDoc(u.accessApp, u.accessForm.docJSON, oldGlobal); err == nil {
+											u.accessForm.docJSON = rebased
+										}
+										u.accessRepreviewForm(acc)
 									}
-									u.accessRepreviewForm(acc)
 								}
 							}
+						})
+						if u.accessGlobMsg != "" {
+							ui.Text(c, u.accessGlobMsg).TextColor(t.TextMuted)
 						}
 					})
-					if u.accessGlobMsg != "" {
-						ui.Text(c, u.accessGlobMsg).TextColor(t.TextMuted)
-					}
 				})
-			})
 			}
 
 			// 实际配置列表卡
 			card(c, t, func() {
 				ui.Column(c).Gap(10).Children(func() {
 					ui.Text(c, "实际配置").Bold()
+					if u.accessApp == "codex" {
+						ui.Text(c, "Codex CLI / 桌面版 / IDE 插件共用 ~/.codex/config.toml；应用后需完全退出 Codex 再重新打开").TextColor(t.TextMuted)
+						ui.Text(c, "桌面版模型选择器只显示 AgentSwitch 逻辑模型；已有对话的供应商不会迁移，请新建对话").TextColor(t.TextMuted)
+					}
 					if !gateOK {
 						ui.Text(c, gateReason).TextColor(t.TextMuted)
 					}
@@ -510,6 +517,8 @@ func (u *uiState) accessConfigRow(c *ui.Context, t *ui.Theme, s softPalette, acc
 		apply := func() {
 			if err := acc.Apply(v.ID); err != nil {
 				u.accessMsg = "应用失败：" + err.Error()
+			} else if u.accessApp == "codex" {
+				u.accessMsg = "已应用「" + v.Name + "」——重启 Codex 后生效（桌面版需完全退出后重新打开）"
 			} else {
 				u.accessMsg = "已应用「" + v.Name + "」——Agent 下次启动生效"
 			}

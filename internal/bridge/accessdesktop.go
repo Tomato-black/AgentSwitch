@@ -9,7 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"runtime"
+	"sort"
 	"strings"
 
 	"AgentSwitch/internal/storage"
@@ -156,7 +156,8 @@ func composeDesktopRoutes(docJSON string) ([]DesktopRoute, map[string]string, er
 
 // desktopPaths 是 Desktop 3P 网关模式涉及的 4 个文件路径（相对注入的
 // home，与 backupLive 基准一致）：Linux <home>/.config、macOS
-// <home>/Library/Application Support（cc-switch 平台映射；Windows 未实现）。
+// <home>/Library/Application Support、Windows %LOCALAPPDATA%
+// （cc-switch 平台映射，2026-10-26 补齐 Windows）。
 type desktopPaths struct {
 	normalConfig string // Claude/claude_desktop_config.json（官方模式配置）
 	threepConfig string // Claude-3p/claude_desktop_config.json（3P 模式配置）
@@ -165,17 +166,75 @@ type desktopPaths struct {
 }
 
 func desktopPathsFor(home string) desktopPaths {
+	if accessPlatform == "windows" {
+		localAppData := os.Getenv("LOCALAPPDATA")
+		if localAppData == "" {
+			localAppData = filepath.Join(home, "AppData", "Local")
+		}
+		return windowsDesktopPaths(localAppData)
+	}
 	base := filepath.Join(home, ".config")
-	if runtime.GOOS == "darwin" {
+	if accessPlatform == "darwin" {
 		base = filepath.Join(home, "Library", "Application Support")
 	}
-	lib := filepath.Join(base, "Claude-3p", desktopConfigLibraryDir)
+	return desktopPathsFromDirs(filepath.Join(base, "Claude"), filepath.Join(base, "Claude-3p"))
+}
+
+func desktopPathsFromDirs(normalDir, threepDir string) desktopPaths {
+	lib := filepath.Join(threepDir, desktopConfigLibraryDir)
 	return desktopPaths{
-		normalConfig: filepath.Join(base, "Claude", desktopConfigFileName),
-		threepConfig: filepath.Join(base, "Claude-3p", desktopConfigFileName),
+		normalConfig: filepath.Join(normalDir, desktopConfigFileName),
+		threepConfig: filepath.Join(threepDir, desktopConfigFileName),
 		profile:      filepath.Join(lib, desktopProfileID+".json"),
 		meta:         filepath.Join(lib, "_meta.json"),
 	}
+}
+
+// windowsDesktopPaths 镜像 cc-switch 的 Windows 解析：Claude Desktop 的
+// 配置在 %LOCALAPPDATA%（不是 Roaming）。目录名带版本/渠道后缀时按
+// pickWindowsClaudeDir 的规则挑选。
+func windowsDesktopPaths(localAppData string) desktopPaths {
+	normal := pickWindowsClaudeDir(localAppData, false)
+	if normal == "" {
+		normal = filepath.Join(localAppData, "Claude")
+	}
+	threep := pickWindowsClaudeDir(localAppData, true)
+	if threep == "" {
+		threep = filepath.Join(localAppData, "Claude-3p")
+	}
+	return desktopPathsFromDirs(normal, threep)
+}
+
+// pickWindowsClaudeDir 挑选 LOCALAPPDATA 下的 Claude 配置目录（cc-switch
+// 规则）：先精确匹配 Claude / Claude-3p；否则取以 Claude 开头、且
+// 「是否含 -3p」匹配的目录中字典序第一个；都没有返回空串。
+func pickWindowsClaudeDir(localAppData string, threep bool) string {
+	exactName := "Claude"
+	if threep {
+		exactName = "Claude-3p"
+	}
+	exact := filepath.Join(localAppData, exactName)
+	if fi, err := os.Stat(exact); err == nil && fi.IsDir() {
+		return exact
+	}
+	entries, err := os.ReadDir(localAppData)
+	if err != nil {
+		return ""
+	}
+	var candidates []string
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), "Claude") {
+			continue
+		}
+		if strings.Contains(e.Name(), "-3p") == threep {
+			candidates = append(candidates, filepath.Join(localAppData, e.Name()))
+		}
+	}
+	sort.Strings(candidates)
+	if len(candidates) == 0 {
+		return ""
+	}
+	return candidates[0]
 }
 
 // desktopLiveFiles 返回全部 4 个路径（备份清单用）。

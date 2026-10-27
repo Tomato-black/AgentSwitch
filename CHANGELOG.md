@@ -2,6 +2,19 @@
 
 本项目的显著变更记录。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 新增
+
+- Codex 接入支持桌面版：接入页页签改为「Codex」（CLI / 桌面版 / IDE 插件共用 `~/.codex/config.toml`）；第三方 Key 改写入 `[model_providers.agentswitch].experimental_bearer_token`（Codex 0.149+ 兼容），`auth.json` 只保留官方 ChatGPT 登录、接入配置不再改写；「应用」时用 Codex 自带模型模板生成 `~/.codex/agentswitch-model-catalog.json` 并写 `model_catalog_json`，桌面版模型选择器只显示 AgentSwitch 逻辑模型；应用后需完全退出 Codex 再重新打开，旧对话不迁移、请新建对话
+- Windows 支持（10/11 x64）：`go tool mygo build -platform windows/amd64` 产出 exe + NSIS 安装包；接入配置在 Windows 生成 `.cmd` 启动器，启动命令为 `cmd /c call "<launcher>.cmd"`（cmd/PowerShell 通用），「打开终端」走 `cmd /c start "" "<launcher>.cmd"`
+- Claude Desktop 配置路径支持 Windows：`%LOCALAPPDATA%\Claude` / `Claude-3p`（镜像 cc-switch 的目录选择规则）
+- CI 新增 `windows-latest` 打包 job 与 Ubuntu 上的 `GOOS=windows` 交叉编译检查
+
+### 已知限制
+
+- Windows 构建与打包已通过，尚未在 Windows 实机运行验证
+
 ## [0.1.0] - 2026-10-24
 
 首个开源版本。

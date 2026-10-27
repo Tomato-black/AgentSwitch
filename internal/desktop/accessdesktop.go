@@ -13,7 +13,8 @@ import (
 // Claude Desktop 接入页签（2026-10-22）：与 Claude Code/Codex 不同，Desktop
 // 配置是「角色映射」而非 env 文档——每条配置为 4 个角色（sonnet/opus/haiku/
 // fable）各选一个逻辑模型（未设置=不启用）与 1M 声明；「应用」把受管网关键
-// patch 进 ~/.config/Claude/claude_desktop_config.json 并持久化网关别名表。
+// patch 进平台对应的 Claude/claude_desktop_config.json（Windows 为
+// %LOCALAPPDATA%，见 bridge.desktopPathsFor）并持久化网关别名表。
 
 // desktopForm 是 Desktop 接入的新建/编辑表单状态。
 type desktopForm struct {

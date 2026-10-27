@@ -218,11 +218,11 @@ func TestParseDesktopAccessDocEmptyOK(t *testing.T) {
 
 func TestParseDesktopAccessDocRejectsBadInput(t *testing.T) {
 	cases := map[string]string{
-		"未知角色":     `{"gpt":{"model":"x"}}`,
+		"未知角色":      `{"gpt":{"model":"x"}}`,
 		"model非字符串": `{"sonnet":{"model":1}}`,
-		"值非对象":     `{"sonnet":"my-code"}`,
-		"env键禁止":   `{"env":{"A":"b"}}`,
-		"oneM非布尔":  `{"sonnet":{"model":"x","oneM":"yes"}}`,
+		"值非对象":      `{"sonnet":"my-code"}`,
+		"env键禁止":    `{"env":{"A":"b"}}`,
+		"oneM非布尔":   `{"sonnet":{"model":"x","oneM":"yes"}}`,
 	}
 	for name, raw := range cases {
 		if _, _, err := parseAccessDoc("claude_desktop", raw); err == nil {
@@ -278,5 +278,89 @@ func TestValidateDesktopRouteIDJSONRoundTrip(t *testing.T) {
 		if m[k] != v {
 			t.Fatalf("role %s: got %q want %q", k, m[k], v)
 		}
+	}
+}
+
+// --- 2026-10-26 Windows 适配：Claude Desktop 路径映射 ---
+
+// TestWindowsDesktopPathsMirrorCCSwitch 钉死 Windows 的 4 个 Desktop 路径：
+// 与 cc-switch 一致，位于 %LOCALAPPDATA%\Claude 与 %LOCALAPPDATA%\Claude-3p
+// （不是 %APPDATA%）。
+func TestWindowsDesktopPathsMirrorCCSwitch(t *testing.T) {
+	local := t.TempDir()
+	for _, dir := range []string{"Claude", "Claude-3p"} {
+		if err := os.MkdirAll(filepath.Join(local, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := windowsDesktopPaths(local)
+	want := []string{
+		filepath.Join(local, "Claude", "claude_desktop_config.json"),
+		filepath.Join(local, "Claude-3p", "claude_desktop_config.json"),
+		filepath.Join(local, "Claude-3p", "configLibrary", desktopProfileID+".json"),
+		filepath.Join(local, "Claude-3p", "configLibrary", "_meta.json"),
+	}
+	got := []string{p.normalConfig, p.threepConfig, p.profile, p.meta}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("路径[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestPickWindowsClaudeDir 覆盖 cc-switch 的目录选择规则：精确目录优先；
+// 否则在 LOCALAPPDATA 下按「Claude 前缀 + 是否含 -3p」挑字典序第一个。
+func TestPickWindowsClaudeDir(t *testing.T) {
+	local := t.TempDir()
+	for _, dir := range []string{"Claude-old", "Claude-3p-beta", "Other"} {
+		if err := os.MkdirAll(filepath.Join(local, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := pickWindowsClaudeDir(local, false); got != filepath.Join(local, "Claude-old") {
+		t.Fatalf("普通目录 = %q", got)
+	}
+	if got := pickWindowsClaudeDir(local, true); got != filepath.Join(local, "Claude-3p-beta") {
+		t.Fatalf("3P 目录 = %q", got)
+	}
+	// 精确目录存在时优先精确目录。
+	if err := os.MkdirAll(filepath.Join(local, "Claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := pickWindowsClaudeDir(local, false); got != filepath.Join(local, "Claude") {
+		t.Fatalf("精确目录应优先 = %q", got)
+	}
+	if got := pickWindowsClaudeDir(filepath.Join(local, "missing"), false); got != "" {
+		t.Fatalf("不存在目录应返回空 = %q", got)
+	}
+}
+
+// TestDesktopPathsForWindowsUsesLocalAppData 钉死平台分支：Windows 取
+// LOCALAPPDATA（缺失回落 <home>\AppData\Local），macOS/Linux 行为不变。
+func TestDesktopPathsForWindowsUsesLocalAppData(t *testing.T) {
+	old := accessPlatform
+	accessPlatform = "windows"
+	defer func() { accessPlatform = old }()
+
+	home := t.TempDir()
+	local := filepath.Join(home, "AppData", "Local")
+	for _, dir := range []string{"Claude", "Claude-3p"} {
+		if err := os.MkdirAll(filepath.Join(local, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("LOCALAPPDATA", local)
+	if got := desktopPathsFor(home).normalConfig; got != filepath.Join(local, "Claude", "claude_desktop_config.json") {
+		t.Fatalf("LOCALAPPDATA 路径 = %q", got)
+	}
+
+	t.Setenv("LOCALAPPDATA", "")
+	if got := desktopPathsFor(home).threepConfig; got != filepath.Join(local, "Claude-3p", "claude_desktop_config.json") {
+		t.Fatalf("回落路径 = %q", got)
+	}
+
+	accessPlatform = "linux"
+	if got := desktopPathsFor(home).normalConfig; got != filepath.Join(home, ".config", "Claude", "claude_desktop_config.json") {
+		t.Fatalf("Linux 路径 = %q", got)
 	}
 }

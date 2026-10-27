@@ -2,6 +2,8 @@
 
 > 注：Codex 接入的 `wire_api` 已于 2026-10-23 改为 `responses`（见 `2026-10-23-openai-responses-inbound-design.md`），本文中 `wire_api = "chat"` 的表述已被取代。
 
+> 注（2026-10-27）：Codex 桌面版与 CLI 共用 `~/.codex/config.toml`；第三方 Key 改写入 `[model_providers.agentswitch].experimental_bearer_token`，`auth.json` 只由 Codex 维护官方 ChatGPT 登录、接入配置不读写（Codex 0.149 起自定义 provider 不再从 `auth.json` 继承凭据）。「应用」同时生成 `~/.codex/agentswitch-model-catalog.json` 并写 `model_catalog_json`——桌面版模型选择器只读该文件，不读网关 `/v1/models`。下文 Codex 行已按此修订。
+
 > **状态（2026-10-19）：存储形态（overrides）、合成输入与 Claude 持久文件格式已被 `2026-10-19-access-full-settings-ccswitch-design.md` 取代；其余机制（应用投影、备份、令牌轮换联动、启动命令/打开终端、全局 env 层）仍有效。**
 
 ## 背景与意图
@@ -98,13 +100,13 @@ Codex 的 `model` 不走 env：写入 `~/.codex/config.toml` 的受管键 `model
 | Agent | 目标文件 | 受管键 | 其余内容 |
 |---|---|---|---|
 | Claude Code | `~/.claude/settings.json` | `env.ANTHROPIC_BASE_URL`、`env.ANTHROPIC_AUTH_TOKEN`、`env.ANTHROPIC_MODEL`、`env.ANTHROPIC_SMALL_FAST_MODEL` | 原样保留（含用户其他 env、permissions、model 等） |
-| Codex CLI | `~/.codex/config.toml` + `~/.codex/auth.json` | config.toml：`model`、`model_provider = "agentswitch"`、`[model_providers.agentswitch]`（`base_url`、`wire_api = "chat"`、`requires_openai_auth = false`，**不用** `env_key`）；auth.json：`OPENAI_API_KEY` | 两个文件的其余键/段语义保留 |
+| Codex（CLI / 桌面版） | `~/.codex/config.toml` + `~/.codex/agentswitch-model-catalog.json` | config.toml：`model`、`model_provider = "agentswitch"`、`model_catalog_json = "agentswitch-model-catalog.json"`、`[model_providers.agentswitch]`（`base_url`、`wire_api = "responses"`、`requires_openai_auth = false`、`experimental_bearer_token = 网关令牌`，**不用** `env_key`）；目录：绑定模型在前的逻辑模型条目；`auth.json` 不读写（只由 Codex 维护官方登录） | 文件其余键/段语义保留 |
 
 写入安全（我的决策，实现时照此执行）：
 
 - **读-合并-写**：解析原文件 → 只改受管键 → 序列化写回；解析失败（非法 JSON/TOML）则中止并报错，不猜测修复。
 - **保留级别**：JSON（Claude `settings.json`）键值语义保留；TOML（Codex `config.toml`）按用户决策语义保留——注释允许丢失、格式允许重排。
-- **Codex 格式权威**：`[model_providers.agentswitch]` 以 cc-switch 实测可用模板为准（`wire_api = "chat"`、key 写 `auth.json`、显式 `requires_openai_auth = false`，防止用户已登录 ChatGPT 账号时 Codex 把官方 OAuth 令牌误发给本地网关）。本机未装 Codex，端到端验证列为实现计划的前置步骤。
+- **Codex 格式权威**：`[model_providers.agentswitch]` 以 cc-switch 实测可用模板为准（`wire_api = "responses"`、key 写 provider 表的 `experimental_bearer_token`、显式 `requires_openai_auth = false`，防止用户已登录 ChatGPT 账号时 Codex 把官方 OAuth 令牌误发给本地网关）。2026-10-27 修订：不再写 `auth.json`（Codex 0.149 起自定义 provider 不从该文件继承凭据；桌面版从 Dock 启动也不继承 shell env，故不用 `env_key`）；同时用 Codex 自带 `debug models --bundled` 模板生成 `agentswitch-model-catalog.json` 并写 `model_catalog_json`（桌面版模型选择器只读该文件；旧 cc-switch 目录里的模型名会让网关 404）。本机未装 Codex，端到端验证列为实现计划的前置步骤。
 - **应用前备份**：把原文件复制到 `~/.agentswitch/backups/<app_type>/<时间戳>-<文件名>`，每 app_type 只保留最近 10 份。
 - **令牌/端口联动**：网关令牌重新生成或端口变更后，自动重写「当前应用」配置的 live 文件与所有已生成的持久文件（用户无感，不弹窗）。
 - **删除使用中的配置**：先清 `is_current`，live 文件保持最后一次写入内容不变（不回滚、不清空），UI 提示「已删除，文件保留最后状态」。
@@ -126,26 +128,33 @@ Codex 的 `model` 不走 env：写入 `~/.codex/config.toml` 的受管键 `model
 ~/.agentswitch/access/<app_type>/<config_id>.env    # codex：KEY=VALUE 行
 ```
 
+Windows 无 `sh` source 语义，改为生成 `<config_id>.cmd` 启动器（CRLF、0600）：
+claude 在 `.json` 之外另加 `.cmd`（引用 settings JSON），codex 直接以
+`set "KEY=VALUE"` + `codex -m "<model>"` 启动。批处理中的 `%` 转义为 `%%`，
+值/模型含双引号或换行时拒绝生成（行格式无法安全表达）。
+
 用 `config_id`（而非名称）作文件名，避免改名导致用户已复制的命令失效；UI 展示的真实路径以实际生成为准。
 
 ### 启动命令（接入页展示，可一键复制）
 
 - Claude Code：`claude --settings ~/.agentswitch/access/claude/<config_id>.json`
   （`--settings` 只覆盖其中给出的键，未给的键回落 `~/.claude/settings.json`。）
-- Codex CLI：Codex 无整份配置文件参数，用环境变量方式：
+- Codex（CLI / 桌面版）：Codex 无整份配置文件参数，用环境变量方式：
   `env $(cat ~/.agentswitch/access/codex/<config_id>.env) codex -m <逻辑模型名>`
   （具体拼装以实现验证为准，设计只要求：复制出来的命令在干净 shell 里可直接运行。）
+- Windows（2026-10-26）：统一为 `cmd /c call "<config_id>.cmd"`——cmd 与
+  PowerShell 均可直接粘贴；令牌只落在 0600 启动器文件，不出现在命令文本中。
 
 ### 「用此配置打开终端」按钮
 
-点按钮 → 拉起系统终端，工作目录为用户常用目录（默认 home），预置好上述启动命令（粘贴到输入行或自动执行，实现时取最可靠方式）。仅对 macOS 实现（当前唯一支持平台）。
+点按钮 → 拉起系统终端，工作目录为用户常用目录（默认 home），预置好上述启动命令（粘贴到输入行或自动执行，实现时取最可靠方式）。macOS 经 AppleScript（`osascript`）执行；Windows 经 `cmd /c start "" "<config_id>.cmd"`；其他平台明确报「当前平台不支持打开终端」（2026-10-26 扩展 Windows）。
 
 ## UI（接入页改版，MyGo 原生视图，遵循 `internal/desktop/theme.go` 设计系统）
 
 接入页整体结构（取代现有「逻辑模型选择器 + 两张片段卡」）：
 
 ```
-[ Agent 切换 Tab：Claude Code | Codex CLI ]
+[ Agent 切换 Tab：Claude Code | Codex ]
 
 ┌─ 全局配置卡 ────────────────────────────────┐
 │ env 键值列表（键/值两列，可增删改）  [保存]  │
@@ -192,7 +201,7 @@ Codex 的 `model` 不走 env：写入 `~/.codex/config.toml` 的受管键 `model
 
 1. 在 UI 为 Claude Code 新建配置「工作」（绑定逻辑模型 my-code）并应用 → `~/.claude/settings.json` 四个受管键更新，文件其余内容不变。
 2. 再新建配置「个人」（绑定另一逻辑模型）→ 复制其启动命令，在终端执行可正常经网关对话；「用此配置打开终端」按钮同效。
-3. 为 Codex CLI 完成同样流程（config.toml + auth.json + env 启动命令）。
+3. 为 Codex 完成同样流程（config.toml + env 启动命令；`auth.json` 不读写）。
 4. 修改全局配置并保存 → 重新应用后 live 文件包含全局 env；「个人」配置的持久文件同步刷新。
 5. 重新生成网关令牌 → live 文件与所有持久文件自动刷新，无需手动操作。
 
