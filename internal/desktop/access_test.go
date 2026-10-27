@@ -506,6 +506,116 @@ func TestAccessPatchCodexSettings(t *testing.T) {
 	}
 }
 
+// TestAccessCodexNextModel：添加模型取第一个未在列表中的逻辑模型；全部
+// 已在列表时不重复添加。
+func TestAccessCodexNextModel(t *testing.T) {
+	next, ok := accessCodexNextModel([]string{"a", "b", "c"}, []string{"b"})
+	if !ok || next != "a" {
+		t.Fatalf("应取第一个未使用项: %q %v", next, ok)
+	}
+	next, ok = accessCodexNextModel([]string{"a", "b"}, []string{"a"})
+	if !ok || next != "b" {
+		t.Fatalf("应跳过已用项: %q %v", next, ok)
+	}
+	if _, ok := accessCodexNextModel([]string{"a"}, []string{"a"}); ok {
+		t.Fatal("全部已用不应重复添加")
+	}
+}
+
+// TestAccessMoveCodexModel：上移/下移换位；首行上移、末行下移与越界都
+// no-op（与 moveTarget 同语义）。
+func TestAccessMoveCodexModel(t *testing.T) {
+	ms := []string{"a", "b", "c"}
+	accessMoveCodexModel(ms, 1, -1)
+	if ms[0] != "b" || ms[1] != "a" {
+		t.Fatal(ms)
+	}
+	accessMoveCodexModel(ms, 0, -1) // 边界：首行上移不动
+	accessMoveCodexModel(ms, 2, +1) // 边界：末行下移不动
+	accessMoveCodexModel(ms, -1, +1)
+	accessMoveCodexModel(ms, 3, -1)
+	if ms[0] != "b" || ms[1] != "a" || ms[2] != "c" {
+		t.Fatal(ms)
+	}
+}
+
+// TestAccessCodexEditorShowsModelList：Codex 编辑器不再显示单一「逻辑模型」
+// 下拉，改为模型列表（首行「默认」）。
+func TestAccessCodexEditorShowsModelList(t *testing.T) {
+	u, a := testUI(t)
+	a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true})
+	u.page = "access"
+	u.accessApp = "codex"
+	u.accessForm = accessForm{open: true, modelLabel: "my-code", docJSON: `{"env":{}}`}
+	tt := ui.NewTester(u.view, 1000, 900)
+	for _, want := range []string{"默认", "模型列表"} {
+		if !tt.HasText(want) {
+			t.Fatalf("missing %q in %v", want, tt.Texts())
+		}
+	}
+}
+
+// TestAccessCodexModelListSingleRowHidesDelete：删除会让列表为空，只剩一行
+// 时不渲染行删除按钮（至少保留一个模型）。
+func TestAccessCodexModelListSingleRowHidesDelete(t *testing.T) {
+	u, a := testUI(t)
+	a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true})
+	u.page = "access"
+	u.accessApp = "codex"
+	u.accessForm = accessForm{open: true, modelLabel: "my-code", docJSON: `{"env":{}}`}
+	tt := ui.NewTester(u.view, 1000, 900)
+	if tt.HasText("删除") {
+		t.Fatalf("单行不应渲染删除按钮: %v", tt.Texts())
+	}
+	if !tt.HasText("＋ 添加模型") {
+		t.Fatalf("缺少添加按钮: %v", tt.Texts())
+	}
+}
+
+// TestAccessSaveFormCodexUsesFirstModel：Codex 保存以模型列表首项为绑定
+// 模型（默认），不是旧的单选 modelLabel。
+func TestAccessSaveFormCodexUsesFirstModel(t *testing.T) {
+	u, a := testUI(t)
+	t.Setenv("HOME", t.TempDir())
+	for _, lm := range []storage.LogicalModel{
+		{ID: "lm1", Name: "my-code", Enabled: true},
+		{ID: "lm2", Name: "second", Enabled: true},
+	} {
+		if _, err := a.Store().LogicalModels().Save(lm); err != nil {
+			t.Fatal(err)
+		}
+	}
+	u.accessApp = "codex"
+	u.accessForm = accessForm{
+		open: true, name: "cfg", modelLabel: "second",
+		codexModels: []string{"my-code", "second"},
+		docJSON:     `{"models":["my-code","second"],"env":{}}`,
+	}
+	u.accessSaveForm(u.accessSvc(), u.svc.Logical.List())
+	if u.accessForm.msg != "" {
+		t.Fatalf("保存应成功: %q", u.accessForm.msg)
+	}
+	list := u.accessSvc().List("codex")
+	if len(list) != 1 || list[0].LogicalModelID != "lm1" {
+		t.Fatalf("默认模型应取列表首项: %+v", list)
+	}
+}
+
+// TestAccessSaveFormCodexRejectsEmptyList：空模型列表保存报中文错误（明确
+// 动作提示），不落库。
+func TestAccessSaveFormCodexRejectsEmptyList(t *testing.T) {
+	u, _ := testUI(t)
+	u.accessApp = "codex"
+	u.accessForm = accessForm{open: true, name: "cfg"}
+	u.accessSaveForm(u.accessSvc(), u.svc.Logical.List())
+	if u.accessForm.msg != "请至少添加一个模型" {
+		t.Fatalf("空列表应报错: %q", u.accessForm.msg)
+	}
+	if len(u.accessSvc().List("codex")) != 0 {
+		t.Fatal("空列表不得落库")
+	}
+}
+
 // TestDesktopFormDocRoundTrip：表单行 ↔ 角色映射文档双向转换（UI 层唯一
 // 业务逻辑；空角色不落键、oneM 只在启用时生效）。
 func TestDesktopFormDocRoundTrip(t *testing.T) {

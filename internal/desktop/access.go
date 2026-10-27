@@ -380,6 +380,27 @@ func (u *uiState) accessPatchCodexModels() {
 	}
 }
 
+// accessCodexNextModel 返回 labels 中第一个未出现在 models 里的模型名
+// （「＋ 添加模型」选中项）；全部已用返回 ok=false，避免重复行。
+func accessCodexNextModel(labels, models []string) (string, bool) {
+	for _, l := range labels {
+		if !slices.Contains(models, l) {
+			return l, true
+		}
+	}
+	return "", false
+}
+
+// accessMoveCodexModel 把 models[i] 与相邻行换位（delta=-1 上移 / +1 下移）；
+// 首行上移、末行下移与越界下标都是 no-op（与 moveTarget 同语义）。
+func accessMoveCodexModel(models []string, i, delta int) {
+	j := i + delta
+	if i < 0 || i >= len(models) || j < 0 || j >= len(models) {
+		return
+	}
+	models[i], models[j] = models[j], models[i]
+}
+
 // accessPatchCodexSettings 表单→JSON 补丁：三项高级设置写回 codex 对象
 // （全空删除键）；补丁失败保留旧文档。
 func (u *uiState) accessPatchCodexSettings() {
@@ -749,38 +770,45 @@ func (u *uiState) accessEditorCard(c *ui.Context, t *ui.Theme, s softPalette, ac
 				models = u.svc.Logical.List()
 			}
 			labels := accessModelLabels(models)
-			ui.Row(c).Gap(12).Children(func() {
-				ui.Text(c, "逻辑模型:").Width(96).TextColor(t.TextMuted)
-				if len(labels) == 0 {
-					ui.Text(c, "还没有启用的逻辑模型——先在「逻辑模型」页创建并启用").TextColor(t.TextMuted)
-				} else {
-					prev := u.accessForm.modelLabel
-					sel := ui.Select(c, &u.accessForm.modelLabel, labels)
-					if sel.Changed() && u.accessForm.modelLabel != prev {
-						// 主模型切换：先按旧模型的 SMALL_FAST 派生值重定位
-						//（否则旧值会覆盖新基线并在保存时被冻结），再重新
-						// 取合成预览（锁定键随之刷新）。
-						if u.accessApp == "claude" {
-							if rebased, err := bridge.RebaseAccessDoc(u.accessApp, u.accessForm.docJSON,
-								map[string]string{"ANTHROPIC_SMALL_FAST_MODEL": prev}); err == nil {
-								u.accessForm.docJSON = rebased
+			if u.accessApp == "codex" {
+				// 文档 → 模型列表回填（打开配置/编辑 JSON 后同步）；首项即
+				// 默认模型（保存时的 logical_model_id）。
+				u.accessSyncCodexFromDoc(models)
+				u.accessCodexModelsSection(c, t, s, labels)
+			} else {
+				ui.Row(c).Gap(12).Children(func() {
+					ui.Text(c, "逻辑模型:").Width(96).TextColor(t.TextMuted)
+					if len(labels) == 0 {
+						ui.Text(c, "还没有启用的逻辑模型——先在「逻辑模型」页创建并启用").TextColor(t.TextMuted)
+					} else {
+						prev := u.accessForm.modelLabel
+						sel := ui.Select(c, &u.accessForm.modelLabel, labels)
+						if sel.Changed() && u.accessForm.modelLabel != prev {
+							// 主模型切换：先按旧模型的 SMALL_FAST 派生值重定位
+							//（否则旧值会覆盖新基线并在保存时被冻结），再重新
+							// 取合成预览（锁定键随之刷新）。
+							if u.accessApp == "claude" {
+								if rebased, err := bridge.RebaseAccessDoc(u.accessApp, u.accessForm.docJSON,
+									map[string]string{"ANTHROPIC_SMALL_FAST_MODEL": prev}); err == nil {
+									u.accessForm.docJSON = rebased
+								}
+								if u.accessForm.mainOneM {
+									u.accessPatchMainModel() // 1M 声明跟随新模型名
+								}
 							}
-							if u.accessForm.mainOneM {
-								u.accessPatchMainModel() // 1M 声明跟随新模型名
-							}
-						}
-						u.accessRepreviewForm(acc)
-					}
-					if u.accessApp == "claude" {
-						beforeM := u.accessForm.mainOneM
-						cb := ui.Checkbox(c, &u.accessForm.mainOneM, "1M")
-						if cb.Changed() && u.accessForm.mainOneM != beforeM {
-							u.accessPatchMainModel()
 							u.accessRepreviewForm(acc)
 						}
+						if u.accessApp == "claude" {
+							beforeM := u.accessForm.mainOneM
+							cb := ui.Checkbox(c, &u.accessForm.mainOneM, "1M")
+							if cb.Changed() && u.accessForm.mainOneM != beforeM {
+								u.accessPatchMainModel()
+								u.accessRepreviewForm(acc)
+							}
+						}
 					}
-				}
-			})
+				})
+			}
 
 			if u.accessApp == "claude" {
 				ui.Text(c, "模型映射").Bold()
@@ -840,6 +868,67 @@ func (u *uiState) accessEditorCard(c *ui.Context, t *ui.Theme, s softPalette, ac
 	})
 }
 
+// accessCodexModelsSection 渲染 Codex 模型列表编辑（spec 2026-10-27 §4.2）：
+// 有序 Select 行 + 上移/下移/删除，首行「默认」徽标，底部「＋ 添加模型」。
+// 行内按钮只记动作、循环结束后统一应用（构建中改切片会越界）；任何变化
+// 写回文档 models（accessPatchCodexModels）。只剩一项时不渲染删除按钮
+// ——列表至少保留一项（保存另有空列表校验）。
+func (u *uiState) accessCodexModelsSection(c *ui.Context, t *ui.Theme, s softPalette, labels []string) {
+	f := &u.accessForm
+	ui.Text(c, "模型列表").Bold()
+	ui.Text(c, "按序显示在 Codex 模型菜单；第一行为默认模型").TextColor(t.TextMuted)
+	if len(labels) == 0 {
+		ui.Text(c, "还没有启用的逻辑模型——先在「逻辑模型」页创建并启用").TextColor(t.TextMuted)
+	}
+	act, actI := "", -1
+	changed := false
+	for i := range f.codexModels {
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, fmt.Sprintf("%d.", i+1)).Width(20).TextColor(t.TextMuted)
+			// 编辑旧配置时列表可能含停用模型：把当前值补进选项，避免
+			// Select 显示空值、一次误点就丢掉引用。
+			opts := labels
+			if v := f.codexModels[i]; v != "" && !slices.Contains(opts, v) {
+				opts = append([]string{v}, labels...)
+			}
+			before := f.codexModels[i]
+			sel := ui.Select(c, &f.codexModels[i], opts)
+			if sel.Changed() && f.codexModels[i] != before {
+				changed = true
+			}
+			if i == 0 {
+				softBadge(c, t, s, "ok", "默认")
+			}
+			if softButton(c, t, s, "gray", "上移").Clicked() {
+				act, actI = "up", i
+			}
+			if softButton(c, t, s, "gray", "下移").Clicked() {
+				act, actI = "down", i
+			}
+			if len(f.codexModels) > 1 && softButton(c, t, s, "danger", "删除").Clicked() {
+				act, actI = "del", i
+			}
+		})
+	}
+	switch act {
+	case "up":
+		accessMoveCodexModel(f.codexModels, actI, -1)
+	case "down":
+		accessMoveCodexModel(f.codexModels, actI, +1)
+	case "del":
+		f.codexModels = append(f.codexModels[:actI], f.codexModels[actI+1:]...)
+	}
+	if act != "" || changed {
+		u.accessPatchCodexModels()
+	}
+	if softButton(c, t, s, "act", "＋ 添加模型").Clicked() {
+		if next, ok := accessCodexNextModel(labels, f.codexModels); ok {
+			f.codexModels = append(f.codexModels, next)
+			u.accessPatchCodexModels()
+		}
+	}
+}
+
 // accessSaveForm 校验并保存表单；文档原文送 bridge（parse+归一化错误内联）。
 func (u *uiState) accessSaveForm(acc bridge.AccessConfigs, models []bridge.ModelView) {
 	f := &u.accessForm
@@ -847,7 +936,16 @@ func (u *uiState) accessSaveForm(acc bridge.AccessConfigs, models []bridge.Model
 		f.msg = "请填写配置名"
 		return
 	}
-	modelID := accessModelIDByLabel(models, f.modelLabel)
+	modelLabel := f.modelLabel
+	if u.accessApp == "codex" {
+		// 默认模型 = 模型列表首项（spec 2026-10-27 §4.2 不变量）。
+		if len(f.codexModels) == 0 {
+			f.msg = "请至少添加一个模型"
+			return
+		}
+		modelLabel = f.codexModels[0]
+	}
+	modelID := accessModelIDByLabel(models, modelLabel)
 	if modelID == "" {
 		f.msg = "请选择逻辑模型"
 		return
