@@ -331,6 +331,181 @@ func TestAccessSyncRolesAndPatch(t *testing.T) {
 	}
 }
 
+// TestAccessDocSetModelsRoundTrip：Codex 文档 models 键写为有序字符串数组；
+// 空列表删除键（保存/应用时回退绑定模型 + 启用模型）；其他键原样保留。
+func TestAccessDocSetModelsRoundTrip(t *testing.T) {
+	raw, err := accessDocSetModels(`{"env":{"A":"1"}}`, []string{"my-code", "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := map[string]any{}
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := doc["models"].([]any)
+	if !ok || len(got) != 2 || got[0] != "my-code" || got[1] != "test" {
+		t.Fatalf("models 未按序写入: %s", raw)
+	}
+	if doc["env"].(map[string]any)["A"] != "1" {
+		t.Fatalf("其他键被破坏: %s", raw)
+	}
+	empty, err := accessDocSetModels(raw, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc = map[string]any{}
+	if err := json.Unmarshal([]byte(empty), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := doc["models"]; ok {
+		t.Fatalf("空列表应删除 models: %s", empty)
+	}
+	if _, err := accessDocSetModels(`{bad`, []string{"x"}); err == nil {
+		t.Fatal("非法 JSON 应报错")
+	}
+}
+
+// TestAccessDocSetCodexRoundTrip：codex 对象只写非空字段；全空删除 codex
+// 键；其他顶层键保留。
+func TestAccessDocSetCodexRoundTrip(t *testing.T) {
+	raw, err := accessDocSetCodex(`{"models":["my-code"]}`, "test", "high", "my-code")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := map[string]any{}
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		t.Fatal(err)
+	}
+	codex, ok := doc["codex"].(map[string]any)
+	if !ok || codex["subagent_model"] != "test" ||
+		codex["subagent_reasoning_effort"] != "high" ||
+		codex["auto_review_model"] != "my-code" {
+		t.Fatalf("codex 字段未写入: %s", raw)
+	}
+	// 空字段不落键（去空白后视为空）。
+	raw, err = accessDocSetCodex(raw, " test ", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc = map[string]any{}
+	json.Unmarshal([]byte(raw), &doc)
+	codex = doc["codex"].(map[string]any)
+	if _, ok := codex["subagent_reasoning_effort"]; ok {
+		t.Fatalf("空字段不应落键: %s", raw)
+	}
+	if _, ok := codex["auto_review_model"]; ok {
+		t.Fatalf("空字段不应落键: %s", raw)
+	}
+	// 全空删除 codex，models 保留。
+	raw, err = accessDocSetCodex(raw, "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc = map[string]any{}
+	json.Unmarshal([]byte(raw), &doc)
+	if _, ok := doc["codex"]; ok {
+		t.Fatalf("全空应删除 codex: %s", raw)
+	}
+	if _, ok := doc["models"]; !ok {
+		t.Fatalf("其他顶层键应保留: %s", raw)
+	}
+	if _, err := accessDocSetCodex(`{bad`, "", "", ""); err == nil {
+		t.Fatal("非法 JSON 应报错")
+	}
+}
+
+// TestAccessSyncCodexFallback：文档无 models 时回落为「绑定模型 + 启用模型」
+// （去重、忽略停用项），并回填 codex 高级设置为空。
+func TestAccessSyncCodexFallback(t *testing.T) {
+	u := &uiState{}
+	u.accessForm = accessForm{docJSON: `{"env":{}}`, modelLabel: "my-code"}
+	u.accessSyncCodexFromDoc([]bridge.ModelView{
+		{Name: "my-code", Enabled: true}, {Name: "test", Enabled: true}, {Name: "off"},
+	})
+	if len(u.accessForm.codexModels) != 2 || u.accessForm.codexModels[0] != "my-code" ||
+		u.accessForm.codexModels[1] != "test" {
+		t.Fatalf("%v", u.accessForm.codexModels)
+	}
+	if u.accessForm.subagentModel != "" || u.accessForm.subagentEffort != "" ||
+		u.accessForm.autoReviewModel != "" {
+		t.Fatalf("codex 高级设置应回填空: %+v", u.accessForm)
+	}
+}
+
+// TestAccessSyncCodexFromDocExplicit：文档显式 models/codex 优先；解析失败
+// 保留上一合法状态。
+func TestAccessSyncCodexFromDocExplicit(t *testing.T) {
+	u := &uiState{}
+	u.accessForm = accessForm{
+		modelLabel: "bound",
+		docJSON: `{"models":["a","b"],"codex":{"subagent_model":"b",` +
+			`"subagent_reasoning_effort":"high","auto_review_model":"a"}}`,
+	}
+	u.accessSyncCodexFromDoc([]bridge.ModelView{{Name: "bound", Enabled: true}})
+	if len(u.accessForm.codexModels) != 2 || u.accessForm.codexModels[0] != "a" ||
+		u.accessForm.codexModels[1] != "b" {
+		t.Fatalf("显式列表应优先: %v", u.accessForm.codexModels)
+	}
+	if u.accessForm.subagentModel != "b" || u.accessForm.subagentEffort != "high" ||
+		u.accessForm.autoReviewModel != "a" {
+		t.Fatalf("高级设置回填: %+v", u.accessForm)
+	}
+	// 非法 JSON：保留上一状态
+	u.accessForm.docJSON = `{bad`
+	u.accessSyncCodexFromDoc(nil)
+	if len(u.accessForm.codexModels) != 2 || u.accessForm.subagentModel != "b" {
+		t.Fatalf("解析失败应保留旧状态: %+v", u.accessForm)
+	}
+}
+
+// TestAccessPatchCodexModels：列表写回文档，且默认模型跟随首行。
+func TestAccessPatchCodexModels(t *testing.T) {
+	u := &uiState{}
+	u.accessForm = accessForm{docJSON: `{"env":{}}`, codexModels: []string{"b", "a"}}
+	u.accessPatchCodexModels()
+	doc := map[string]any{}
+	if err := json.Unmarshal([]byte(u.accessForm.docJSON), &doc); err != nil {
+		t.Fatal(err)
+	}
+	got := doc["models"].([]any)
+	if len(got) != 2 || got[0] != "b" || got[1] != "a" {
+		t.Fatalf("models 写回: %s", u.accessForm.docJSON)
+	}
+	if u.accessForm.modelLabel != "b" {
+		t.Fatalf("默认模型应跟随首行: %q", u.accessForm.modelLabel)
+	}
+}
+
+// TestAccessPatchCodexSettings：高级设置写回 codex 对象；清空后删除键。
+func TestAccessPatchCodexSettings(t *testing.T) {
+	u := &uiState{}
+	u.accessForm = accessForm{
+		docJSON:        `{"models":["m"]}`,
+		subagentModel:  "m",
+		subagentEffort: "low",
+	}
+	u.accessPatchCodexSettings()
+	doc := map[string]any{}
+	if err := json.Unmarshal([]byte(u.accessForm.docJSON), &doc); err != nil {
+		t.Fatal(err)
+	}
+	codex, ok := doc["codex"].(map[string]any)
+	if !ok || codex["subagent_model"] != "m" || codex["subagent_reasoning_effort"] != "low" {
+		t.Fatalf("高级设置写回: %s", u.accessForm.docJSON)
+	}
+	u.accessForm.subagentModel = ""
+	u.accessForm.subagentEffort = ""
+	u.accessPatchCodexSettings()
+	doc = map[string]any{}
+	json.Unmarshal([]byte(u.accessForm.docJSON), &doc)
+	if _, ok := doc["codex"]; ok {
+		t.Fatalf("全空应删除 codex: %s", u.accessForm.docJSON)
+	}
+	if _, ok := doc["models"]; !ok {
+		t.Fatalf("models 应保留: %s", u.accessForm.docJSON)
+	}
+}
+
 // TestDesktopFormDocRoundTrip：表单行 ↔ 角色映射文档双向转换（UI 层唯一
 // 业务逻辑；空角色不落键、oneM 只在启用时生效）。
 func TestDesktopFormDocRoundTrip(t *testing.T) {
