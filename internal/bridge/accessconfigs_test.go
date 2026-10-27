@@ -158,12 +158,22 @@ func TestCodexLiveLeavesAuthJSONUntouched(t *testing.T) {
 }
 
 func TestCodexLiveProjectionInvalidTOMLAborts(t *testing.T) {
-	acc := AccessConfigs{A: tempApp(t), Home: t.TempDir()}
+	a := tempApp(t)
+	seedLogicalModel(t, a, "m")
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
 	dir := filepath.Join(acc.Home, ".codex")
 	os.MkdirAll(dir, 0o755)
 	os.WriteFile(filepath.Join(dir, "config.toml"), []byte("model = "), 0o600)
-	if err := acc.writeCodexLive(map[string]string{"OPENAI_API_KEY": "x"}, "m", nil); err == nil {
-		t.Fatal("非法 TOML 应中止")
+	err := acc.writeCodexLive(map[string]string{"OPENAI_API_KEY": "x"}, "m", nil)
+	if err == nil || !strings.Contains(err.Error(), "config.toml 解析失败") {
+		t.Fatalf("非法 TOML 应报解析失败: %v", err)
+	}
+	// 解析必须先于模型解析：即使模型未登记，也应以 TOML 解析错误中止，
+	// 而不是先报「模型不存在」（否则会在坏配置上继续走模型/目录生成）。
+	err = acc.writeCodexLive(map[string]string{"OPENAI_API_KEY": "x"}, "ghost", nil)
+	if err == nil || !strings.Contains(err.Error(), "config.toml 解析失败") ||
+		strings.Contains(err.Error(), "不存在") {
+		t.Fatalf("TOML 解析必须先于模型解析: %v", err)
 	}
 	b, _ := os.ReadFile(filepath.Join(dir, "config.toml"))
 	if string(b) != "model = " {
@@ -204,12 +214,21 @@ func TestProjectCodexBaseManagedKeys(t *testing.T) {
 	a := tempApp(t)
 	seedLogicalModel(t, a, "my-code")
 	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	dir := filepath.Join(acc.Home, ".codex")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// 预置冲突的受管键与一个未知用户键：受管键必须被强制覆盖，未知键保留。
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(
+		"model = \"old\"\ndisable_response_storage = false\nweb_search = \"live\"\ncustom_user_key = \"keep\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := acc.writeCodexLive(map[string]string{
 		"OPENAI_BASE_URL": "http://127.0.0.1:17890/v1", "OPENAI_API_KEY": "tok"},
 		"my-code", map[string]any{"models": []any{"my-code"}}); err != nil {
 		t.Fatal(err)
 	}
-	b, _ := os.ReadFile(filepath.Join(acc.Home, ".codex", "config.toml"))
+	b, _ := os.ReadFile(filepath.Join(dir, "config.toml"))
 	var cfg map[string]any
 	if err := toml.Unmarshal(b, &cfg); err != nil {
 		t.Fatal(err)
@@ -217,7 +236,10 @@ func TestProjectCodexBaseManagedKeys(t *testing.T) {
 	if cfg["model"] != "my-code" || cfg["model_provider"] != "agentswitch" ||
 		cfg["model_catalog_json"] != codexModelCatalogFileName ||
 		cfg["disable_response_storage"] != true || cfg["web_search"] != "disabled" {
-		t.Fatalf("%v", cfg)
+		t.Fatalf("受管键应覆盖冲突值: %v", cfg)
+	}
+	if cfg["custom_user_key"] != "keep" {
+		t.Fatalf("未知用户键应保留: %v", cfg)
 	}
 }
 
@@ -1257,6 +1279,9 @@ func TestPreviewCodexConfigDoesNotWrite(t *testing.T) {
 	if cfg["model"] != "my-code" || cfg["model_catalog_json"] != codexModelCatalogFileName {
 		t.Fatalf("%s", got)
 	}
+	if _, err := os.Stat(filepath.Join(acc.Home, ".codex")); !os.IsNotExist(err) {
+		t.Fatal("预览不应创建 .codex 目录")
+	}
 	if _, err := os.Stat(filepath.Join(acc.Home, ".codex", "config.toml")); !os.IsNotExist(err) {
 		t.Fatal("预览不应写 live 文件")
 	}
@@ -1520,7 +1545,7 @@ func accessEnvDoc(env map[string]string) string {
 }
 
 // 默认模型的 ContextWindow>0 时投影 1M 上下文与 90% 自动压缩阈值到顶层
-//（spec 2026-10-27 §4.5）：模型名取 models[0]，两者均为整数。
+// （spec 2026-10-27 §4.5）：模型名取 models[0]，两者均为整数。
 func TestProjectCodexContextWindow(t *testing.T) {
 	a := tempApp(t)
 	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{

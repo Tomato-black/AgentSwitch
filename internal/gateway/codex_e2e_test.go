@@ -65,9 +65,13 @@ func TestCodexCLIResponsesToolRoundTrip(t *testing.T) {
 	home := t.TempDir()
 	work := t.TempDir()
 	os.MkdirAll(filepath.Join(home, ".codex"), 0o755)
+	// 与接入投影的受管键保持一致（model_catalog_json 未写入：本夹具不生成
+	// 模型目录文件，e2e 只验证协议往返，不验证模型选择器）。
 	os.WriteFile(filepath.Join(home, ".codex", "config.toml"), []byte(`
 model = "pub-1"
 model_provider = "agentswitch"
+disable_response_storage = true
+web_search = "disabled"
 
 [model_providers.agentswitch]
 name = "agentswitch"

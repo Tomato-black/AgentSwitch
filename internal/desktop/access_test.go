@@ -477,6 +477,28 @@ func TestAccessPatchCodexModels(t *testing.T) {
 	if u.accessForm.modelLabel != "b" {
 		t.Fatalf("默认模型应跟随首行: %q", u.accessForm.modelLabel)
 	}
+	// 空列表：删除 models 键（保存时回退绑定模型 + 启用模型），默认模型
+	// 标签保持不变——空列表不会把表单的绑定模型清空。
+	u.accessForm = accessForm{
+		docJSON: `{"models":["b"],"env":{}}`, modelLabel: "keep", codexModels: nil,
+	}
+	u.accessPatchCodexModels()
+	doc = map[string]any{}
+	if err := json.Unmarshal([]byte(u.accessForm.docJSON), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := doc["models"]; ok {
+		t.Fatalf("空列表应删除 models: %s", u.accessForm.docJSON)
+	}
+	if u.accessForm.modelLabel != "keep" {
+		t.Fatalf("空列表不应改默认模型: %q", u.accessForm.modelLabel)
+	}
+	// 非法 JSON：补丁失败保留旧文本。
+	u.accessForm = accessForm{docJSON: `{bad`, modelLabel: "keep", codexModels: []string{"x"}}
+	u.accessPatchCodexModels()
+	if u.accessForm.docJSON != `{bad` {
+		t.Fatalf("解析失败应保留旧文档: %s", u.accessForm.docJSON)
+	}
 }
 
 // TestAccessPatchCodexSettings：高级设置写回 codex 对象；清空后删除键。
@@ -506,6 +528,12 @@ func TestAccessPatchCodexSettings(t *testing.T) {
 	}
 	if _, ok := doc["models"]; !ok {
 		t.Fatalf("models 应保留: %s", u.accessForm.docJSON)
+	}
+	// 非法 JSON：补丁失败保留旧文本。
+	u.accessForm = accessForm{docJSON: `{bad`, subagentModel: "m"}
+	u.accessPatchCodexSettings()
+	if u.accessForm.docJSON != `{bad` {
+		t.Fatalf("解析失败应保留旧文档: %s", u.accessForm.docJSON)
 	}
 }
 
@@ -577,6 +605,55 @@ func TestAccessCodexEditorShowsModelList(t *testing.T) {
 		if !tt.HasText(want) {
 			t.Fatalf("missing %q in %v", want, tt.Texts())
 		}
+	}
+	if tt.HasText("逻辑模型:") {
+		t.Fatalf("Codex 编辑器不应再显示单一逻辑模型下拉: %v", tt.Texts())
+	}
+}
+
+// TestAccessCodexEditorAddModelClick：「＋ 添加模型」点击后追加下一个可用
+// 逻辑模型到列表末尾并写回文档 models（列表增长即可见，整帧重建后不丢）。
+func TestAccessCodexEditorAddModelClick(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".codex")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	template := `{"models":[{"slug":"gpt-5","base_instructions":"test",` +
+		`"model_messages":{"instructions_template":"test"}}]}`
+	if err := os.WriteFile(filepath.Join(dir, "cc-switch-model-catalog.json"), []byte(template), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	u, a := testUI(t)
+	for _, lm := range []storage.LogicalModel{
+		{ID: "lm1", Name: "my-code", Enabled: true},
+		{ID: "lm2", Name: "extra", Enabled: true},
+	} {
+		if _, err := a.Store().LogicalModels().Save(lm); err != nil {
+			t.Fatal(err)
+		}
+	}
+	u.page = "access"
+	u.accessApp = "codex"
+	u.accessForm = accessForm{
+		open: true, modelLabel: "my-code", codexModels: []string{"my-code"},
+		docJSON: `{"models":["my-code"],"env":{}}`,
+	}
+	tt := ui.NewTester(u.view, 1200, 4000)
+	if err := tt.Click("＋ 添加模型"); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(u.accessForm.codexModels, []string{"my-code", "extra"}) {
+		t.Fatalf("点击后应追加模型: %v", u.accessForm.codexModels)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(u.accessForm.docJSON), &doc); err != nil {
+		t.Fatal(err)
+	}
+	models, ok := doc["models"].([]any)
+	if !ok || len(models) != 2 || models[1] != "extra" {
+		t.Fatalf("models 未写回文档: %s", u.accessForm.docJSON)
 	}
 }
 
@@ -719,6 +796,42 @@ func TestAccessCodexPreviewRendersManagedKeys(t *testing.T) {
 	u.accessRefreshCodexPreview(u.accessSvc())
 	if u.accessForm.codexPreview != "" || !strings.Contains(u.accessForm.msg, "模型") {
 		t.Fatalf("空模型列表应内联中文提示: %+v", u.accessForm)
+	}
+}
+
+// TestAccessGlobalSaveRefreshesCodexPreview：Codex 编辑器打开时保存全局配置，
+// 除按新基线重预览 JSON 文档外，也要刷新只读 config.toml 预览（否则预览会
+// 停留在保存前的模型解析结果）。
+func TestAccessGlobalSaveRefreshesCodexPreview(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".codex")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	template := `{"models":[{"slug":"gpt-5","base_instructions":"test",` +
+		`"model_messages":{"instructions_template":"test"}}]}`
+	if err := os.WriteFile(filepath.Join(dir, "cc-switch-model-catalog.json"), []byte(template), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	u, a := testUI(t)
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	u.page = "access"
+	u.accessApp = "codex"
+	u.accessGlob = [][2]string{{"HTTPS_PROXY", "http://p:1"}}
+	u.accessForm = accessForm{
+		open: true, modelLabel: "my-code", codexModels: []string{"my-code"},
+		docJSON: `{"models":["my-code"],"env":{}}`,
+	}
+	tt := ui.NewTester(u.view, 1200, 4000)
+	if err := tt.Click("保存全局配置"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(u.accessForm.codexPreview, "model_catalog_json") {
+		t.Fatalf("保存全局配置后应刷新 config.toml 预览: %q msg=%q",
+			u.accessForm.codexPreview, u.accessForm.msg)
 	}
 }
 

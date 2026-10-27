@@ -133,7 +133,7 @@ func codexModelsFromDoc(doc map[string]any) ([]string, bool) {
 }
 
 // resolveCodexModels 把 Codex 接入文档的模型列表解析为最终生效的有序列表
-//（spec 2026-10-27 §4.2、§7）：
+// （spec 2026-10-27 §4.2、§7）：
 //   - 显式列表非空：每项必须存在且启用，首项必须是绑定的默认模型；
 //   - 缺省/空列表：回退为「绑定模型 + 全部启用逻辑模型（按名排序）」，
 //     供旧 env-only 配置在保存时固化下来。

@@ -642,11 +642,16 @@ func (u *uiState) accessPage(c *ui.Context) {
 									u.accessGlobMsg = "已保存"
 									// 编辑器打开时全局基线变了：删除旧基线派生值并
 									// 按新基线与当前表单模型重预览（Important#1）。
+									// Codex 另有只读 config.toml 预览，同样需要按新
+									// 文档刷新，否则停留在保存前的结果。
 									if u.accessForm.open {
 										if rebased, err := bridge.RebaseAccessDoc(u.accessApp, u.accessForm.docJSON, oldGlobal); err == nil {
 											u.accessForm.docJSON = rebased
 										}
 										u.accessRepreviewForm(acc)
+										if u.accessApp == "codex" {
+											u.accessRefreshCodexPreview(acc)
+										}
 									}
 								}
 							}
