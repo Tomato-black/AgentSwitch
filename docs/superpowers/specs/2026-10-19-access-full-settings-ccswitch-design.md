@@ -221,8 +221,10 @@ JSON 语法错误、根非对象、env 非对象、Codex 文档含 `env` 以外�
 
 ## 7. 测试（全部离线）
 
-- **storage**：单一 v1 建库（含 `settings` 列、无 `overrides`）；守卫拒绝 v2/v3
-  记录库与无 `settings` 列的 `access_configs`。
+- **storage**：v1 建库（含 `settings` 列、无 `overrides`），2026-10-27 起另加
+  migration v2（`logical_models` 元数据列）；守卫拒绝 v3 记录库、旧表形态、
+  缺元数据列的 v2 残库与无 `settings` 列的 `access_configs`；含元数据列的
+  v2 库就地放行（见 `2026-10-27-codex-access-models-metadata-design.md` §4.1）。
 - **bridge**：合成优先级与锁定键回写（含 SMALL_FAST 可覆盖）；保存归一化
   （锁定键剔除、与无文档层合成结果相同的键剔除）；主模型半锁定的 1M 声明
   （合成保留后缀/大小写归一、归一化保留合法声明、基名不匹配剔除）；

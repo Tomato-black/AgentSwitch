@@ -280,6 +280,8 @@ experimental_bearer_token = "<OPENAI_API_KEY>"
 
 `accessconfigs_test.go` 断言 `wire_api == "responses"` 且其余受管键不变；备份与「一败俱不写」语义回归。
 
+> 2026-10-27 修订：Codex 受管键已扩展（有序 `models` 列表、1M 上下文/压缩阈值、`[agents]` 子代理、自动审批覆盖、`disable_response_storage`/`web_search`），测试断言相应扩展；现状见 `2026-10-27-codex-access-models-metadata-design.md` §5（写入语义）与 §8（测试）。
+
 ### 4.4 端到端（受控，默认跳过）
 
 用真实 `codex` 二进制 + 临时 `CODEX_HOME` 对测试网关执行 `codex exec`：

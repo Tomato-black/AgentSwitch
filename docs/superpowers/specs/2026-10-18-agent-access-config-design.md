@@ -4,7 +4,7 @@
 
 > 注（2026-10-27）：Codex 桌面版与 CLI 共用 `~/.codex/config.toml`；第三方 Key 改写入 `[model_providers.agentswitch].experimental_bearer_token`，`auth.json` 只由 Codex 维护官方 ChatGPT 登录、接入配置不读写（Codex 0.149 起自定义 provider 不再从 `auth.json` 继承凭据）。「应用」同时生成 `~/.codex/agentswitch-model-catalog.json` 并写 `model_catalog_json`——桌面版模型选择器只读该文件，不读网关 `/v1/models`。下文 Codex 行已按此修订。
 >
-> 注（2026-10-27，多逻辑模型与元数据）：Codex 接入配置不再只绑定一个逻辑模型，而是在 settings 文档中存有序 `models` 列表（第一项为默认，镜像 `logical_model_id`）；逻辑模型增加 `display_name`/`context_window`/`reasoning_levels`/`default_reasoning_level` 元数据（migration v2，纯增列非破坏性）。模型目录改为按显式列表与元数据生成，并新增 `[agents]` 子代理、自动审批覆盖、1M 上下文/压缩阈值、只读完整 `config.toml` 预览等 A 类客户端设置。**该部分以 `2026-10-27-codex-access-models-metadata-design.md` 为权威**；本文「每个 Codex 配置只绑定一个逻辑模型」的表述已被取代，其余机制（应用投影、备份、令牌轮换联动、启动命令/打开终端）不变。
+> 注（2026-10-27，多逻辑模型与元数据）：Codex 接入配置不再只绑定一个逻辑模型，而是在 settings 文档中存有序 `models` 列表（第一项为默认，镜像 `logical_model_id`）；逻辑模型增加 `display_name`/`context_window`/`reasoning_levels`/`default_reasoning_level` 元数据（migration v2，纯增列非破坏性）。模型目录改为按显式列表与元数据生成，并新增 `[agents]` 子代理、自动审批覆盖、1M 上下文/压缩阈值、只读完整 `config.toml` 预览等 A 类客户端设置。**该部分以 `2026-10-27-codex-access-models-metadata-design.md` 为权威**；本文关于 Codex 单模型绑定的表述已被取代，其余机制（应用投影、备份、令牌轮换联动、启动命令/打开终端）不变。
 
 > **状态（2026-10-19）：存储形态（overrides）、合成输入与 Claude 持久文件格式已被 `2026-10-19-access-full-settings-ccswitch-design.md` 取代；其余机制（应用投影、备份、令牌轮换联动、启动命令/打开终端、全局 env 层）仍有效。**
 
@@ -93,7 +93,7 @@ CREATE UNIQUE INDEX idx_access_configs_app_current ON access_configs(app_type) W
 }（第 3 组 > 第 2 组；第 1 组恒定）
 ```
 
-Codex 的 `model` 不走 env：写入 `~/.codex/config.toml` 的受管键 `model = "<逻辑模型名>"`。
+Codex 的 `model` 不走 env：写入 `~/.codex/config.toml` 的受管键 `model = "<逻辑模型名>"`（2026-10-27 起取有序 `models` 列表首项，见 `2026-10-27-codex-access-models-metadata-design.md` §4.2）。
 
 ## 接管写入（应用配置）
 
@@ -102,7 +102,7 @@ Codex 的 `model` 不走 env：写入 `~/.codex/config.toml` 的受管键 `model
 | Agent | 目标文件 | 受管键 | 其余内容 |
 |---|---|---|---|
 | Claude Code | `~/.claude/settings.json` | `env.ANTHROPIC_BASE_URL`、`env.ANTHROPIC_AUTH_TOKEN`、`env.ANTHROPIC_MODEL`、`env.ANTHROPIC_SMALL_FAST_MODEL` | 原样保留（含用户其他 env、permissions、model 等） |
-| Codex（CLI / 桌面版） | `~/.codex/config.toml` + `~/.codex/agentswitch-model-catalog.json` | config.toml：`model`、`model_provider = "agentswitch"`、`model_catalog_json = "agentswitch-model-catalog.json"`、`[model_providers.agentswitch]`（`base_url`、`wire_api = "responses"`、`requires_openai_auth = false`、`experimental_bearer_token = 网关令牌`，**不用** `env_key`）；目录：绑定模型在前的逻辑模型条目；`auth.json` 不读写（只由 Codex 维护官方登录） | 文件其余键/段语义保留 |
+| Codex（CLI / 桌面版） | `~/.codex/config.toml` + `~/.codex/agentswitch-model-catalog.json` | config.toml：`model`、`model_provider = "agentswitch"`、`model_catalog_json = "agentswitch-model-catalog.json"`、`[model_providers.agentswitch]`（`base_url`、`wire_api = "responses"`、`requires_openai_auth = false`、`experimental_bearer_token = 网关令牌`，**不用** `env_key`）；目录：按有序 `models` 列表生成（首项即绑定模型，2026-10-27 起，见 `2026-10-27-codex-access-models-metadata-design.md` §5）；`auth.json` 不读写（只由 Codex 维护官方登录） | 文件其余键/段语义保留 |
 
 写入安全（我的决策，实现时照此执行）：
 

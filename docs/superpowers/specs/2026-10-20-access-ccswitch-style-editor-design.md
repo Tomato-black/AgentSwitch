@@ -92,8 +92,15 @@ CREATE UNIQUE INDEX idx_access_configs_app_current ON access_configs(app_type) W
 （文案沿用「删库重建，不提供就地迁移；请删除数据库文件后重启」）：
 
 1. 存在旧表 `channel_keys`/`providers`/`accounts`（沿用现名单）；
-2. `schema_migrations` 记录了 version ≥ 2（旧库必有 v2/v3；新库恒为单一 v1）；
+2. `schema_migrations` 记录了 version ≥ 3，或记录了 v2 但 `logical_models`
+   缺元数据列（见下方 2026-10-27 修订）；
 3. `access_configs` 存在但 `PRAGMA table_info` 缺 `config_json` 列。
+
+> 2026-10-27 修订：migration v2 自本日起合法（新库记录 v1+v2，`logical_models`
+> 增加 `display_name`/`context_window`/`reasoning_levels`/`default_reasoning_level`
+> 元数据列）。守卫规则相应改为：记录 v3 的旧库、旧表形态（`channel_keys` 等）
+> 与列形状不符的残库仍拒绝；记录 v2 时仅当元数据列存在才就地放行。详见
+> `2026-10-27-codex-access-models-metadata-design.md` §4.1。
 
 ## 配置文档规格（写入内容的唯一定义）
 
