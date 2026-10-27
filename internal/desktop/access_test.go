@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -552,6 +553,55 @@ func TestAccessCodexEditorShowsModelList(t *testing.T) {
 		if !tt.HasText(want) {
 			t.Fatalf("missing %q in %v", want, tt.Texts())
 		}
+	}
+}
+
+// TestAccessCodexEditorShowsAdvancedSettings：Codex 编辑器渲染高级设置三项
+// 下拉（子代理模型 / 子代理推理强度 / 自动审批模型）。
+func TestAccessCodexEditorShowsAdvancedSettings(t *testing.T) {
+	u, a := testUI(t)
+	a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true})
+	u.page = "access"
+	u.accessApp = "codex"
+	u.accessForm = accessForm{open: true, modelLabel: "my-code", docJSON: `{"env":{}}`}
+	tt := ui.NewTester(u.view, 1000, 900)
+	for _, want := range []string{"子代理模型", "子代理推理强度", "自动审批模型"} {
+		if !tt.HasText(want) {
+			t.Fatalf("missing %q in %v", want, tt.Texts())
+		}
+	}
+}
+
+// TestAccessCodexAdvancedMappingRoundTrip：高级设置「空值 ↔ 默认显示项」
+// 双向映射；模型下拉以 codexModels 为选项，并保留列表外的旧引用。
+func TestAccessCodexAdvancedMappingRoundTrip(t *testing.T) {
+	defaults := []string{accessCodexSubagentFollow, accessCodexEffortDefault, accessCodexAutoReviewDefault}
+	for _, d := range defaults {
+		if got := accessCodexSelectLabel("", d); got != d {
+			t.Fatalf("空值应显示 %q，得到 %q", d, got)
+		}
+		if got := accessCodexSelectRaw(d, d); got != "" {
+			t.Fatalf("默认项应映射为空串，得到 %q", got)
+		}
+		if got := accessCodexSelectLabel("high", d); got != "high" {
+			t.Fatalf("非空值应原样显示，得到 %q", got)
+		}
+		if got := accessCodexSelectRaw("high", d); got != "high" {
+			t.Fatalf("非默认项应原样回写，得到 %q", got)
+		}
+	}
+	opts := accessCodexModelOptions(accessCodexSubagentFollow, []string{"a", "b"}, "gone")
+	want := []string{accessCodexSubagentFollow, "a", "b", "gone"}
+	if !slices.Equal(opts, want) {
+		t.Fatalf("模型选项应为首项 + codexModels + 列表外旧引用: %v", opts)
+	}
+	efforts := accessCodexEffortOptions("high")
+	wantEfforts := []string{accessCodexEffortDefault, "low", "medium", "high", "xhigh"}
+	if !slices.Equal(efforts, wantEfforts) {
+		t.Fatalf("强度选项不应重复当前项: %v", efforts)
+	}
+	if got := accessCodexEffortOptions("turbo"); !slices.Contains(got, "turbo") {
+		t.Fatalf("未知旧值应补进选项避免显示空值: %v", got)
 	}
 }
 

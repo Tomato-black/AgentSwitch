@@ -412,6 +412,63 @@ func (u *uiState) accessPatchCodexSettings() {
 	f.docJSON = raw
 }
 
+// Codex 高级设置下拉的空值显示项（空值语义 = 继承/跟随）。
+const (
+	accessCodexSubagentFollow    = "（跟随主模型）"
+	accessCodexEffortDefault     = "默认"
+	accessCodexAutoReviewDefault = "主模型自己审批（默认）"
+)
+
+// accessCodexEffortChoices 是子代理推理强度的可选值（Codex config.toml
+// [agents].default_subagent_reasoning_effort 取值）。
+var accessCodexEffortChoices = []string{"low", "medium", "high", "xhigh"}
+
+// accessCodexSelectLabel 把文档空值映射成下拉默认显示项（非空原样）。
+func accessCodexSelectLabel(raw, defaultLabel string) string {
+	if strings.TrimSpace(raw) == "" {
+		return defaultLabel
+	}
+	return raw
+}
+
+// accessCodexSelectRaw 是 accessCodexSelectLabel 的逆映射：默认显示项
+// 写回空串（不落 codex 键）。
+func accessCodexSelectRaw(label, defaultLabel string) string {
+	if label == defaultLabel {
+		return ""
+	}
+	return strings.TrimSpace(label)
+}
+
+// accessCodexModelOptions 构造模型下拉选项：默认项置首，其后按序追加
+// codexModels（去空去重），列表外旧引用补到末尾（编辑旧配置不丢值）。
+func accessCodexModelOptions(defaultLabel string, models []string, current string) []string {
+	opts := []string{defaultLabel}
+	add := func(v string) {
+		v = strings.TrimSpace(v)
+		if v != "" && !slices.Contains(opts, v) {
+			opts = append(opts, v)
+		}
+	}
+	for _, m := range models {
+		add(m)
+	}
+	add(current)
+	return opts
+}
+
+// accessCodexEffortOptions 构造推理强度选项：默认项 + 固定取值；未知旧值
+// 补到末尾，避免 Select 显示空值。
+func accessCodexEffortOptions(current string) []string {
+	opts := make([]string, 0, len(accessCodexEffortChoices)+2)
+	opts = append(opts, accessCodexEffortDefault)
+	opts = append(opts, accessCodexEffortChoices...)
+	if v := strings.TrimSpace(current); v != "" && !slices.Contains(opts, v) {
+		opts = append(opts, v)
+	}
+	return opts
+}
+
 // accessModelLabels 返回 enabled 逻辑模型名列表（编辑器 Select 数据源）。
 func accessModelLabels(models []bridge.ModelView) []string {
 	var out []string
@@ -775,6 +832,7 @@ func (u *uiState) accessEditorCard(c *ui.Context, t *ui.Theme, s softPalette, ac
 				// 默认模型（保存时的 logical_model_id）。
 				u.accessSyncCodexFromDoc(models)
 				u.accessCodexModelsSection(c, t, s, labels)
+				u.accessCodexAdvancedSection(c, t)
 			} else {
 				ui.Row(c).Gap(12).Children(func() {
 					ui.Text(c, "逻辑模型:").Width(96).TextColor(t.TextMuted)
@@ -926,6 +984,52 @@ func (u *uiState) accessCodexModelsSection(c *ui.Context, t *ui.Theme, s softPal
 			f.codexModels = append(f.codexModels, next)
 			u.accessPatchCodexModels()
 		}
+	}
+}
+
+// accessCodexAdvancedSection 渲染 Codex 高级设置（spec 2026-10-27 §4.2）：
+// 子代理模型、子代理推理强度、自动审批模型三个下拉。空值分别显示
+// 「跟随主模型」/「默认」/「主模型自己审批（默认）」；任何变化写回文档
+// codex 对象（accessPatchCodexSettings），下次回填保持一致。
+func (u *uiState) accessCodexAdvancedSection(c *ui.Context, t *ui.Theme) {
+	f := &u.accessForm
+	ui.Text(c, "高级设置").Bold()
+	ui.Text(c, "子代理与自动审批为可选配置，默认跟随主模型").TextColor(t.TextMuted)
+	changed := false
+	ui.Row(c).Gap(12).Children(func() {
+		ui.Text(c, "子代理模型:").Width(120).TextColor(t.TextMuted)
+		label := accessCodexSelectLabel(f.subagentModel, accessCodexSubagentFollow)
+		before := label
+		sel := ui.Select(c, &label,
+			accessCodexModelOptions(accessCodexSubagentFollow, f.codexModels, f.subagentModel))
+		if sel.Changed() && label != before {
+			f.subagentModel = accessCodexSelectRaw(label, accessCodexSubagentFollow)
+			changed = true
+		}
+	})
+	ui.Row(c).Gap(12).Children(func() {
+		ui.Text(c, "子代理推理强度:").Width(120).TextColor(t.TextMuted)
+		label := accessCodexSelectLabel(f.subagentEffort, accessCodexEffortDefault)
+		before := label
+		sel := ui.Select(c, &label, accessCodexEffortOptions(f.subagentEffort))
+		if sel.Changed() && label != before {
+			f.subagentEffort = accessCodexSelectRaw(label, accessCodexEffortDefault)
+			changed = true
+		}
+	})
+	ui.Row(c).Gap(12).Children(func() {
+		ui.Text(c, "自动审批模型:").Width(120).TextColor(t.TextMuted)
+		label := accessCodexSelectLabel(f.autoReviewModel, accessCodexAutoReviewDefault)
+		before := label
+		sel := ui.Select(c, &label,
+			accessCodexModelOptions(accessCodexAutoReviewDefault, f.codexModels, f.autoReviewModel))
+		if sel.Changed() && label != before {
+			f.autoReviewModel = accessCodexSelectRaw(label, accessCodexAutoReviewDefault)
+			changed = true
+		}
+	})
+	if changed {
+		u.accessPatchCodexSettings()
 	}
 }
 
