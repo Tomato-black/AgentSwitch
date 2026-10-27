@@ -33,14 +33,20 @@ type ChannelModel struct {
 }
 
 // LogicalModel 是网关对外的逻辑模型（Name 为对外模型名），经目标链映射到
-// 各渠道的具体模型。
+// 各渠道的具体模型。元数据列（migration v2，spec 2026-10-27）：DisplayName
+// 与 ContextWindow 供 Agent 接入文档生成，ReasoningLevels 为可选推理档位
+// （JSON 文本列），DefaultReasoningLevel 缺省档位。
 type LogicalModel struct {
-	ID          string
-	Name        string
-	Description string
-	Enabled     bool
-	CreatedAt   int64
-	UpdatedAt   int64
+	ID                    string
+	Name                  string
+	Description           string
+	DisplayName           string
+	ContextWindow         int64
+	ReasoningLevels       []string
+	DefaultReasoningLevel string
+	Enabled               bool
+	CreatedAt             int64
+	UpdatedAt             int64
 }
 
 // LogicalModelTarget 是逻辑模型目标链的一环；priority 越小越优先。

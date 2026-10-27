@@ -44,7 +44,7 @@ func TestMigrationIdempotent(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	t.Cleanup(func() { s2.Close() })
-	// 重开时已记录版本按序跳过，不得重放报错，schema_migrations 必须恰为 [1]。
+	// 重开时已记录版本按序跳过，不得重放报错，schema_migrations 必须恰为 [1 2]。
 	ds, ok := s2.(*dbStore)
 	if !ok {
 		t.Fatalf("Store = %T", s2)
@@ -62,8 +62,8 @@ func TestMigrationIdempotent(t *testing.T) {
 		}
 		got = append(got, v)
 	}
-	if rows.Err() != nil || len(got) != 1 || got[0] != 1 {
-		t.Fatalf("schema_migrations = %v, want [1]", got)
+	if rows.Err() != nil || len(got) != 2 || got[0] != 1 || got[1] != 2 {
+		t.Fatalf("schema_migrations = %v, want [1 2]", got)
 	}
 }
 
@@ -663,10 +663,10 @@ func TestAccessConfigRepoSetCurrentExclusive(t *testing.T) {
 	}
 }
 
-// TestOpenRejectsV3RecordedDB 覆盖删库重建守卫的「v2/v3 记录」分支：
-// schema_migrations 含 2/3 的库一律拒绝。channels/channel_secrets/
-// access_configs(settings) 均按最终形态建齐，使既有表形状检查全部通过、
-// 拒绝原因唯一落在版本检查上。
+// TestOpenRejectsV3RecordedDB 覆盖删库重建守卫的「v3 记录」分支：
+// schema_migrations 含 3 的库一律拒绝（v2 自 2026-10-27 起是合法就地迁移，
+// 不再拒绝）。各表按最终形态建齐（含 v2 元数据列），使既有表形状检查全部
+// 通过、拒绝原因唯一落在版本检查上。
 func TestOpenRejectsV3RecordedDB(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agentswitch.db")
@@ -678,12 +678,13 @@ func TestOpenRejectsV3RecordedDB(t *testing.T) {
 		INSERT INTO schema_migrations(version) VALUES (1),(2),(3);
 		CREATE TABLE channels (id TEXT PRIMARY KEY, credential_ref TEXT NOT NULL);
 		CREATE TABLE channel_secrets (credential_ref TEXT PRIMARY KEY, ciphertext BLOB NOT NULL);
-		CREATE TABLE access_configs (id TEXT PRIMARY KEY, settings TEXT NOT NULL DEFAULT '{}')`); err != nil {
+		CREATE TABLE access_configs (id TEXT PRIMARY KEY, settings TEXT NOT NULL DEFAULT '{}');
+		CREATE TABLE logical_models (id TEXT PRIMARY KEY, display_name TEXT NOT NULL DEFAULT '')`); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
 	if _, err := Open(path); !errors.Is(err, errLegacyDB) {
-		t.Fatalf("v2/v3 记录库应拒绝，got %v", err)
+		t.Fatalf("v3 记录库应拒绝，got %v", err)
 	}
 }
 
@@ -855,4 +856,87 @@ func TestRouteVersionBumpsOnRouteWrites(t *testing.T) {
 		return s.ChannelModels().Delete(ms[0].ID)
 	})
 	bump("channel delete", func() error { return s.Channels().Delete(ch.ID) })
+}
+
+// TestLogicalModelMetadataRoundTrip 覆盖逻辑模型元数据列（spec 2026-10-27）：
+// DisplayName/ContextWindow/ReasoningLevels/DefaultReasoningLevel 写入后原样回读，
+// 其中 ReasoningLevels 以 JSON 文本列存储。
+func TestLogicalModelMetadataRoundTrip(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "agentswitch.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	saved, err := s.LogicalModels().Save(LogicalModel{
+		Name: "my-code", Enabled: true,
+		DisplayName: "My Code", ContextWindow: 1000000,
+		ReasoningLevels: []string{"low", "high"}, DefaultReasoningLevel: "high",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.LogicalModels().Get(saved.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DisplayName != "My Code" || got.ContextWindow != 1000000 ||
+		len(got.ReasoningLevels) != 2 || got.ReasoningLevels[1] != "high" ||
+		got.DefaultReasoningLevel != "high" {
+		t.Fatalf("metadata round trip = %+v", got)
+	}
+}
+
+// TestMigrationV2AddsLogicalModelColumns 覆盖 v1 → v2 就地升级：已记 v1 的库
+// Open 后必须补出元数据列（migration v2），不删库、不丢数据。
+func TestMigrationV2AddsLogicalModelColumns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v1.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(migrationV1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY);
+		INSERT INTO schema_migrations(version) VALUES (1)`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("v1 库应就地升级到 v2: %v", err)
+	}
+	defer s.Close()
+	for _, col := range []string{"display_name", "context_window", "reasoning_levels", "default_reasoning_level"} {
+		ok, err := columnExists(s.(*dbStore).db, "logical_models", col)
+		if err != nil || !ok {
+			t.Fatalf("缺列 %s: %v", col, err)
+		}
+	}
+}
+
+// TestOpenRejectsV2RecordedWithoutColumns 覆盖 v2 记录与列形状不一致的残库：
+// schema_migrations 已记 1,2 但 logical_models 还是 v1 形状——守卫必须拒绝
+// （否则 migrate 跳过 v2、回读元数据列时裸 SQL 报错）。
+func TestOpenRejectsV2RecordedWithoutColumns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v2-broken.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY);
+		INSERT INTO schema_migrations(version) VALUES (1),(2);
+		CREATE TABLE channels (id TEXT PRIMARY KEY, credential_ref TEXT NOT NULL);
+		CREATE TABLE channel_secrets (credential_ref TEXT PRIMARY KEY, ciphertext BLOB NOT NULL);
+		CREATE TABLE access_configs (id TEXT PRIMARY KEY, settings TEXT NOT NULL DEFAULT '{}');
+		CREATE TABLE logical_models (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+			description TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1,
+			created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	if _, err := Open(path); !errors.Is(err, errLegacyDB) {
+		t.Fatalf("记 v2 却缺元数据列的库应拒绝，got %v", err)
+	}
 }

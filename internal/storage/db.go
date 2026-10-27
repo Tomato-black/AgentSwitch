@@ -72,14 +72,25 @@ CREATE UNIQUE INDEX idx_access_configs_app_name ON access_configs(app_type, name
 CREATE UNIQUE INDEX idx_access_configs_app_current ON access_configs(app_type) WHERE is_current = 1;
 `
 
+// migrationV2 为逻辑模型追加元数据列（spec 2026-10-27 codex-access-models-
+// metadata）：非破坏性就地升级，v1 库无需删库。reasoning_levels 存 JSON
+// 数组文本（空串 = 未配置）。
+const migrationV2 = `
+ALTER TABLE logical_models ADD COLUMN display_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE logical_models ADD COLUMN context_window INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE logical_models ADD COLUMN reasoning_levels TEXT NOT NULL DEFAULT '';
+ALTER TABLE logical_models ADD COLUMN default_reasoning_level TEXT NOT NULL DEFAULT '';
+`
+
 // migrations 是按版本序执行的迁移表；migrate 只跑 schema_migrations 里
-// 未记录的版本（幂等）。删库重建后只剩单一 v1——追加新版本须先过用户决策
-// （是否又一次删库重建），勿就地改已发布语句。
+// 未记录的版本（幂等）。v1 之后只允许追加就地迁移（ALTER TABLE），勿就地
+// 改已发布语句；需删库重建时先过用户决策。
 var migrations = []struct {
 	version int64
 	sql     string
 }{
 	{1, migrationV1},
+	{2, migrationV2},
 }
 
 type dbStore struct {
@@ -177,13 +188,34 @@ func rejectLegacySchema(db *sql.DB) error {
 			return errLegacyDB
 		}
 	}
-	// 删库重建（2026-10-19）：v2/v3 记录的库与旧形态 access_configs 一律拒绝。
-	for _, legacyVersion := range []int64{2, 3} {
-		ok, err := hasRecordedVersion(db, legacyVersion)
+	// 删库重建（2026-10-19）：v3 记录是合并单一 v1 前的旧版本号，一律拒绝。
+	// v2 自 2026-10-27 起是合法的就地迁移版本，改由列形状校验（见下）。
+	ok, err := hasRecordedVersion(db, 3)
+	if err != nil {
+		return err
+	}
+	if ok {
+		return errLegacyDB
+	}
+	// 已记 v2 的库必须真的含元数据列：migrate 见版本已记录会跳过，列缺失
+	// 的残库放行后首次读写逻辑模型即裸 SQL 报错。
+	v2, err := hasRecordedVersion(db, 2)
+	if err != nil {
+		return err
+	}
+	if v2 {
+		hasLogicalModels, err := tableExists(db, "logical_models")
 		if err != nil {
 			return err
 		}
-		if ok {
+		if !hasLogicalModels {
+			return errLegacyDB
+		}
+		hasDisplayName, err := columnExists(db, "logical_models", "display_name")
+		if err != nil {
+			return err
+		}
+		if !hasDisplayName {
 			return errLegacyDB
 		}
 	}

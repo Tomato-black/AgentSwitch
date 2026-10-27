@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"sync/atomic"
 	"time"
@@ -249,15 +250,23 @@ type logicalModelRepo struct {
 	ver *atomic.Uint64
 }
 
-const logicalModelCols = `id,name,description,enabled,created_at,updated_at`
+const logicalModelCols = `id,name,description,enabled,display_name,context_window,reasoning_levels,default_reasoning_level,created_at,updated_at`
 
 func scanLogicalModel(sc func(...any) error) (LogicalModel, error) {
 	var m LogicalModel
 	var en int
-	if err := sc(&m.ID, &m.Name, &m.Description, &en, &m.CreatedAt, &m.UpdatedAt); err != nil {
+	var levels string
+	if err := sc(&m.ID, &m.Name, &m.Description, &en,
+		&m.DisplayName, &m.ContextWindow, &levels, &m.DefaultReasoningLevel,
+		&m.CreatedAt, &m.UpdatedAt); err != nil {
 		return LogicalModel{}, err
 	}
 	m.Enabled = en == 1
+	if levels != "" {
+		if err := json.Unmarshal([]byte(levels), &m.ReasoningLevels); err != nil {
+			return LogicalModel{}, err
+		}
+	}
 	return m, nil
 }
 
@@ -309,12 +318,25 @@ func (r *logicalModelRepo) Save(m LogicalModel) (LogicalModel, error) {
 		m.CreatedAt = nowMS()
 	}
 	m.UpdatedAt = nowMS()
+	// reasoning_levels 以 JSON 数组文本落库；未配置存空串（回读为空切片）。
+	levels := ""
+	if len(m.ReasoningLevels) > 0 {
+		b, err := json.Marshal(m.ReasoningLevels)
+		if err != nil {
+			return LogicalModel{}, err
+		}
+		levels = string(b)
+	}
 	// name UNIQUE 冲突由驱动冒泡为非 nil error（bridge 负责友好化）。
-	_, err = r.db.Exec(`INSERT INTO logical_models(id,name,description,enabled,created_at,updated_at)
-		VALUES(?,?,?,?,?,?)
+	_, err = r.db.Exec(`INSERT INTO logical_models(id,name,description,enabled,display_name,context_window,reasoning_levels,default_reasoning_level,created_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET name=excluded.name, description=excluded.description,
-			enabled=excluded.enabled, updated_at=excluded.updated_at`,
-		m.ID, m.Name, m.Description, boolInt(m.Enabled), m.CreatedAt, m.UpdatedAt)
+			enabled=excluded.enabled, display_name=excluded.display_name,
+			context_window=excluded.context_window, reasoning_levels=excluded.reasoning_levels,
+			default_reasoning_level=excluded.default_reasoning_level, updated_at=excluded.updated_at`,
+		m.ID, m.Name, m.Description, boolInt(m.Enabled),
+		m.DisplayName, m.ContextWindow, levels, m.DefaultReasoningLevel,
+		m.CreatedAt, m.UpdatedAt)
 	if err != nil {
 		return LogicalModel{}, err
 	}
