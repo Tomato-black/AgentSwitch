@@ -542,6 +542,28 @@ func TestAccessMoveCodexModel(t *testing.T) {
 	}
 }
 
+// TestAccessCodexModelMetaLines：只读元数据预览按 codexModels 顺序渲染，
+// 首行标「默认」，含显示名/上下文窗口/思考等级（含默认等级）；模型不存在
+// 时标注「（模型不存在）」。
+func TestAccessCodexModelMetaLines(t *testing.T) {
+	models := []bridge.ModelView{
+		{Name: "my-code", DisplayName: "My Code", ContextWindow: 1000000,
+			ReasoningLevels: []string{"low", "high"}, DefaultReasoningLevel: "high"},
+		{Name: "test", Enabled: true},
+	}
+	lines := accessCodexModelMetaLines([]string{"my-code", "test", "gone"}, models)
+	if len(lines) != 3 {
+		t.Fatalf("%v", lines)
+	}
+	if !strings.Contains(lines[0], "My Code") || !strings.Contains(lines[0], "1000000") ||
+		!strings.Contains(lines[0], "low/high") || !strings.Contains(lines[0], "high") {
+		t.Fatalf("%v", lines[0])
+	}
+	if !strings.Contains(lines[2], "模型不存在") {
+		t.Fatalf("%v", lines[2])
+	}
+}
+
 // TestAccessCodexEditorShowsModelList：Codex 编辑器不再显示单一「逻辑模型」
 // 下拉，改为模型列表（首行「默认」）。
 func TestAccessCodexEditorShowsModelList(t *testing.T) {
@@ -571,6 +593,32 @@ func TestAccessCodexEditorShowsAdvancedSettings(t *testing.T) {
 		if !tt.HasText(want) {
 			t.Fatalf("missing %q in %v", want, tt.Texts())
 		}
+	}
+}
+
+// TestAccessCodexEditorShowsModelMetaPreview：模型列表与高级设置之间渲染
+// 只读「将写入 Codex 的模型」元数据预览；Claude 编辑器不出现该区块。
+func TestAccessCodexEditorShowsModelMetaPreview(t *testing.T) {
+	u, a := testUI(t)
+	a.Store().LogicalModels().Save(storage.LogicalModel{
+		ID: "lm1", Name: "my-code", DisplayName: "My Code",
+		ContextWindow: 1000000, ReasoningLevels: []string{"low", "high"},
+		DefaultReasoningLevel: "high", Enabled: true,
+	})
+	u.page = "access"
+	u.accessApp = "codex"
+	u.accessForm = accessForm{open: true, modelLabel: "my-code", docJSON: `{"env":{}}`}
+	tt := ui.NewTester(u.view, 1000, 900)
+	for _, want := range []string{"将写入 Codex 的模型", "My Code", "1000000", "low/high"} {
+		if !tt.HasText(want) {
+			t.Fatalf("missing %q in %v", want, tt.Texts())
+		}
+	}
+	u.accessApp = "claude"
+	u.accessForm = accessForm{open: true, modelLabel: "my-code", docJSON: `{"env":{}}`}
+	tt = ui.NewTester(u.view, 1000, 900)
+	if tt.HasText("将写入 Codex 的模型") {
+		t.Fatal("Claude 编辑器不应出现 Codex 模型预览")
 	}
 }
 

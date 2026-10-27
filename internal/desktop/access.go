@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/egoist/mygo"
@@ -480,6 +481,49 @@ func accessModelLabels(models []bridge.ModelView) []string {
 	return out
 }
 
+// accessCodexModelMetaLines 把 Codex 模型列表渲染为只读元数据预览行
+// （spec 2026-10-27 §6.2）：按 codexModels 顺序，首行标「默认」；每行含
+// 名称、显示名（为空或与名称相同则省略）、上下文窗口与思考等级
+// （含默认等级）；上下文窗口/思考等级为空时省略对应字段；模型不存在时
+// 标「（模型不存在）」，避免预览与目录内容无声不一致。
+func accessCodexModelMetaLines(codexModels []string, models []bridge.ModelView) []string {
+	byName := make(map[string]bridge.ModelView, len(models))
+	for _, m := range models {
+		if _, ok := byName[m.Name]; !ok {
+			byName[m.Name] = m
+		}
+	}
+	out := make([]string, 0, len(codexModels))
+	for i, name := range codexModels {
+		line := name
+		if i == 0 {
+			line = "默认 · " + line
+		}
+		m, ok := byName[name]
+		if !ok {
+			out = append(out, line+"（模型不存在）")
+			continue
+		}
+		display := strings.TrimSpace(m.DisplayName)
+		parts := []string{line}
+		if display != "" && display != name {
+			parts = append(parts, display)
+		}
+		if m.ContextWindow > 0 {
+			parts = append(parts, strconv.FormatInt(m.ContextWindow, 10))
+		}
+		if len(m.ReasoningLevels) > 0 {
+			levels := strings.Join(m.ReasoningLevels, "/")
+			if m.DefaultReasoningLevel != "" {
+				levels += "（默认 " + m.DefaultReasoningLevel + "）"
+			}
+			parts = append(parts, levels)
+		}
+		out = append(out, strings.Join(parts, " · "))
+	}
+	return out
+}
+
 // accessModelIDByLabel 按名映射回逻辑模型 ID（未命中返回空串；
 // disabled 项也参与命中——编辑旧配置时回显不应丢引用）。
 func accessModelIDByLabel(models []bridge.ModelView, label string) string {
@@ -867,6 +911,7 @@ func (u *uiState) accessEditorCard(c *ui.Context, t *ui.Theme, s softPalette, ac
 				// 默认模型（保存时的 logical_model_id）。
 				u.accessSyncCodexFromDoc(models)
 				codexChanged := u.accessCodexModelsSection(c, t, s, labels)
+				u.accessCodexModelMetaSection(c, t, models)
 				codexChanged = u.accessCodexAdvancedSection(c, t) || codexChanged
 				// 模型列表/高级设置变化后刷新只读 config.toml 预览；文本域
 				// 手动编辑不逐键刷新（bridge 模板加载会跑 codex debug models，
@@ -1044,6 +1089,18 @@ func (u *uiState) accessCodexModelsSection(c *ui.Context, t *ui.Theme, s softPal
 		}
 	}
 	return dirty
+}
+
+// accessCodexModelMetaSection 渲染只读「将写入 Codex 的模型」预览
+// （spec 2026-10-27 §6.2）：数据来自逻辑模型元数据，按模型列表顺序展示
+// 名称/显示名/上下文窗口/思考等级；仅文本行，不提供编辑控件（编辑入口在
+// 「逻辑模型」页）。
+func (u *uiState) accessCodexModelMetaSection(c *ui.Context, t *ui.Theme, models []bridge.ModelView) {
+	ui.Text(c, "将写入 Codex 的模型").Bold()
+	ui.Text(c, "来自逻辑模型元数据；此处只读").TextColor(t.TextMuted)
+	for _, line := range accessCodexModelMetaLines(u.accessForm.codexModels, models) {
+		ui.Text(c, line)
+	}
 }
 
 // accessCodexAdvancedSection 渲染 Codex 高级设置（spec 2026-10-27 §4.2）：
