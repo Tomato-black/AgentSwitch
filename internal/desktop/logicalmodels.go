@@ -1,14 +1,16 @@
 // logicalmodels.go 是逻辑模型列表页与新建/编辑页（spec §6.2 / Task 12–13）：
 // 列表＝卡片流（名称、enabled 徽章、目标链摘要）+ 行内操作（编辑/删除/启用
-// 停用）+ 空态引导；删除走 AlertDialog 二次确认。编辑页＝名称/描述 + 目标链
-// 行编辑（渠道下拉、模型名输入或建议选择、上移/下移/删除、添加目标）+ 保存
-// （Create/Update）。纯助手 moveTarget / lmForm.validate 供测试直断言；渲染
-// 薄壳不测字符串细节。
+// 停用）+ 空态引导；删除走 AlertDialog 二次确认。编辑页＝名称/描述 + 元数据
+// （显示名、上下文窗口、思考等级、默认等级）+ 目标链行编辑（渠道下拉、模型名
+// 输入或建议选择、上移/下移/删除、添加目标）+ 保存（Create/Update）。纯助手
+// moveTarget / lmForm.validate / lmForm.meta 供测试直断言；渲染薄壳不测字符串
+// 细节。
 package desktop
 
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/egoist/mygo/ui"
@@ -17,13 +19,74 @@ import (
 )
 
 // lmForm 是逻辑模型新建/编辑表单状态（Task 13）：targets 即目标链行
-// （ChannelID/ModelName 随行编辑，Priority 落库前按下标重排）；msg 是
-// 表单信息位（校验/保存错误，channels 页同款模式）。
+// （ChannelID/ModelName 随行编辑，Priority 落库前按下标重排）；元数据字段
+// 以原始字符串保存（contextWindow/reasoningLevels 在 meta() 里解析）；msg
+// 是表单信息位（校验/保存错误，channels 页同款模式）。
 type lmForm struct {
-	name        string
-	description string
-	targets     []bridge.TargetSpec
-	msg         string
+	name                  string
+	description           string
+	displayName           string
+	contextWindow         string
+	reasoningLevels       string
+	defaultReasoningLevel string
+	targets               []bridge.TargetSpec
+	msg                   string
+}
+
+// lmReasoningLevels 是 Codex 认可的思考等级（spec §4），与 bridge 的
+// reasoningLevelWhitelist 保持一致。桌面层提前校验，错误直接进表单信息位；
+// bridge 保存时仍会再校验一次（防御纵深）。
+var lmReasoningLevels = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+
+// lmParsedLevels 把思考等级输入框（逗号分隔）解析成选项列表：去空格、
+// 去空项、按首次出现去重。渲染默认等级下拉与 meta() 共用同一规则。
+func lmParsedLevels(raw string) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, lv := range strings.Split(raw, ",") {
+		lv = strings.TrimSpace(lv)
+		if lv == "" || seen[lv] {
+			continue
+		}
+		seen[lv] = true
+		out = append(out, lv)
+	}
+	return out
+}
+
+// meta 把表单字符串解析成桥接层元数据：上下文窗口空串=0、否则须为非负
+// 整数；思考等级须在白名单内；默认等级空时取列表首项（spec §4「非空但
+// 默认空 → 列表第一项」），非空须属于列表。错误信息中文、可进信息位。
+func (f lmForm) meta() (bridge.ModelMeta, error) {
+	meta := bridge.ModelMeta{DisplayName: strings.TrimSpace(f.displayName)}
+	if raw := strings.TrimSpace(f.contextWindow); raw != "" {
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || n < 0 {
+			return meta, fmt.Errorf("上下文窗口需要是非负整数，如 1000000")
+		}
+		meta.ContextWindow = n
+	}
+	known := make(map[string]bool, len(lmReasoningLevels))
+	for _, lv := range lmReasoningLevels {
+		known[lv] = true
+	}
+	meta.ReasoningLevels = lmParsedLevels(f.reasoningLevels)
+	for _, lv := range meta.ReasoningLevels {
+		if !known[lv] {
+			return meta, fmt.Errorf("未知思考等级「%s」，可用：%s",
+				lv, strings.Join(lmReasoningLevels, "、"))
+		}
+	}
+	def := strings.TrimSpace(f.defaultReasoningLevel)
+	if def == "" && len(meta.ReasoningLevels) > 0 {
+		def = meta.ReasoningLevels[0]
+	}
+	inList := slices.Contains(meta.ReasoningLevels, def)
+	if def != "" && !inList {
+		return meta, fmt.Errorf("默认思考等级「%s」不在思考等级列表中", def)
+	}
+	meta.DefaultReasoningLevel = def
+	return meta, nil
 }
 
 // moveTarget 把 targets[i] 与相邻行换位（delta=-1 上移 / +1 下移）；首行
@@ -177,6 +240,12 @@ func (u *uiState) openLogicalEdit(id string) {
 		} else {
 			u.lmEdit.name = m.Name
 			u.lmEdit.description = m.Description
+			u.lmEdit.displayName = m.DisplayName
+			if m.ContextWindow > 0 {
+				u.lmEdit.contextWindow = strconv.FormatInt(m.ContextWindow, 10)
+			}
+			u.lmEdit.reasoningLevels = strings.Join(m.ReasoningLevels, ",")
+			u.lmEdit.defaultReasoningLevel = m.DefaultReasoningLevel
 			for _, tg := range m.Targets {
 				u.lmEdit.targets = append(u.lmEdit.targets, bridge.TargetSpec{
 					ChannelID: tg.ChannelID, ModelName: tg.ModelName, Priority: tg.Priority,
@@ -199,13 +268,18 @@ func (u *uiState) saveLogicalModel() {
 		u.lmEdit.msg = "逻辑模型服务未就绪"
 		return
 	}
+	meta, err := u.lmEdit.meta()
+	if err != nil {
+		u.lmEdit.msg = err.Error()
+		return
+	}
 	targets := make([]bridge.TargetSpec, len(u.lmEdit.targets))
 	for i, tg := range u.lmEdit.targets {
 		targets[i] = bridge.TargetSpec{ChannelID: tg.ChannelID, ModelName: tg.ModelName, Priority: i}
 	}
 	name := strings.TrimSpace(u.lmEdit.name)
 	if u.editModelID == "" {
-		if _, err := u.svc.Logical.Create(name, u.lmEdit.description, bridge.ModelMeta{}, targets); err != nil {
+		if _, err := u.svc.Logical.Create(name, u.lmEdit.description, meta, targets); err != nil {
 			u.lmEdit.msg = err.Error()
 			return
 		}
@@ -214,7 +288,7 @@ func (u *uiState) saveLogicalModel() {
 		if m, err := u.svc.Logical.Get(u.editModelID); err == nil {
 			enabled = m.Enabled
 		}
-		if err := u.svc.Logical.Update(u.editModelID, name, u.lmEdit.description, bridge.ModelMeta{}, enabled, targets); err != nil {
+		if err := u.svc.Logical.Update(u.editModelID, name, u.lmEdit.description, meta, enabled, targets); err != nil {
 			u.lmEdit.msg = err.Error()
 			return
 		}
@@ -246,12 +320,36 @@ func (u *uiState) logicalModelEditView(c *ui.Context) {
 				ui.Column(c).Gap(12).Children(func() {
 					ui.Text(c, "基本信息").Bold()
 					ui.Row(c).Gap(12).Children(func() {
-						ui.Text(c, "名称:").Width(96).TextColor(t.TextMuted)
+						ui.Text(c, "名称:").Width(112).TextColor(t.TextMuted)
 						ui.TextInput(c, &u.lmEdit.name).Grow(1).Placeholder("网关对外模型名，如 my-code")
 					})
 					ui.Row(c).Gap(12).Children(func() {
-						ui.Text(c, "描述:").Width(96).TextColor(t.TextMuted)
+						ui.Text(c, "描述:").Width(112).TextColor(t.TextMuted)
 						ui.TextInput(c, &u.lmEdit.description).Grow(1)
+					})
+					ui.Row(c).Gap(12).Children(func() {
+						ui.Text(c, "显示名:").Width(112).TextColor(t.TextMuted)
+						ui.TextInput(c, &u.lmEdit.displayName).Grow(1).
+							Placeholder("Codex 模型菜单显示名（空 = 模型名）")
+					})
+					ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, "上下文窗口:").Width(112).TextColor(t.TextMuted)
+						ui.TextInput(c, &u.lmEdit.contextWindow).Grow(1).
+							Placeholder("如 1000000；空 = 不声明")
+						if softButton(c, t, s, "gray", "1M").Clicked() {
+							u.lmEdit.contextWindow = "1000000"
+						}
+					})
+					ui.Row(c).Gap(12).Children(func() {
+						ui.Text(c, "思考等级:").Width(112).TextColor(t.TextMuted)
+						ui.TextInput(c, &u.lmEdit.reasoningLevels).Grow(1).
+							Placeholder("low,medium,high,xhigh")
+					})
+					ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, "默认思考等级:").Width(112).TextColor(t.TextMuted)
+						lmLevelSelect(c, t, &u.lmEdit.defaultReasoningLevel,
+							lmParsedLevels(u.lmEdit.reasoningLevels))
+						ui.Text(c, "空 = 模板默认；有等级时默认取首项").TextColor(t.TextMuted)
 					})
 				})
 			})
@@ -354,6 +452,38 @@ func lmChannelSelect(c *ui.Context, t *ui.Theme, id *string, chans []bridge.Chan
 				item.Background(t.SurfaceHover)
 			}
 			item.Children(func() { ui.Text(c, ch.Name).SingleLine() })
+		}
+	})
+}
+
+// lmLevelSelect 是默认思考等级下拉：值绑等级字符串，空串显示「模板默认」。
+// 选项由当前已填写的等级实时解析（spec §4），首项永远是「模板默认」以便
+// 清空；选中不在列表中的旧值时仍显示原值，保存时由 meta() 报错提示。
+func lmLevelSelect(c *ui.Context, t *ui.Theme, level *string, levels []string) {
+	label := *level
+	if label == "" {
+		label = "模板默认"
+	}
+	sel := ui.SelectBase(c, level)
+	sel.Trigger.Padding(6, 10).Border(1, t.Border).Radius(t.Radius).
+		Background(t.Surface).MinWidth(140).Children(func() {
+		ui.Text(c, label).SingleLine()
+	})
+	sel.Popup(func(panel ui.Element) {
+		panel.Padding(4).Background(t.Surface).Border(1, t.Border).Radius(t.Radius)
+		for _, lv := range append([]string{""}, levels...) {
+			item := sel.Item(lv).Padding(6, 10).Radius(t.Radius)
+			switch {
+			case item.Highlighted():
+				item.Background(t.Accent).TextColor(t.AccentText)
+			case lv == *level:
+				item.Background(t.SurfaceHover)
+			}
+			text := lv
+			if text == "" {
+				text = "模板默认"
+			}
+			item.Children(func() { ui.Text(c, text).SingleLine() })
 		}
 	})
 }
