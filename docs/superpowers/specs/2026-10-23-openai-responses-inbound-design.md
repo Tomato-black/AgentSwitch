@@ -211,9 +211,18 @@ item 形状与 Codex 探针/cc-switch 一致：
 `writeCodexLive` 的受管键改为：
 
 ```toml
-model = "<逻辑模型名>"
+model = "<models[0]>"
 model_provider = "agentswitch"
 model_catalog_json = "agentswitch-model-catalog.json"
+disable_response_storage = true
+web_search = "disabled"
+# 仅当 models[0] 声明了 context_window > 0 时写入；否则不写不删、保留用户设置
+model_context_window = <context_window>
+model_auto_compact_token_limit = <context_window * 9 / 10>
+
+[agents]  # 仅接入配置的 codex 子代理字段非空时写；空值删除受管键、保留其他键
+default_subagent_model = "<subagent_model>"
+default_subagent_reasoning_effort = "<subagent_reasoning_effort>"
 
 [model_providers.agentswitch]
 name = "agentswitch"
@@ -225,7 +234,10 @@ experimental_bearer_token = "<OPENAI_API_KEY>"
 
 - `name` 是 Codex 0.143+ 的必填键（非空；缺失时报 `provider name must not be empty`），由 AgentSwitch 作为受管键写入。
 - **2026-10-27 修订**：第三方 Key 写入 provider 表的 `experimental_bearer_token`（Codex 0.149 起自定义 provider 不再从 `auth.json` 继承凭据；桌面版从 Dock/开始菜单启动也不继承 shell env，故不用 `env_key`）。`auth.json` 只由 Codex 维护官方 ChatGPT 登录，接入配置不读写它；Codex CLI / 桌面版 / IDE 插件共用本文件。
-- **2026-10-27 模型目录**：同时生成 `agentswitch-model-catalog.json`（用 Codex 自带 `debug models --bundled` 模板克隆逻辑模型条目，绑定模型排第一，其余启用的在后），并写 `model_catalog_json`。桌面版模型选择器只读该文件、不读网关 `/v1/models`；没有它时桌面版会把旧目录里的模型名回写进 `model`，网关收到未登记模型直接 404。
+- **2026-10-27 多逻辑模型与元数据**：接入配置的 settings 文档存有序 `models` 列表（第一项为默认，镜像 `logical_model_id`），取代「每个配置只绑定一个逻辑模型」；`model` 取 `models[0]`。逻辑模型新增 `display_name`/`context_window`/`reasoning_levels`/`default_reasoning_level` 元数据（migration v2，纯增列、旧库就地升级）。
+- **2026-10-27 模型目录**：同时生成 `agentswitch-model-catalog.json`（用 Codex 自带 `debug models --bundled` 模板克隆条目），并写 `model_catalog_json`。目录**只按显式 `models` 列表**生成（旧配置缺 `models` 时回退「绑定模型 + 全部启用模型」）；条目顺序与列表一致，显示名/上下文窗口/思考等级/默认等级取自逻辑模型元数据，`auto_review_model` 非空时每行写 `auto_review_model_override`（空则 Codex 回落主模型）。桌面版模型选择器只读该文件、不读网关 `/v1/models`；没有它时桌面版会把旧目录里的模型名回写进 `model`，网关收到未登记模型直接 404。
+- 兼容键固定写 `disable_response_storage = true`（网关无状态转发）与 `web_search = "disabled"`（Responses 转换丢弃该托管工具），不提供开关。
+- 接入页另提供只读的完整 `config.toml` 预览（应用后的受管键 + 用户原样保留的键，可复制不可编辑）与只读「将写入 Codex 的模型」元数据列表；B 类上游连接字段（base URL、Key、协议转换、OAuth、`auth.json` 编辑器、路由/聚合、用量、测速）仍在渠道/逻辑模型层，不进 Codex 接入页。
 - 只修改受管键，其余键保留；写前备份语义不变（Codex 只备份 `config.toml`）。
 - 老配置迁移：**仅当用户重新「应用」接入配置（或保存/令牌/端口联动）时改写**；不新增启动自愈、不做启动时写入用户文件。
 - README 与 CLAUDE.md 同步说明「Codex 需 0.143+ 的 responses 线路；旧配置需重新应用一次」。

@@ -941,6 +941,54 @@ Expected: PASS。
 
 ---
 
+### Task 11B: 只读模型元数据预览
+
+**Files:**
+- Modify: `internal/desktop/access.go`
+- Test: `internal/desktop/access_test.go`
+
+**Interfaces:**
+- Produces:
+  ```go
+  func accessCodexModelMetaLines(codexModels []string, models []bridge.ModelView) []string
+  ```
+  每行：`默认 · 名称 · 显示名 · 上下文窗口 · 思考等级（默认）`；模型不存在 → `名称（模型不存在）`；窗口/等级为空时省略。
+- Codex 编辑器在模型列表与高级设置之间渲染只读「将写入 Codex 的模型」文本行（不提供编辑控件）。
+- 不修改 config.toml 预览。
+
+- [ ] **Step 1: 写失败测试**
+
+```go
+func TestAccessCodexModelMetaLines(t *testing.T) {
+	models := []bridge.ModelView{
+		{Name: "my-code", DisplayName: "My Code", ContextWindow: 1000000,
+			ReasoningLevels: []string{"low", "high"}, DefaultReasoningLevel: "high"},
+		{Name: "test", Enabled: true},
+	}
+	lines := accessCodexModelMetaLines([]string{"my-code", "test", "gone"}, models)
+	if len(lines) != 3 {
+		t.Fatalf("%v", lines)
+	}
+	if !strings.Contains(lines[0], "My Code") || !strings.Contains(lines[0], "1000000") ||
+		!strings.Contains(lines[0], "low/high") || !strings.Contains(lines[0], "high") {
+		t.Fatalf("%v", lines[0])
+	}
+	if !strings.Contains(lines[2], "模型不存在") {
+		t.Fatalf("%v", lines[2])
+	}
+}
+```
+
+- [ ] **Step 2: 跑失败**：`go test ./internal/desktop -run TestAccessCodexModelMetaLines -v`。
+
+- [ ] **Step 3: 实现**
+  - 实现纯函数；Codex 分支渲染「将写入 Codex 的模型」标题 + 只读文本行。
+  - 不新增可编辑控件，不影响 Claude/Claude Desktop。
+
+- [ ] **Step 4: 跑通过**：`go test ./internal/desktop -run 'TestAccessCodexModelMeta|TestAccessCodex' -count=1`。
+
+---
+
 ### Task 12: Update existing tests/fixtures and error paths
 
 **Files:**

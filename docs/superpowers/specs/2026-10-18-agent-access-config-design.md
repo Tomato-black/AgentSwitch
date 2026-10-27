@@ -3,6 +3,8 @@
 > 注：Codex 接入的 `wire_api` 已于 2026-10-23 改为 `responses`（见 `2026-10-23-openai-responses-inbound-design.md`），本文中 `wire_api = "chat"` 的表述已被取代。
 
 > 注（2026-10-27）：Codex 桌面版与 CLI 共用 `~/.codex/config.toml`；第三方 Key 改写入 `[model_providers.agentswitch].experimental_bearer_token`，`auth.json` 只由 Codex 维护官方 ChatGPT 登录、接入配置不读写（Codex 0.149 起自定义 provider 不再从 `auth.json` 继承凭据）。「应用」同时生成 `~/.codex/agentswitch-model-catalog.json` 并写 `model_catalog_json`——桌面版模型选择器只读该文件，不读网关 `/v1/models`。下文 Codex 行已按此修订。
+>
+> 注（2026-10-27，多逻辑模型与元数据）：Codex 接入配置不再只绑定一个逻辑模型，而是在 settings 文档中存有序 `models` 列表（第一项为默认，镜像 `logical_model_id`）；逻辑模型增加 `display_name`/`context_window`/`reasoning_levels`/`default_reasoning_level` 元数据（migration v2，纯增列非破坏性）。模型目录改为按显式列表与元数据生成，并新增 `[agents]` 子代理、自动审批覆盖、1M 上下文/压缩阈值、只读完整 `config.toml` 预览等 A 类客户端设置。**该部分以 `2026-10-27-codex-access-models-metadata-design.md` 为权威**；本文「每个 Codex 配置只绑定一个逻辑模型」的表述已被取代，其余机制（应用投影、备份、令牌轮换联动、启动命令/打开终端）不变。
 
 > **状态（2026-10-19）：存储形态（overrides）、合成输入与 Claude 持久文件格式已被 `2026-10-19-access-full-settings-ccswitch-design.md` 取代；其余机制（应用投影、备份、令牌轮换联动、启动命令/打开终端、全局 env 层）仍有效。**
 

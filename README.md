@@ -24,6 +24,7 @@ Claude Desktop ┘     │ 逻辑模型 · 冷却 · 故障转移  └─→ Kim
 - **用户自定义预置**：`~/.agentswitch/presets.json` 覆盖/追加内置预置（自托管中转站 http/私网地址放行）
 - **密钥安全**：API Key 以 AES-256-GCM 加密存 SQLite，主密钥 `master.key`（0600）与库分离；明文永不落盘、落日志
 - **接入管理**：一键把网关地址/令牌/模型写入 Claude Code（`~/.claude/settings.json`）、Codex（`~/.codex/config.toml`，CLI / 桌面版 / IDE 插件共用；Key 写 `experimental_bearer_token`，不改 `auth.json`，并生成逻辑模型目录供桌面版选择器使用）、Claude Desktop 配置——只改受管键、写前自动备份；支持多套配置与启动命令
+- **Codex 多模型与元数据**：每份 Codex 接入配置维护有序逻辑模型列表（第一项为默认），逻辑模型可声明显示名、上下文窗口、思考等级；应用时据此生成 Codex 模型目录，写入 1M 上下文/自动压缩阈值、子代理与自动审批设置，并在接入页提供只读的完整 `config.toml` 预览与模型元数据列表
 - **冷却与可解释路由**：上游 429/5xx 按渠道冷却（原子记账、发请求前二次校验），每次路由决策有候选过滤原因可查
 - **零遥测上报**：所有遥测（请求环 + 轮转文件日志）仅存本机
 
@@ -59,21 +60,21 @@ go tool mygo build -platform windows/amd64
 
 1. 启动应用 → 网关自动运行（侧栏底条 LED 可停/重启）
 2. **渠道**页：预设网格选一家（自动带出双协议 base_url 与模型建议；订阅用户选对应的 Coding Plan 预置）或自定义；每渠道填**一个** API Key
-3. **逻辑模型**页：新建（名字即 Agent 请求的模型名，如 `my-code`）→ 挂有序目标链（渠道 + 该渠道上的模型名，越靠前越优先）
-4. **接入**页：为 Claude Code / Codex / Claude Desktop 新建配置（绑定逻辑模型）并点「应用」——直接写入 Agent 真实配置文件，下次启动生效（Codex 桌面版需完全退出后重新打开，并新建对话）
+3. **逻辑模型**页：新建（名字即 Agent 请求的模型名，如 `my-code`）→ 挂有序目标链（渠道 + 该渠道上的模型名，越靠前越优先）；可选填显示名、上下文窗口（如 1M）、思考等级与默认等级，供 Codex 模型目录使用
+4. **接入**页：为 Claude Code / Codex / Claude Desktop 新建配置并点「应用」——Claude 绑定一个逻辑模型，Codex 维护有序模型列表（第一项为默认，可在 Codex 中切换）；应用直接写入 Agent 真实配置文件，下次启动生效（Codex 桌面版需完全退出后重新打开，并新建对话）
 5. 发起真实请求；此后改目标链/密钥/启停即时生效，**无需重启 agent**
 
 ## 接入详情
 
-「接入」页为每个 Agent 管理**全局配置**（env 键值）与任意多份**实际配置**（绑定逻辑模型）。「应用」只改受管键、其余保留，写入前备份到 `~/.agentswitch/backups/`（每 Agent 最近 10 份）。
+「接入」页为每个 Agent 管理**全局配置**（env 键值）与任意多份**实际配置**（Claude 绑定单个逻辑模型；Codex 维护有序逻辑模型列表，第一项为默认）。「应用」只改受管键、其余保留，写入前备份到 `~/.agentswitch/backups/`（每 Agent 最近 10 份）。
 
 | Agent | 写入文件 | 流量入站 |
 |-------|---------|---------|
 | Claude Code | `~/.claude/settings.json`（env） | `/v1/messages` |
-| Codex（CLI / 桌面版） | `~/.codex/config.toml`（`wire_api="responses"`、`experimental_bearer_token`、`model_catalog_json`）+ `~/.codex/agentswitch-model-catalog.json`；`auth.json` 不改写 | `/v1/responses` |
+| Codex（CLI / 桌面版） | `~/.codex/config.toml`（`wire_api="responses"`、`experimental_bearer_token`、`model_catalog_json`、`disable_response_storage`、`web_search`、窗口/压缩阈值、`[agents]` 子代理）+ `~/.codex/agentswitch-model-catalog.json`；`auth.json` 不改写 | `/v1/responses` |
 | Claude Desktop | `~/.config/Claude/claude_desktop_config.json`（inferenceGateway profile + 角色别名） | `/v1/messages` |
 
-Codex 桌面版的模型选择器只读 `~/.codex/agentswitch-model-catalog.json`（「应用」时用 Codex 自带模型模板生成）；旧对话保留创建时的 provider，重新应用后请新建对话。
+Codex 接入页还提供只读的**完整 `config.toml` 预览**（应用后的受管键 + 用户原有键）与只读**模型元数据列表**（名称、显示名、上下文窗口、思考等级），不可编辑。Codex 桌面版的模型选择器只读 `~/.codex/agentswitch-model-catalog.json`（「应用」时用 Codex 自带模型模板生成，目录条目来自有序模型列表与逻辑模型元数据）；旧对话保留创建时的 provider，重新应用后请新建对话。
 
 非默认配置生成持久文件（`~/.agentswitch/access/…`，令牌轮换自动刷新）：复制启动命令或一键「打开终端」以该配置启动，不动已应用的默认配置。
 
@@ -117,6 +118,8 @@ go tool mygo build    # 打包
 ## 从旧版本升级（多 Key / 渠道级路由旧库）
 
 **删库重建**，不提供就地迁移。若启动报「检测到旧版多 Key 数据库（存在 channel_keys 表）」，删除一次 `~/Library/Application Support/AgentSwitch/agentswitch.db`（Linux：`~/.config/AgentSwitch/`）后重启：库按新 schema 重建，渠道/逻辑模型需重新配置。不会静默清空你的库。
+
+**例外（2026-10-27，migration v2）**：逻辑模型元数据（显示名、上下文窗口、思考等级）为纯增列，旧库启动时**就地升级、无需删库**，已有渠道/逻辑模型/接入配置保留。
 
 ## License
 
