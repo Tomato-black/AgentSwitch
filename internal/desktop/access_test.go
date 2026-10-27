@@ -2,6 +2,8 @@ package desktop
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -619,6 +621,56 @@ func TestAccessCodexModelListSingleRowHidesDelete(t *testing.T) {
 	}
 	if !tt.HasText("＋ 添加模型") {
 		t.Fatalf("缺少添加按钮: %v", tt.Texts())
+	}
+}
+
+// TestAccessCodexPreviewRendersManagedKeys 覆盖 Codex 编辑器只读 config.toml
+// 预览（spec 2026-10-27 §4.6）：按 codexModels[0] 映射逻辑模型后调
+// bridge.PreviewCodexConfig，渲染受管键（目录引用/禁用响应存储/投影模型名）；
+// 预览路径只读，不写 config.toml 或模型目录。HOME 指向临时目录并放一份
+// 本地模板目录，保证 bridge 的兜底模板可离线取到（桌面测试包无法替换
+// bridge 的未导出模板加载器）。
+func TestAccessCodexPreviewRendersManagedKeys(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".codex")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	template := `{"models":[{"slug":"gpt-5","base_instructions":"test",` +
+		`"model_messages":{"instructions_template":"test"}}]}`
+	if err := os.WriteFile(filepath.Join(dir, "cc-switch-model-catalog.json"), []byte(template), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	u, a := testUI(t)
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	u.page = "access"
+	u.accessApp = "codex"
+	u.accessForm = accessForm{
+		open: true, modelLabel: "my-code", codexModels: []string{"my-code"},
+		docJSON: `{"env":{},"models":["my-code"]}`,
+	}
+	u.accessRefreshCodexPreview(u.accessSvc())
+	if u.accessForm.msg != "" {
+		t.Fatalf("预览应成功: %q", u.accessForm.msg)
+	}
+	for _, want := range []string{"model_catalog_json", "disable_response_storage", "my-code"} {
+		if !strings.Contains(u.accessForm.codexPreview, want) {
+			t.Fatalf("预览缺少 %q：%s", want, u.accessForm.codexPreview)
+		}
+	}
+	for _, name := range []string{"config.toml", "agentswitch-model-catalog.json"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Fatalf("预览不应写 %s", name)
+		}
+	}
+	// 无默认模型 → 中文内联提示，不调 bridge。
+	u.accessForm = accessForm{open: true}
+	u.accessRefreshCodexPreview(u.accessSvc())
+	if u.accessForm.codexPreview != "" || !strings.Contains(u.accessForm.msg, "模型") {
+		t.Fatalf("空模型列表应内联中文提示: %+v", u.accessForm)
 	}
 }
 

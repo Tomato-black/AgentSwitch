@@ -723,6 +723,41 @@ func (u *uiState) accessPreloadForm(acc bridge.AccessConfigs) {
 		return
 	}
 	f.docJSON = preview
+	if u.accessApp == "codex" {
+		// 编辑器打开即生成只读 config.toml 预览（模型列表先由文档回填）。
+		u.accessSyncCodexFromDoc(models)
+		u.accessRefreshCodexPreview(acc)
+	}
+}
+
+// accessRefreshCodexPreview 生成 Codex 只读 config.toml 预览（spec 2026-10-27
+// §4.6）：默认模型取模型列表首项（空列表回退绑定模型），映射逻辑模型 ID 后
+// 调 bridge 预览（含真实网关令牌、合并现有用户键，不写盘）。无可用模型或
+// bridge 报错时清空预览并内联中文提示。
+func (u *uiState) accessRefreshCodexPreview(acc bridge.AccessConfigs) {
+	f := &u.accessForm
+	label := f.modelLabel
+	if len(f.codexModels) > 0 {
+		label = f.codexModels[0]
+	}
+	var models []bridge.ModelView
+	if u.svc.Logical != nil {
+		models = u.svc.Logical.List()
+	}
+	modelID := accessModelIDByLabel(models, label)
+	if modelID == "" {
+		f.codexPreview = ""
+		f.msg = "请至少添加一个模型后再预览 config.toml"
+		return
+	}
+	preview, err := acc.PreviewCodexConfig(modelID, f.docJSON)
+	if err != nil {
+		f.codexPreview = ""
+		f.msg = "预览失败：" + err.Error()
+		return
+	}
+	f.codexPreview = preview
+	f.msg = ""
 }
 
 // accessRepreviewForm 用当前表单模型重新合成预览（基线变化后调用）；失败内联报错。
@@ -831,8 +866,14 @@ func (u *uiState) accessEditorCard(c *ui.Context, t *ui.Theme, s softPalette, ac
 				// 文档 → 模型列表回填（打开配置/编辑 JSON 后同步）；首项即
 				// 默认模型（保存时的 logical_model_id）。
 				u.accessSyncCodexFromDoc(models)
-				u.accessCodexModelsSection(c, t, s, labels)
-				u.accessCodexAdvancedSection(c, t)
+				codexChanged := u.accessCodexModelsSection(c, t, s, labels)
+				codexChanged = u.accessCodexAdvancedSection(c, t) || codexChanged
+				// 模型列表/高级设置变化后刷新只读 config.toml 预览；文本域
+				// 手动编辑不逐键刷新（bridge 模板加载会跑 codex debug models，
+				// 每帧调用会卡顿），改用「刷新预览」按钮。
+				if codexChanged {
+					u.accessRefreshCodexPreview(acc)
+				}
 			} else {
 				ui.Row(c).Gap(12).Children(func() {
 					ui.Text(c, "逻辑模型:").Width(96).TextColor(t.TextMuted)
@@ -907,6 +948,20 @@ func (u *uiState) accessEditorCard(c *ui.Context, t *ui.Theme, s softPalette, ac
 			}
 			ui.Text(c, "与全局/默认值相同的键保存时自动视为未定制（保持继承）；要覆盖请改成不同值").TextColor(t.TextMuted)
 
+			// Codex 只读 config.toml 预览（spec 2026-10-27 §4.6）：展示应用后
+			// 的完整文件（受管键 + 用户原样保留的键），不可编辑；手动改过
+			// JSON 后可用「刷新预览」重新生成。
+			if u.accessApp == "codex" {
+				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, "将写入的 config.toml（只读）").Bold()
+					ui.Box(c).Grow(1)
+					if softButton(c, t, s, "gray", "刷新预览").Clicked() {
+						u.accessRefreshCodexPreview(acc)
+					}
+				})
+				ui.TextArea(c, &u.accessForm.codexPreview).Height(240).ReadOnly(true)
+			}
+
 			if u.accessForm.msg != "" {
 				ui.Text(c, u.accessForm.msg).TextColor(t.Danger)
 			}
@@ -930,8 +985,9 @@ func (u *uiState) accessEditorCard(c *ui.Context, t *ui.Theme, s softPalette, ac
 // 有序 Select 行 + 上移/下移/删除，首行「默认」徽标，底部「＋ 添加模型」。
 // 行内按钮只记动作、循环结束后统一应用（构建中改切片会越界）；任何变化
 // 写回文档 models（accessPatchCodexModels）。只剩一项时不渲染删除按钮
-// ——列表至少保留一项（保存另有空列表校验）。
-func (u *uiState) accessCodexModelsSection(c *ui.Context, t *ui.Theme, s softPalette, labels []string) {
+// ——列表至少保留一项（保存另有空列表校验）。返回列表是否发生变化（调用
+// 方据此刷新只读 config.toml 预览）。
+func (u *uiState) accessCodexModelsSection(c *ui.Context, t *ui.Theme, s softPalette, labels []string) bool {
 	f := &u.accessForm
 	ui.Text(c, "模型列表").Bold()
 	ui.Text(c, "按序显示在 Codex 模型菜单；第一行为默认模型").TextColor(t.TextMuted)
@@ -976,22 +1032,26 @@ func (u *uiState) accessCodexModelsSection(c *ui.Context, t *ui.Theme, s softPal
 	case "del":
 		f.codexModels = append(f.codexModels[:actI], f.codexModels[actI+1:]...)
 	}
-	if act != "" || changed {
+	dirty := act != "" || changed
+	if dirty {
 		u.accessPatchCodexModels()
 	}
 	if softButton(c, t, s, "act", "＋ 添加模型").Clicked() {
 		if next, ok := accessCodexNextModel(labels, f.codexModels); ok {
 			f.codexModels = append(f.codexModels, next)
 			u.accessPatchCodexModels()
+			dirty = true
 		}
 	}
+	return dirty
 }
 
 // accessCodexAdvancedSection 渲染 Codex 高级设置（spec 2026-10-27 §4.2）：
 // 子代理模型、子代理推理强度、自动审批模型三个下拉。空值分别显示
 // 「跟随主模型」/「默认」/「主模型自己审批（默认）」；任何变化写回文档
-// codex 对象（accessPatchCodexSettings），下次回填保持一致。
-func (u *uiState) accessCodexAdvancedSection(c *ui.Context, t *ui.Theme) {
+// codex 对象（accessPatchCodexSettings），下次回填保持一致。返回是否有变化
+// （调用方据此刷新只读 config.toml 预览）。
+func (u *uiState) accessCodexAdvancedSection(c *ui.Context, t *ui.Theme) bool {
 	f := &u.accessForm
 	ui.Text(c, "高级设置").Bold()
 	ui.Text(c, "子代理与自动审批为可选配置，默认跟随主模型").TextColor(t.TextMuted)
@@ -1031,6 +1091,7 @@ func (u *uiState) accessCodexAdvancedSection(c *ui.Context, t *ui.Theme) {
 	if changed {
 		u.accessPatchCodexSettings()
 	}
+	return changed
 }
 
 // accessSaveForm 校验并保存表单；文档原文送 bridge（parse+归一化错误内联）。
