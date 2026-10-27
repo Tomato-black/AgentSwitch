@@ -112,6 +112,9 @@ func TestLogicalModelMetadataValidation(t *testing.T) {
 	if err := validateModelMeta(ModelMeta{ReasoningLevels: []string{"low"}, DefaultReasoningLevel: "high"}); err == nil {
 		t.Fatal("默认等级不在列表应报错")
 	}
+	if err := validateModelMeta(ModelMeta{DefaultReasoningLevel: "high"}); err == nil {
+		t.Fatal("等级列表为空时默认等级非空应报错")
+	}
 	if err := validateModelMeta(ModelMeta{ContextWindow: -1}); err == nil {
 		t.Fatal("负上下文窗口应报错")
 	}
@@ -139,6 +142,53 @@ func TestLogicalModelCreatePersistsMeta(t *testing.T) {
 	if got.DisplayName != "My Code" || got.ContextWindow != 1000000 ||
 		len(got.ReasoningLevels) != 2 || got.DefaultReasoningLevel != "high" {
 		t.Fatalf("%+v", got)
+	}
+}
+
+// TestLogicalModelUpdatePersistsMeta：Update 写入既有行的四个元数据字段，
+// 再更新一次清空思考等级列表与默认等级，Get 均能读到变更后的值。
+func TestLogicalModelUpdatePersistsMeta(t *testing.T) {
+	a := tempApp(t)
+	ch, err := a.Store().Channels().Save(storage.Channel{
+		Name: "c", Protocol: "anthropic", BaseURL: "http://u", CredentialRef: "ref",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := LogicalModels{A: a}
+	targets := []TargetSpec{{ChannelID: ch.ID, ModelName: "up"}}
+	m, err := svc.Create("my-code", "", ModelMeta{
+		DisplayName: "My Code", ContextWindow: 1000000,
+		ReasoningLevels: []string{"low", "high"}, DefaultReasoningLevel: "high",
+	}, targets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Update(m.ID, "my-code", "", ModelMeta{
+		DisplayName: "My Code 2", ContextWindow: 200000,
+		ReasoningLevels: []string{"medium", "max"}, DefaultReasoningLevel: "medium",
+	}, true, targets); err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.Get(m.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DisplayName != "My Code 2" || got.ContextWindow != 200000 ||
+		len(got.ReasoningLevels) != 2 || got.ReasoningLevels[0] != "medium" ||
+		got.ReasoningLevels[1] != "max" || got.DefaultReasoningLevel != "medium" {
+		t.Fatalf("metadata not updated: %+v", got)
+	}
+	// 再次 Update 清空思考等级与默认等级（窗口 0=沿用模板）。
+	if err := svc.Update(m.ID, "my-code", "", ModelMeta{DisplayName: "My Code 2"}, true, targets); err != nil {
+		t.Fatal(err)
+	}
+	got, err = svc.Get(m.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ContextWindow != 0 || len(got.ReasoningLevels) != 0 || got.DefaultReasoningLevel != "" {
+		t.Fatalf("metadata not cleared: %+v", got)
 	}
 }
 
