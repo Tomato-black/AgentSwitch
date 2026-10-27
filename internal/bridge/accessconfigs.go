@@ -465,7 +465,10 @@ func (s AccessConfigs) writeClaudeLive(doc map[string]any, env map[string]string
 //   - 受管键：model=models[0]、model_provider="agentswitch"、
 //     model_catalog_json=agentswitch-model-catalog.json（桌面版模型选择器
 //     只认该文件，不读网关 /v1/models）、disable_response_storage=true、
-//     web_search="disabled"、model_providers.agentswitch 子表
+//     web_search="disabled"、model_context_window/models[0] 的
+//     ContextWindow 与 model_auto_compact_token_limit=窗口的 90%（窗口未
+//     声明即 0 时两个键都不写也不删，保留用户设置）、
+//     model_providers.agentswitch 子表
 //     {name: "agentswitch"（Codex 0.143+ 必填且非空）,
 //     base_url: env["OPENAI_BASE_URL"], wire_api: "responses"
 //     （Codex 0.143+ 仅支持 Responses 线路）, requires_openai_auth: false,
@@ -522,6 +525,12 @@ func (s AccessConfigs) projectCodex(env map[string]string, model string, doc map
 	cfg["model_catalog_json"] = codexModelCatalogFileName
 	cfg["disable_response_storage"] = true
 	cfg["web_search"] = "disabled"
+	// 1M 上下文与自动压缩阈值（spec §4.5）：默认模型声明了窗口才写；0 表示
+	// 未声明——不写也不删，保留用户已有设置。
+	if len(models) > 0 && models[0].ContextWindow > 0 {
+		cfg["model_context_window"] = models[0].ContextWindow
+		cfg["model_auto_compact_token_limit"] = models[0].ContextWindow * 9 / 10
+	}
 	// model_providers 子表：已存在但非表则报错（不猜测修复）。
 	providers := map[string]any{}
 	if v, ok := cfg["model_providers"]; ok && v != nil {

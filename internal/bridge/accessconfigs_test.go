@@ -1413,3 +1413,61 @@ func accessEnvDoc(env map[string]string) string {
 	}
 	return string(b)
 }
+
+// 默认模型的 ContextWindow>0 时投影 1M 上下文与 90% 自动压缩阈值到顶层
+//（spec 2026-10-27 §4.5）：模型名取 models[0]，两者均为整数。
+func TestProjectCodexContextWindow(t *testing.T) {
+	a := tempApp(t)
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{
+		ID: "lm1", Name: "my-code", Enabled: true, ContextWindow: 1000000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	if err := acc.writeCodexLive(map[string]string{"OPENAI_BASE_URL": "u", "OPENAI_API_KEY": "t"},
+		"my-code", map[string]any{"models": []any{"my-code"}}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(acc.Home, ".codex", "config.toml"))
+	var cfg map[string]any
+	if err := toml.Unmarshal(b, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg["model_context_window"] != int64(1000000) ||
+		cfg["model_auto_compact_token_limit"] != int64(900000) {
+		t.Fatalf("%v", cfg)
+	}
+}
+
+// 默认模型 ContextWindow==0 表示未声明：不写也不删这两个键，保留用户已有
+// 设置（spec 2026-10-27 §4.5；禁止把 0 写成 0 或清空用户值）。
+func TestProjectCodexContextWindowZeroPreservesExisting(t *testing.T) {
+	a := tempApp(t)
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{
+		ID: "lm1", Name: "my-code", Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	dir := filepath.Join(acc.Home, ".codex")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(
+		"model_context_window = 200000\nmodel_auto_compact_token_limit = 180000\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := acc.writeCodexLive(map[string]string{"OPENAI_BASE_URL": "u", "OPENAI_API_KEY": "t"},
+		"my-code", map[string]any{"models": []any{"my-code"}}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "config.toml"))
+	var cfg map[string]any
+	if err := toml.Unmarshal(b, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg["model_context_window"] != int64(200000) ||
+		cfg["model_auto_compact_token_limit"] != int64(180000) {
+		t.Fatalf("%v", cfg)
+	}
+}
