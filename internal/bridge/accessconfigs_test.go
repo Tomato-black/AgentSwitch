@@ -1439,6 +1439,155 @@ func TestProjectCodexContextWindow(t *testing.T) {
 	}
 }
 
+// [agents] 子代理受管键（spec 2026-10-27 §4.3）：subagent_model/effort 非空
+// 时分别写 default_subagent_model / default_subagent_reasoning_effort。
+func TestProjectCodexSubagentKeys(t *testing.T) {
+	a := tempApp(t)
+	seedLogicalModel(t, a, "my-code")
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	doc := map[string]any{"models": []any{"my-code"}, "codex": map[string]any{
+		"subagent_model": "my-code", "subagent_reasoning_effort": "high",
+	}}
+	if err := acc.writeCodexLive(map[string]string{"OPENAI_BASE_URL": "u", "OPENAI_API_KEY": "t"},
+		"my-code", doc); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(acc.Home, ".codex", "config.toml"))
+	var cfg map[string]any
+	if err := toml.Unmarshal(b, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	agents, ok := cfg["agents"].(map[string]any)
+	if !ok {
+		t.Fatalf("agents 表缺失: %s", b)
+	}
+	if agents["default_subagent_model"] != "my-code" ||
+		agents["default_subagent_reasoning_effort"] != "high" {
+		t.Fatalf("%v", agents)
+	}
+}
+
+// 空值删除两个受管键，但保留 [agents] 下的其他用户键（spec 2026-10-27 §4.3）。
+func TestProjectCodexSubagentEmptyPreservesOtherAgentsKeys(t *testing.T) {
+	a := tempApp(t)
+	seedLogicalModel(t, a, "my-code")
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	dir := filepath.Join(acc.Home, ".codex")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(
+		"[agents]\ndefault_subagent_model = \"old\"\ndefault_subagent_reasoning_effort = \"low\"\nuser_key = \"keep\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := acc.writeCodexLive(map[string]string{"OPENAI_BASE_URL": "u", "OPENAI_API_KEY": "t"},
+		"my-code", map[string]any{"models": []any{"my-code"}}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "config.toml"))
+	var cfg map[string]any
+	if err := toml.Unmarshal(b, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	agents, ok := cfg["agents"].(map[string]any)
+	if !ok {
+		t.Fatalf("agents 表不应被删除（仍有用户键）: %s", b)
+	}
+	if _, ok := agents["default_subagent_model"]; ok {
+		t.Fatalf("default_subagent_model 应删除: %v", agents)
+	}
+	if _, ok := agents["default_subagent_reasoning_effort"]; ok {
+		t.Fatalf("default_subagent_reasoning_effort 应删除: %v", agents)
+	}
+	if agents["user_key"] != "keep" {
+		t.Fatalf("其他 agents 键应保留: %v", agents)
+	}
+}
+
+// 删除受管键后 [agents] 变空则整表删除，不留下空表。
+func TestProjectCodexSubagentEmptyTableRemoved(t *testing.T) {
+	a := tempApp(t)
+	seedLogicalModel(t, a, "my-code")
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	dir := filepath.Join(acc.Home, ".codex")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(
+		"[agents]\ndefault_subagent_model = \"old\"\ndefault_subagent_reasoning_effort = \"low\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := acc.writeCodexLive(map[string]string{"OPENAI_BASE_URL": "u", "OPENAI_API_KEY": "t"},
+		"my-code", map[string]any{"models": []any{"my-code"}}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "config.toml"))
+	var cfg map[string]any
+	if err := toml.Unmarshal(b, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg["agents"]; ok {
+		t.Fatalf("空 agents 表应删除: %s", b)
+	}
+}
+
+// [agents] 已存在但不是表时报中文错误，不静默覆盖用户配置。
+func TestProjectCodexSubagentNonTableErrors(t *testing.T) {
+	a := tempApp(t)
+	seedLogicalModel(t, a, "my-code")
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	dir := filepath.Join(acc.Home, ".codex")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte("agents = \"x\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := acc.writeCodexLive(map[string]string{"OPENAI_BASE_URL": "u", "OPENAI_API_KEY": "t"},
+		"my-code", map[string]any{"models": []any{"my-code"}})
+	if err == nil || !strings.Contains(err.Error(), "agents 不是表") {
+		t.Fatalf("应返回中文表结构错误: %v", err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "config.toml"))
+	if string(b) != "agents = \"x\"\n" {
+		t.Fatalf("失败后不得改动原文件: %s", b)
+	}
+}
+
+// 投影是唯一 live 写路径，可能读到旧库文档：子代理模型不在解析后的模型
+// 列表中时报中文错误，绝不把无效值写进 config.toml。
+func TestProjectCodexSubagentInvalidModelErrors(t *testing.T) {
+	a := tempApp(t)
+	seedLogicalModel(t, a, "my-code")
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	doc := map[string]any{"models": []any{"my-code"}, "codex": map[string]any{
+		"subagent_model": "ghost",
+	}}
+	err := acc.writeCodexLive(map[string]string{"OPENAI_BASE_URL": "u", "OPENAI_API_KEY": "t"},
+		"my-code", doc)
+	if err == nil || !strings.Contains(err.Error(), "子代理模型 ghost 不在模型列表中") {
+		t.Fatalf("应返回中文模型校验错误: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(acc.Home, ".codex", "config.toml")); !os.IsNotExist(statErr) {
+		t.Fatalf("校验失败不应写 config.toml: %v", statErr)
+	}
+}
+
+// 思考等级不在白名单时报中文错误，不把 Codex 不认识的毒值写进 [agents]。
+func TestProjectCodexSubagentInvalidEffortErrors(t *testing.T) {
+	a := tempApp(t)
+	seedLogicalModel(t, a, "my-code")
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	doc := map[string]any{"models": []any{"my-code"}, "codex": map[string]any{
+		"subagent_reasoning_effort": "bogus",
+	}}
+	err := acc.writeCodexLive(map[string]string{"OPENAI_BASE_URL": "u", "OPENAI_API_KEY": "t"},
+		"my-code", doc)
+	if err == nil || !strings.Contains(err.Error(), "未知思考等级") {
+		t.Fatalf("应返回中文思考等级错误: %v", err)
+	}
+}
+
 // 默认模型 ContextWindow==0 表示未声明：不写也不删这两个键，保留用户已有
 // 设置（spec 2026-10-27 §4.5；禁止把 0 写成 0 或清空用户值）。
 func TestProjectCodexContextWindowZeroPreservesExisting(t *testing.T) {

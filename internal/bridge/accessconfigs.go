@@ -531,6 +531,39 @@ func (s AccessConfigs) projectCodex(env map[string]string, model string, doc map
 		cfg["model_context_window"] = models[0].ContextWindow
 		cfg["model_auto_compact_token_limit"] = models[0].ContextWindow * 9 / 10
 	}
+	// [agents] 子代理受管键（spec §4.3）：非空写、空值删；表内其他用户键
+	// 保留，删空后整表删除。投影是唯一 live 写路径且可能读到旧库文档，
+	// 写前按解析后的目录模型名/思考等级白名单二次校验——无效值必须报错，
+	// 不能作为 Codex 不认识的毒值落进 config.toml。
+	agents := map[string]any{}
+	if v, ok := cfg["agents"]; ok && v != nil {
+		m, ok := v.(map[string]any)
+		if !ok {
+			return nil, nil, fmt.Errorf("config.toml 的 agents 不是表，请修复后重试")
+		}
+		agents = m
+	}
+	if settings.SubagentModel != "" {
+		if !slices.ContainsFunc(models, func(m codexCatalogModel) bool { return m.Name == settings.SubagentModel }) {
+			return nil, nil, fmt.Errorf("子代理模型 %s 不在模型列表中，请重新选择", settings.SubagentModel)
+		}
+		agents["default_subagent_model"] = settings.SubagentModel
+	} else {
+		delete(agents, "default_subagent_model")
+	}
+	if settings.SubagentReasoningEffort != "" {
+		if !reasoningLevelWhitelist[settings.SubagentReasoningEffort] {
+			return nil, nil, fmt.Errorf("未知思考等级：%s，请重新选择子代理思考等级", settings.SubagentReasoningEffort)
+		}
+		agents["default_subagent_reasoning_effort"] = settings.SubagentReasoningEffort
+	} else {
+		delete(agents, "default_subagent_reasoning_effort")
+	}
+	if len(agents) == 0 {
+		delete(cfg, "agents")
+	} else {
+		cfg["agents"] = agents
+	}
 	// model_providers 子表：已存在但非表则报错（不猜测修复）。
 	providers := map[string]any{}
 	if v, ok := cfg["model_providers"]; ok && v != nil {
