@@ -8,6 +8,11 @@
   备份、令牌轮换联动、启动命令/打开终端等机制沿用该 spec 不变。
   对 docx 的偏离沿用 2026-10-18 spec 的记录方式（docx 未规划接入配置管理细节，无新冲突）。
 
+> 注（2026-10-27）：Codex 接入文档的顶层键已由仅 `env` 扩为 `env` / `models` /
+> `codex`（有序逻辑模型列表 + 子代理/自动审批设置）；存储为 v1 + 就地 migration v2
+> （`logical_models` 元数据列，非破坏性），不再只有单一 v1。详见
+> `2026-10-27-codex-access-models-metadata-design.md` §4.2（文档）与 §4.1（migration）。
+
 ## 1. 背景与目标
 
 现有接入配置每条只存「逻辑模型绑定 + env 覆盖项（`overrides`）」，编辑表单是
@@ -30,10 +35,12 @@
 沿用项目先例（2026-10-17 逻辑模型重构）：**schema 合并为单一 migration v1**，
 不提供就地迁移，旧库启动报错提示删一次库。
 
-### 2.1 最终 schema（单一 v1）
+### 2.1 最终 schema（v1 + 2026-10-27 就地 v2）
 
-现有 v1 + v2（`channel_secrets`）+ v3（`access_configs`）全部并入新 v1；
-`access_configs` 的 `overrides` 列**删除**，改为：
+现有 v1 + v2（`channel_secrets`）+ v3（`access_configs`）全部并入新 v1；2026-10-27
+另加就地 migration v2（`logical_models` 元数据列，非破坏性，见
+`2026-10-27-codex-access-models-metadata-design.md` §4.1）。`access_configs` 的
+`overrides` 列**删除**，改为：
 
 ```sql
 CREATE TABLE access_configs (
@@ -51,6 +58,8 @@ CREATE TABLE access_configs (
 
 - `settings` 存整份 JSON 文档：Claude 为 `{"env": {...}, ...任意顶层键}`；
   Codex 仅允许 `{"env": {...}}`（其 live 是 TOML，顶层文档编辑仅 Claude 享受）。
+  2026-10-27 修订：Codex 顶层键已扩为 `env` / `models` / `codex`，见
+  `2026-10-27-codex-access-models-metadata-design.md` §4.2。
 - `logical_model_id` 保留——主模型仍走 ID 绑定（逻辑模型改名自动跟随）。
 
 ### 2.2 repo 层
@@ -64,12 +73,13 @@ CREATE TABLE access_configs (
 `rejectLegacySchema` 扩展：除既有检查（`channel_keys`/`providers`/`accounts`
 旧表、已记 v1 但 channels 缺失或无 `credential_ref`）外，新增：
 
-- `schema_migrations` 含 version 2 或 3 → `errLegacyDB`；
+- `schema_migrations` 含 version 3 → `errLegacyDB`；含 version 2 但 `logical_models`
+  缺元数据列（2026-10-27 新增列）→ `errLegacyDB`（含元数据列的 v2 就地放行）；
 - `access_configs` 存在但缺 `settings` 列 → `errLegacyDB`；
 - 已记 v1 但缺 `channel_secrets` 表或缺 `access_configs` 表 → `errLegacyDB`
   （2026-10-19 评审补充：2026-10-17 时代 v1 库两者皆无，放行后会在首次读
-  密钥/接入配置时裸 SQL 报错，正是本守卫要避免的故障形态；最终单一 v1
-  建库时两表必然同时存在）。
+  密钥/接入配置时裸 SQL 报错，正是本守卫要避免的故障形态；最终建库
+  （v1 + 2026-10-27 就地 v2）时两表必然同时存在）。
 
 文案沿用 `errLegacyDB`（删库重建、不就地迁移、删 `agentswitch.db` 重启）。
 
@@ -214,7 +224,7 @@ JSON 语法错误、根非对象、env 非对象、Codex 文档含 `env` 以外�
 1. 角色行存逻辑模型名字符串，改名不自动跟随（需重绑）；
 2. 「应用」只增改 live 键、不删除：旧配置写入的残留键保留至被同名覆盖；
 3. JSON 删除全局来源键 → 合成时全局层补回（UI 有提示）；
-4. 文档顶层键编辑仅 Claude；Codex 仅 env。
+4. 文档顶层键编辑仅 Claude；Codex 仅 env（2026-10-27 起扩为 `env` / `models` / `codex`，见 `2026-10-27-codex-access-models-metadata-design.md` §4.2）。
 
 > 2026-10-21 修订：原第 5 条「主模型不提供 1M 勾选」已撤销，改为半锁定 1M
 > 声明（§3.2）。

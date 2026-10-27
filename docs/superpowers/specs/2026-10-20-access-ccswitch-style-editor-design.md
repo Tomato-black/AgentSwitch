@@ -273,7 +273,9 @@ CREATE UNIQUE INDEX idx_access_configs_app_current ON access_configs(app_type) W
 ## 对现有代码的影响
 
 - `internal/storage`：schema 重建单一 v1（`access_configs` 增 `config_json`）；
-  `rejectLegacySchema` 守卫升级。
+  `rejectLegacySchema` 守卫升级。2026-10-27 修订：另加就地 migration v2
+  （`logical_models` 元数据列，非破坏性），见
+  `2026-10-27-codex-access-models-metadata-design.md` §4.1。
 - `internal/bridge/accessconfigs.go`：合成/校验/写入重写（整份接管）；删除全局配置
   方法；Create/Update 签名扩展。
 - `internal/app`：模型解析 `[1M]` 剥离。
