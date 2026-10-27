@@ -198,15 +198,20 @@ func TestBuildCodexCatalogUsesMetadata(t *testing.T) {
 }
 
 // TestBuildCodexCatalogDefaults 覆盖缺省值：显示名/描述回退、默认思考等级
-// 取列表首项；context_window 未声明时保留模板值；模板遗留的升级/引导/自动
+// 取列表首项；未声明的窗口/思考等级保留模板值；模板遗留的升级/引导/自动
 // 审批字段必须清除，避免桌面版提示升级到网关不认识的模型。
 func TestBuildCodexCatalogDefaults(t *testing.T) {
 	tpl := testCodexCatalogTemplate()
 	tpl["upgrade_info"] = map[string]any{"message": "upgrade"}
 	tpl["availability_nux"] = map[string]any{"message": "nux"}
 	tpl["auto_review_model_override"] = "stale-template-model"
+	tpl["supported_reasoning_levels"] = []any{
+		map[string]any{"effort": "template", "description": "template"},
+	}
+	tpl["default_reasoning_level"] = "template"
 	b, err := buildCodexModelCatalog(tpl, []codexCatalogModel{
 		{Name: "plain", ReasoningLevels: []string{"low", "medium"}},
+		{Name: "no-levels"},
 	}, "")
 	if err != nil {
 		t.Fatal(err)
@@ -231,6 +236,18 @@ func TestBuildCodexCatalogDefaults(t *testing.T) {
 		if _, ok := m[k]; ok {
 			t.Fatalf("%s 不应出现: %v", k, m)
 		}
+	}
+	// 未声明思考等级时沿用模板（spec §4.4：非空才替换）。
+	bare := doc.Models[1]
+	levels, ok := bare["supported_reasoning_levels"].([]any)
+	if !ok || len(levels) != 1 {
+		t.Fatalf("思考等级应保留模板值: %v", bare)
+	}
+	if lv, _ := levels[0].(map[string]any); lv["effort"] != "template" {
+		t.Fatalf("思考等级条目 = %v", lv)
+	}
+	if bare["default_reasoning_level"] != "template" {
+		t.Fatalf("默认等级应保留模板值: %v", bare)
 	}
 }
 
@@ -282,6 +299,45 @@ func TestCodexCatalogModelsRejectsMissingOrDisabled(t *testing.T) {
 	if _, err := acc.codexCatalogModels([]string{"off"}); err == nil ||
 		!strings.Contains(err.Error(), "off") || !strings.Contains(err.Error(), "已停用") {
 		t.Fatalf("停用模型错误 = %v", err)
+	}
+	if _, err := acc.codexCatalogModels([]string{" "}); err == nil ||
+		!strings.Contains(err.Error(), "不能为空") || !strings.Contains(err.Error(), "请移除后重试") {
+		t.Fatalf("空模型名错误 = %v", err)
+	}
+}
+
+// TestCodexCatalogRejectsDisabledBound 钉死绑定/默认模型必须启用：停用时
+// writeCodexLive 中止并在错误里指明模型名与「已停用」，不改动已有
+// config.toml、也不留下目录文件（避免生成指向不可用模型的目录）。
+func TestCodexCatalogRejectsDisabledBound(t *testing.T) {
+	a := tempApp(t)
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{
+		ID: "lm-off", Name: "off", Enabled: false}); err != nil {
+		t.Fatal(err)
+	}
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	dir := filepath.Join(acc.Home, ".codex")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := "model = \"keep\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(sentinel), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := acc.writeCodexLive(map[string]string{"OPENAI_API_KEY": "x"}, "off")
+	if err == nil || !strings.Contains(err.Error(), "off") || !strings.Contains(err.Error(), "已停用") {
+		t.Fatalf("停用绑定模型错误 = %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != sentinel {
+		t.Fatalf("失败后不得改动 config.toml: %s", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, codexModelCatalogFileName)); !os.IsNotExist(err) {
+		t.Fatal("失败后不应留下目录文件")
 	}
 }
 

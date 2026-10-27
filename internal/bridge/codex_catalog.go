@@ -28,8 +28,9 @@ const codexModelCatalogFileName = "agentswitch-model-catalog.json"
 var codexModelCatalogTemplateLoader = loadCodexModelCatalogTemplate
 
 // codexLogicalModelsForCatalog 返回目录应包含的逻辑模型名：绑定模型恒在
-// 第一位（桌面版默认选它），其余启用的按名排序；禁用的不收录。绑定模型即使
-// 被禁用也保留——接入配置仍引用它，目录里缺了它桌面版无法选中。
+// 第一位（桌面版默认选它），其余启用的按名排序；禁用的不收录。绑定/默认
+// 模型也必须启用——codexCatalogModels 会校验，停用时目录生成失败并报中文
+// 错误，避免生成指向不可用模型的目录。
 func (s AccessConfigs) codexLogicalModelsForCatalog(bound string) ([]string, error) {
 	bound = strings.TrimSpace(bound)
 	if bound == "" {
@@ -81,7 +82,7 @@ func (s AccessConfigs) codexCatalogModels(names []string) ([]codexCatalogModel, 
 	for _, raw := range names {
 		name := strings.TrimSpace(raw)
 		if name == "" {
-			return nil, fmt.Errorf("模型列表中的模型名不能为空")
+			return nil, fmt.Errorf("模型列表中的模型名不能为空，请移除后重试")
 		}
 		if seen[name] {
 			continue
