@@ -230,3 +230,20 @@ func TestTrayReferenceRetained(t *testing.T) {
 		t.Fatal("tray reference was not retained; tray menu clicks would silently stop working")
 	}
 }
+
+// TestStopGatewayConfirm 覆盖停止网关二次确认：武装后根层渲染确认弹窗
+// （说明影响面），取消收起且不触发停止。
+func TestStopGatewayConfirm(t *testing.T) {
+	u, _ := testUI(t)
+	u.StopArm = true
+	tt := ui.NewTester(u.view, 900, 700)
+	if !tt.HasText("所有已接入的 Agent 将无法调用模型") {
+		t.Fatalf("confirm dialog missing: %v", tt.Texts())
+	}
+	if err := tt.Click("取消"); err != nil {
+		t.Fatal(err)
+	}
+	if u.StopArm {
+		t.Fatal("cancel must close the dialog")
+	}
+}

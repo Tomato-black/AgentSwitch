@@ -98,7 +98,7 @@ func gatewayStatusBar(c *ui.Context, u *uiState) {
 			}
 			if state == "running" || state == "degraded" {
 				if uikit.SoftButton(c, t, s, "danger", "停止网关").Clicked() {
-					go func() { _ = u.Svc.Gateway.Stop() }()
+					u.StopArm = true
 				}
 			}
 		})
@@ -116,5 +116,17 @@ func (u *uiState) pageView(c *ui.Context) {
 		settings.Page(c, u.State)
 	default:
 		logical.Page(c, u.State)
+	}
+}
+
+// stopConfirm 是停止网关的二次确认：停止后所有已接入 Agent 将无法调用模型，
+// 直到重新启动网关。确认后才异步执行停止。
+func stopConfirm(c *ui.Context, u *uiState) {
+	if !u.StopArm {
+		return
+	}
+	switch ui.AlertDialog(c, &u.StopArm, "停止网关", "停止后所有已接入的 Agent 将无法调用模型，直到重新启动网关。确定停止？", "取消", "停止网关") {
+	case 1:
+		go func() { _ = u.Svc.Gateway.Stop() }()
 	}
 }

@@ -87,6 +87,8 @@ func (u *uiState) view(c *ui.Context) {
 	})
 	// 首关驻留模态挂在根层：任意页点 X 都可见，且遮罩挡住页面交互。
 	u.closeModal(c)
+	// 停止网关确认同理挂在根层（底条在任何页可见）。
+	stopConfirm(c, u)
 }
 
 func Run(a *app.App) error {

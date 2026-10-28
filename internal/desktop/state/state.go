@@ -25,6 +25,7 @@ type State struct {
 
 	Page           string       // 当前页；"logical" 默认（经 normalizedPage 归一）
 	CloseNotice    bool         // 首关驻留模态 open 位
+	StopArm        bool         // 停止网关确认弹窗 open 位
 	CloseConfirmed bool         // 用户已确认驻留；之后的关窗直接隐藏
 	Quitting       bool         // 退出流程中：放行窗口关闭（OnBeforeQuit 置位）
 	HideWindow     func()       // 隐藏当前主窗（openWindow 注入；测试可为 nil）
