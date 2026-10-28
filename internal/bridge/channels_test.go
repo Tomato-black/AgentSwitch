@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"AgentSwitch/internal/credential"
+	"AgentSwitch/internal/presets"
 )
 
 func channelsSvc(t *testing.T) (Channels, credential.Store) {
@@ -387,5 +388,166 @@ func TestFetchModelsFromDraftSendsProtocolHeaders(t *testing.T) {
 	}
 	if !gotAnthropic {
 		t.Fatal("anthropic draft 应发 X-Api-Key + Anthropic-Version")
+	}
+}
+
+// TestModelsURLCandidates：候选 URL 构造对齐 cc-switch model_fetch.rs——
+// base 已含版本段 /v{N} 时不再补 /v1（否则 .../v1/v1/models → 404），
+// Anthropic 兼容子路径剥离子路径后拼 /v1/models 与 /models 兜底。
+func TestModelsURLCandidates(t *testing.T) {
+	cases := []struct {
+		base string
+		want []string
+	}{
+		{"https://api.siliconflow.cn/v1", []string{"https://api.siliconflow.cn/v1/models"}},
+		{"https://api.siliconflow.cn/v1/", []string{"https://api.siliconflow.cn/v1/models"}},
+		{"https://api.deepseek.com", []string{"https://api.deepseek.com/v1/models"}},
+		{"https://open.bigmodel.cn/api/coding/paas/v4", []string{
+			"https://open.bigmodel.cn/api/coding/paas/v4/models",
+			"https://open.bigmodel.cn/api/coding/paas/v4/v1/models",
+		}},
+		{"https://dashscope.aliyuncs.com/apps/anthropic", []string{
+			"https://dashscope.aliyuncs.com/apps/anthropic/v1/models",
+			"https://dashscope.aliyuncs.com/v1/models",
+			"https://dashscope.aliyuncs.com/models",
+		}},
+		{"https://api.example.com/anthropic", []string{
+			"https://api.example.com/anthropic/v1/models",
+			"https://api.example.com/v1/models",
+			"https://api.example.com/models",
+		}},
+	}
+	for _, c := range cases {
+		got := modelsURLCandidates(c.base)
+		if len(got) != len(c.want) {
+			t.Fatalf("modelsURLCandidates(%q) = %v, want %v", c.base, got, c.want)
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Fatalf("modelsURLCandidates(%q)[%d] = %q, want %q", c.base, i, got[i], c.want[i])
+			}
+		}
+	}
+}
+
+// TestFetchModelsVersionSegmentNotDoubled：base 已以 /v1 结尾时拼出
+// {base}/models（= /v1/models），绝不出现 /v1/v1/models。这是本次 404 的
+// 根因——20 个 openai 预设里 13 个 base 以 /v1 结尾。
+func TestFetchModelsVersionSegmentNotDoubled(t *testing.T) {
+	var tried []string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tried = append(tried, r.URL.Path)
+		if r.URL.Path == "/v1/models" {
+			w.Write([]byte(`{"data":[{"id":"m-1"},{"id":"m-2"}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer up.Close()
+	cs, _ := channelsSvc(t)
+	c, err := cs.Create("", "seg", up.URL+"/v1", "openai", "sk-seg-12345", true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids, err := cs.FetchModels(c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 2 || ids[0] != "m-1" {
+		t.Fatalf("ids = %v", ids)
+	}
+	for _, p := range tried {
+		if strings.Contains(p, "/v1/v1/") {
+			t.Fatalf("拼出了重复版本段: %v", tried)
+		}
+	}
+	if tried[0] != "/v1/models" {
+		t.Fatalf("first tried = %v, want /v1/models", tried[0])
+	}
+}
+
+// TestFetchModels404FallsBackToNextCandidate：Anthropic 兼容子路径命中
+// （base 以 /anthropic 结尾）且该子路径下无模型端点时，自动回退到剥离
+// 子路径后的候选。
+func TestFetchModels404FallsBackToNextCandidate(t *testing.T) {
+	var tried []string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tried = append(tried, r.URL.Path)
+		if r.URL.Path == "/v1/models" {
+			w.Write([]byte(`{"data":[{"id":"m-1"},{"id":"m-2"}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer up.Close()
+	cs, _ := channelsSvc(t)
+	c, err := cs.Create("", "compat", up.URL+"/anthropic", "anthropic", "sk-fb-12345", true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids, err := cs.FetchModels(c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 2 || ids[0] != "m-1" {
+		t.Fatalf("ids = %v", ids)
+	}
+	if tried[len(tried)-1] != "/v1/models" {
+		t.Fatalf("last tried = %v, want /v1/models", tried)
+	}
+}
+
+// TestFetchModelsAllCandidates404：所有候选都 404 → 报错，且错误带最后
+// 一次 404 信息，不返回空成功。
+func TestFetchModelsAllCandidates404(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer up.Close()
+	cs, _ := channelsSvc(t)
+	c, err := cs.Create("", "all404", up.URL, "openai", "sk-all404", true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cs.FetchModels(c.ID); err == nil {
+		t.Fatal("全部候选 404 应报错")
+	}
+}
+
+// TestFetchModelsAcceptsCatalogStyleResponse：智谱 /api/v1 形态
+// （{"models":[{"slug":...}]}）也能解析。
+func TestFetchModelsAcceptsCatalogStyleResponse(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"models":[{"slug":"glm-4"},{"slug":"glm-4-air"},{"id":"glm-4-plus"}]}`))
+	}))
+	defer up.Close()
+	cs, _ := channelsSvc(t)
+	c, err := cs.Create("", "glm", up.URL, "openai", "sk-glm-12345", true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids, err := cs.FetchModels(c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 3 || ids[0] != "glm-4" || ids[2] != "glm-4-plus" {
+		t.Fatalf("ids = %v", ids)
+	}
+}
+
+// TestPresetModelURLsNeverDoubleVersionSegment：把全部内置预设的每个协议
+// base 都过一遍候选构造，断言绝不出现 .../v1/v1/...。这条锁死本次 404 的
+// 根因（预设里 13/20 个 openai base 以 /v1 结尾，裸拼 /v1/models 必 404），
+// 也防后续预置数据变更再踩同一个坑。
+func TestPresetModelURLsNeverDoubleVersionSegment(t *testing.T) {
+	for _, p := range presets.All() {
+		for proto, ep := range p.Protocols {
+			for _, c := range modelsURLCandidates(ep.BaseURL) {
+				if strings.Contains(c, "/v1/v1/") {
+					t.Errorf("preset %s %s base=%q 生成了重复版本段: %s",
+						p.ID, proto, ep.BaseURL, c)
+				}
+			}
+		}
 	}
 }

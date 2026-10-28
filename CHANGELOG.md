@@ -7,6 +7,7 @@
 ### 新增
 
 - 渠道页「拉取模型」：调用上游 `/v1/models` 自动填充建议模型列表，不必手填。openai / anthropic 两协议分头鉴权，支持 `has_more`/`next_cursor`/`after_id` 分页续拉（上限 10 页 / 500 条）、跨页按 id 去重、失败时保留已填内容；详情页与新建渠道表单均可用
+- 修复「拉取模型」部分渠道报 404：base 已以 `/v1` 等版本段结尾时不再重复补 `/v1`（此前拼出 `…/v1/v1/models`）；命中 Anthropic 兼容子路径（`/anthropic`、`/apps/anthropic` 等）时剥离子路径回退重试；404/405 逐候选回退，全部耗尽才报错；响应兼容智谱 `models[].slug` 目录形态（对齐 cc-switch 的模型端点候选策略）
 
 - Codex 接入支持桌面版：接入页页签改为「Codex」（CLI / 桌面版 / IDE 插件共用 `~/.codex/config.toml`）；第三方 Key 改写入 `[model_providers.agentswitch].experimental_bearer_token`（Codex 0.149+ 兼容），`auth.json` 只保留官方 ChatGPT 登录、接入配置不再改写；「应用」时用 Codex 自带模型模板生成 `~/.codex/agentswitch-model-catalog.json` 并写 `model_catalog_json`，桌面版模型选择器只显示 AgentSwitch 逻辑模型；应用后需完全退出 Codex 再重新打开，旧对话不迁移、请新建对话
 - Codex 接入支持有序逻辑模型列表（第一项为默认，可在 Codex 中切换）与逻辑模型元数据（显示名、上下文窗口、思考等级/默认等级）；模型目录按显式列表与元数据生成，默认模型上下文窗口驱动 `model_context_window` / `model_auto_compact_token_limit`，高级设置写 `[agents]` 子代理模型/推理强度与目录 `auto_review_model_override`，并固定 `disable_response_storage = true`、`web_search = "disabled"`

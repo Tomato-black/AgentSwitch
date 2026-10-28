@@ -22,7 +22,7 @@ Claude Desktop ┘     │ 逻辑模型 · 冷却 · 故障转移  └─→ Kim
 - **三入站协议**：Anthropic `POST /v1/messages`、OpenAI Chat `POST /v1/chat/completions`、OpenAI Responses `POST /v1/responses`——与上游渠道协议自动互转
 - **20 条双协议预置**：14 家按量供应商 + 6 家 Coding Plan 订阅（智谱 GLM / 豆包 / Kimi / 百炼 / 阶跃 Step Plan / 小米 Token Plan），每家 openai/anthropic 双端点，选协议自动带出 base_url 与模型建议；预置数据 2026-10 逐家按官网核实
 - **用户自定义预置**：`~/.agentswitch/presets.json` 覆盖/追加内置预置（自托管中转站 http/私网地址放行）
-- **模型自动拉取**：渠道页「拉取模型」调用上游 `/v1/models` 自动填充建议模型列表（openai / anthropic 两协议、支持分页续拉与跨页去重、SSRF 校验），不必手填模型名
+- **模型自动拉取**：渠道页「拉取模型」调用上游模型列表端点自动填充建议模型，不必手填（openai / anthropic 两协议分头鉴权；base 已带 `/v1` 等版本段时不重复补、命中 Anthropic 兼容子路径时回退重试，避免 `…/v1/v1/models` 404；支持分页续拉与跨页去重、SSRF 校验）
 - **密钥安全**：API Key 以 AES-256-GCM 加密存 SQLite，主密钥 `master.key`（0600）与库分离；明文永不落盘、落日志
 - **接入管理**：一键把网关地址/令牌/模型写入 Claude Code（`~/.claude/settings.json`）、Codex（`~/.codex/config.toml`，CLI / 桌面版 / IDE 插件共用；Key 写 `experimental_bearer_token`，不改 `auth.json`，并生成逻辑模型目录供桌面版选择器使用）、Claude Desktop 配置——只改受管键、写前自动备份；支持多套配置与启动命令
 - **Codex 多模型与元数据**：每份 Codex 接入配置维护有序逻辑模型列表（第一项为默认），逻辑模型可声明显示名、上下文窗口、思考等级；应用时据此生成 Codex 模型目录，写入 1M 上下文/自动压缩阈值、子代理与自动审批设置，并在接入页提供只读的完整 `config.toml` 预览与模型元数据列表
