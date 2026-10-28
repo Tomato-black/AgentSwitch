@@ -1,4 +1,4 @@
-package desktop
+package access
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 
 	"AgentSwitch/internal/bridge"
 	"AgentSwitch/internal/desktop/accesskit"
+	"AgentSwitch/internal/desktop/state"
 	"AgentSwitch/internal/desktop/uikit"
 )
 
@@ -18,32 +19,20 @@ import (
 // patch 进平台对应的 Claude/claude_desktop_config.json（Windows 为
 // %LOCALAPPDATA%，见 bridge.desktopPathsFor）并持久化网关别名表。
 
-// desktopForm 是 Desktop 接入的新建/编辑表单状态。
-type desktopForm struct {
-	open   bool
-	editID string // 非空 = 编辑该配置
-	name   string
-	// models/oneM 与 bridge.desktopRoleOrder 同序（sonnet/opus/haiku/fable）：
-	// models[i] 为空串 = 该角色未启用。
-	models [4]string
-	oneM   [4]bool
-	msg    string
-}
-
 // desktopRoleLabels 是角色行显示名（与 bridge 角色固定序一致）。
 var desktopRoleLabels = [4]string{"Sonnet", "Opus", "Haiku", "Fable"}
 
 // desktopDocFromForm 把表单行转成 bridge 角色映射文档；无启用角色返回 error。
-func (f *desktopForm) desktopDocFromForm() (string, error) {
+func desktopDocFromForm(f *state.DesktopForm) (string, error) {
 	doc := map[string]any{}
 	roles := []string{"sonnet", "opus", "haiku", "fable"}
 	for i, role := range roles {
-		model := strings.TrimSpace(f.models[i])
+		model := strings.TrimSpace(f.Models[i])
 		if model == "" {
 			continue
 		}
 		entry := map[string]any{"model": model}
-		if f.oneM[i] {
+		if f.OneM[i] {
 			entry["oneM"] = true
 		}
 		doc[role] = entry
@@ -59,18 +48,18 @@ func (f *desktopForm) desktopDocFromForm() (string, error) {
 }
 
 // desktopFormFromDoc 把角色映射文档回填进表单行（解析失败保留旧行）。
-func (u *uiState) desktopFormFromDoc(raw string) {
+func desktopFormFromDoc(st *state.State, raw string) {
 	doc := map[string]any{}
 	if strings.TrimSpace(raw) != "" {
 		if err := json.Unmarshal([]byte(raw), &doc); err != nil {
 			return
 		}
 	}
-	f := &u.desktopForm
+	f := &st.Access.DesktopForm
 	roles := []string{"sonnet", "opus", "haiku", "fable"}
 	for i, role := range roles {
-		f.models[i] = ""
-		f.oneM[i] = false
+		f.Models[i] = ""
+		f.OneM[i] = false
 		v, ok := doc[role]
 		if !ok || v == nil {
 			continue
@@ -80,46 +69,46 @@ func (u *uiState) desktopFormFromDoc(raw string) {
 			continue
 		}
 		if s, ok := m["model"].(string); ok {
-			f.models[i] = s
+			f.Models[i] = s
 		}
 		if b, ok := m["oneM"].(bool); ok {
-			f.oneM[i] = b
+			f.OneM[i] = b
 		}
 	}
 }
 
 // desktopPreloadForm 打开 Desktop 编辑器：新建空表单；编辑回填配置。
-func (u *uiState) desktopPreloadForm(acc bridge.AccessConfigs) {
-	f := &u.desktopForm
-	if f.editID == "" {
+func desktopPreloadForm(st *state.State, acc bridge.AccessConfigs) {
+	f := &st.Access.DesktopForm
+	if f.EditID == "" {
 		return
 	}
 	for _, v := range acc.List("claude_desktop") {
-		if v.ID == f.editID {
-			f.name = v.Name
-			u.desktopFormFromDoc(v.Settings)
+		if v.ID == f.EditID {
+			f.Name = v.Name
+			desktopFormFromDoc(st, v.Settings)
 			return
 		}
 	}
 }
 
 // desktopEditorCard 渲染 Desktop 配置的新建/编辑表单。
-func (u *uiState) desktopEditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, acc bridge.AccessConfigs, gateOK bool) {
+func desktopEditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, acc bridge.AccessConfigs, gateOK bool) {
 	uikit.Card(c, t, func() {
 		ui.Column(c).Gap(10).Children(func() {
 			title := "新建配置"
-			if u.desktopForm.editID != "" {
+			if st.Access.DesktopForm.EditID != "" {
 				title = "编辑配置"
 			}
 			ui.Text(c, title).Bold()
 			ui.Row(c).Gap(12).Children(func() {
 				ui.Text(c, "名称:").Width(96).TextColor(t.TextMuted)
-				ui.TextInput(c, &u.desktopForm.name).Grow(1)
+				ui.TextInput(c, &st.Access.DesktopForm.Name).Grow(1)
 			})
 
 			var models []bridge.ModelView
-			if u.Svc.Logical != nil {
-				models = u.Svc.Logical.List()
+			if st.Svc.Logical != nil {
+				models = st.Svc.Logical.List()
 			}
 			labels := accesskit.ModelLabels(models)
 			ui.Text(c, "角色映射（未设置 = 该角色不启用；1M 为 1M 上下文声明）").TextColor(t.TextMuted)
@@ -130,27 +119,27 @@ func (u *uiState) desktopEditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPale
 				ui.Row(c).Gap(8).Children(func() {
 					ui.Text(c, desktopRoleLabels[i]).Width(80).TextColor(t.TextMuted)
 					opts := append([]string{"未设置"}, labels...)
-					ui.Select(c, &u.desktopForm.models[i], opts).Grow(1)
-					if strings.TrimSpace(u.desktopForm.models[i]) != "" {
-						ui.Checkbox(c, &u.desktopForm.oneM[i], "1M")
+					ui.Select(c, &st.Access.DesktopForm.Models[i], opts).Grow(1)
+					if strings.TrimSpace(st.Access.DesktopForm.Models[i]) != "" {
+						ui.Checkbox(c, &st.Access.DesktopForm.OneM[i], "1M")
 					}
 				})
 			}
-			st := u.Svc.Gateway.Status()
-			ui.Text(c, fmt.Sprintf("「应用」写入 Desktop 配置（网关 http://127.0.0.1:%d）；改后需重启 Claude Desktop 生效", st.Port)).TextColor(t.TextMuted)
+			gs := st.Svc.Gateway.Status()
+			ui.Text(c, fmt.Sprintf("「应用」写入 Desktop 配置（网关 http://127.0.0.1:%d）；改后需重启 Claude Desktop 生效", gs.Port)).TextColor(t.TextMuted)
 
-			if u.desktopForm.msg != "" {
-				ui.Text(c, u.desktopForm.msg).TextColor(t.Danger)
+			if st.Access.DesktopForm.Msg != "" {
+				ui.Text(c, st.Access.DesktopForm.Msg).TextColor(t.Danger)
 			}
 			ui.Row(c).Gap(8).Children(func() {
 				if !gateOK {
 					ui.Text(c, "网关未运行——保存后需启动网关才能「应用」").TextColor(t.TextMuted)
 				}
 				if uikit.PillButton(c, t, "保存").Clicked() {
-					u.desktopSaveForm(acc, models)
+					desktopSaveForm(st, acc, models)
 				}
 				if uikit.SoftButton(c, t, s, "gray", "取消").Clicked() {
-					u.desktopForm = desktopForm{}
+					st.Access.DesktopForm = state.DesktopForm{}
 				}
 			})
 		})
@@ -159,46 +148,46 @@ func (u *uiState) desktopEditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPale
 
 // desktopSaveForm 校验并保存 Desktop 配置：logicalModelID 绑定第一个启用
 // 角色的逻辑模型（列表展示用）。
-func (u *uiState) desktopSaveForm(acc bridge.AccessConfigs, models []bridge.ModelView) {
-	f := &u.desktopForm
-	if strings.TrimSpace(f.name) == "" {
-		f.msg = "请填写配置名"
+func desktopSaveForm(st *state.State, acc bridge.AccessConfigs, models []bridge.ModelView) {
+	f := &st.Access.DesktopForm
+	if strings.TrimSpace(f.Name) == "" {
+		f.Msg = "请填写配置名"
 		return
 	}
-	settingsJSON, err := f.desktopDocFromForm()
+	settingsJSON, err := desktopDocFromForm(f)
 	if err != nil {
-		f.msg = err.Error()
+		f.Msg = err.Error()
 		return
 	}
 	bindID := ""
-	for i := range f.models {
-		if m := strings.TrimSpace(f.models[i]); m != "" {
+	for i := range f.Models {
+		if m := strings.TrimSpace(f.Models[i]); m != "" {
 			bindID = accesskit.ModelIDByLabel(models, m)
 			break
 		}
 	}
 	if bindID == "" {
-		f.msg = "至少启用一个角色"
+		f.Msg = "至少启用一个角色"
 		return
 	}
-	if f.editID != "" {
-		if err := acc.Update(f.editID, f.name, bindID, settingsJSON); err != nil {
-			f.msg = err.Error()
+	if f.EditID != "" {
+		if err := acc.Update(f.EditID, f.Name, bindID, settingsJSON); err != nil {
+			f.Msg = err.Error()
 			return
 		}
 	} else {
-		if _, err := acc.Create("claude_desktop", f.name, bindID, settingsJSON); err != nil {
-			f.msg = err.Error()
+		if _, err := acc.Create("claude_desktop", f.Name, bindID, settingsJSON); err != nil {
+			f.Msg = err.Error()
 			return
 		}
 	}
-	u.accessMsg = "已保存「" + f.name + "」"
-	u.desktopForm = desktopForm{}
+	st.Access.Msg = "已保存「" + f.Name + "」"
+	st.Access.DesktopForm = state.DesktopForm{}
 }
 
 // accessDesktopConfigRow 渲染 Desktop 配置行：应用/编辑/删除（无启动命令与
 // 终端——Desktop 是 GUI，重启其应用生效）。逻辑模型摘要展示角色映射。
-func (u *uiState) accessDesktopConfigRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, acc bridge.AccessConfigs, v bridge.AccessConfigView, gateOK bool) {
+func desktopConfigRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, acc bridge.AccessConfigs, v bridge.AccessConfigView, gateOK bool) {
 	ui.Row(c).Gap(10).Children(func() {
 		ui.Text(c, v.Name).Width(140)
 		if badge := accesskit.RowBadge(v.IsCurrent); badge != "" {
@@ -212,21 +201,21 @@ func (u *uiState) accessDesktopConfigRow(c *ui.Context, t *ui.Theme, s uikit.Sof
 			}
 			if uikit.SoftButton(c, t, s, "act", label).Clicked() {
 				if err := acc.Apply(v.ID); err != nil {
-					u.accessMsg = "应用失败：" + err.Error()
+					st.Access.Msg = "应用失败：" + err.Error()
 				} else {
-					u.accessMsg = "已应用「" + v.Name + "」——重启 Claude Desktop 生效"
+					st.Access.Msg = "已应用「" + v.Name + "」——重启 Claude Desktop 生效"
 				}
 			}
 		}
 		if uikit.SoftButton(c, t, s, "gray", "编辑").Clicked() {
-			u.desktopForm = desktopForm{open: true, editID: v.ID}
-			u.desktopPreloadForm(acc)
+			st.Access.DesktopForm = state.DesktopForm{Open: true, EditID: v.ID}
+			desktopPreloadForm(st, acc)
 		}
 		if uikit.SoftButton(c, t, s, "danger", "删除").Clicked() {
 			if err := acc.Remove(v.ID); err != nil {
-				u.accessMsg = "删除失败：" + err.Error()
+				st.Access.Msg = "删除失败：" + err.Error()
 			} else {
-				u.accessMsg = "已删除「" + v.Name + "」——Desktop 配置文件保留最后状态"
+				st.Access.Msg = "已删除「" + v.Name + "」——Desktop 配置文件保留最后状态"
 			}
 		}
 	})

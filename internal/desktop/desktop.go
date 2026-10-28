@@ -52,14 +52,6 @@ type uiState struct {
 	modelList  ui.ListState // 聚合表状态；Selected 经 modelSel 指向当前行
 	modelSel   int          // 聚合表当前行（-1=无）
 	modelQuery string       // 页头搜索框查询（filterModelRows 消费）
-	// 接入页（2026-10-18-agent-access-config）：
-	accessApp     string      // Agent tab："claude"/"codex"/"claude_desktop"（"" 落 claude）
-	accessGlob    [][2]string // 全局配置编辑行（键/值；nil 时首帧从库加载）
-	accessGlobMsg string      // 全局配置卡提示
-	accessMsg     string      // 列表卡操作结果提示
-	guideMsg      string      // 通用连接信息卡复制提示
-	accessForm    accessForm  // 新建/编辑表单（open 时渲染编辑器卡）
-	desktopForm   desktopForm // Claude Desktop 角色映射表单（open 时渲染）
 }
 
 func newUIState(svc state.Services, a *app.App) *uiState {

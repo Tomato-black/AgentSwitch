@@ -30,7 +30,56 @@ type State struct {
 
 	Channels ChannelState
 	Logical  LogicalState
+	Access   AccessState
 	Settings SettingsState
+}
+
+// AccessState 是接入页状态：当前 Agent 页签、全局配置编辑行、列表/编辑器
+// 提示位与两类表单（通用接入文档表单 / Claude Desktop 角色映射表单）。
+type AccessState struct {
+	App         string // "claude" | "codex" | "claude_desktop" | "guide"
+	Glob        [][2]string
+	GlobMsg     string
+	Msg         string
+	GuideMsg    string
+	Form        AccessForm
+	DesktopForm DesktopForm
+}
+
+// AccessForm 是接入配置新建/编辑表单状态（Open 非空即编辑）。DocJSON 是唯一
+// 共享存储：编辑器显示 PreviewDoc 合成结果（含真实网关令牌），保存原文送
+// bridge 归一化。角色行/Codex 模型列表均由 DocJSON 双向同步。
+type AccessForm struct {
+	Open       bool
+	EditID     string // 非空 = 编辑该配置
+	Name       string
+	ModelLabel string // 选中的逻辑模型名（保存时映射回 ID）
+	DocJSON    string
+	Msg        string
+
+	// 角色映射行状态（Claude 5 角色同序；由 DocJSON 双向同步）
+	RoleModels []string
+	RoleNames  []string
+	RoleOneM   []bool
+	MainOneM   bool // 主模型 1M 勾选（ANTHROPIC_MODEL 半锁定后缀）
+
+	// Codex 模型列表与高级设置（由 DocJSON models/codex 双向同步，首项即默认模型）
+	CodexModels     []string
+	SubagentModel   string
+	SubagentEffort  string
+	AutoReviewModel string
+	CodexPreview    string
+}
+
+// DesktopForm 是 Claude Desktop 接入的新建/编辑表单状态；Models/OneM 与
+// bridge 角色固定序（sonnet/opus/haiku/fable）同序，Models[i] 为空 = 未启用。
+type DesktopForm struct {
+	Open   bool
+	EditID string // 非空 = 编辑该配置
+	Name   string
+	Models [4]string
+	OneM   [4]bool
+	Msg    string
 }
 
 // ChannelState 是渠道页状态：View 为子视图（""=列表，"new"=新建，

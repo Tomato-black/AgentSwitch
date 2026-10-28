@@ -1,4 +1,4 @@
-package desktop
+package access
 
 import (
 	"fmt"
@@ -8,6 +8,7 @@ import (
 	"github.com/egoist/mygo/transfer"
 	"github.com/egoist/mygo/ui"
 
+	"AgentSwitch/internal/desktop/state"
 	"AgentSwitch/internal/desktop/uikit"
 )
 
@@ -55,16 +56,16 @@ func gatewayGuideRows(port int, token string, models []string) []guideRow {
 // guideCard 渲染「通用连接信息」卡片（接入页「连接指南」页签）：网关状态
 // 提示 + 连接信息行（值可复制）。用户照卡片内容到目标系统（如 Kun 的
 // Settings > Providers）自行填写——AgentSwitch 不写第三方系统的配置。
-func (u *uiState) guideCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette) {
-	st := u.Svc.Gateway.Status()
-	running := st.State == "running" || st.State == "degraded"
+func guideCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State) {
+	gs := st.Svc.Gateway.Status()
+	running := gs.State == "running" || gs.State == "degraded"
 	var models []string
-	for _, m := range u.Svc.Logical.List() {
+	for _, m := range st.Svc.Logical.List() {
 		if m.Enabled {
 			models = append(models, m.Name)
 		}
 	}
-	rows := gatewayGuideRows(st.Port, st.Token, models)
+	rows := gatewayGuideRows(gs.Port, gs.Token, models)
 	uikit.Card(c, t, func() {
 		ui.Column(c).Gap(10).Children(func() {
 			ui.Row(c).Gap(8).Children(func() {
@@ -82,13 +83,13 @@ func (u *uiState) guideCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette) {
 					if row.copyValue != "" {
 						if uikit.SoftButton(c, t, s, "gray", "复制").Clicked() {
 							mygo.Clipboard.Write(transfer.TextData(row.copyValue))
-							u.guideMsg = "已复制：" + row.label
+							st.Access.GuideMsg = "已复制：" + row.label
 						}
 					}
 				})
 			}
-			if u.guideMsg != "" {
-				ui.Text(c, u.guideMsg).TextColor(t.TextMuted)
+			if st.Access.GuideMsg != "" {
+				ui.Text(c, st.Access.GuideMsg).TextColor(t.TextMuted)
 			}
 		})
 	})
