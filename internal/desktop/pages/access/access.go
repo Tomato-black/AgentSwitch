@@ -18,6 +18,7 @@ import (
 	"AgentSwitch/internal/desktop/pages/access/claude"
 	"AgentSwitch/internal/desktop/pages/access/codex"
 	accessdesktop "AgentSwitch/internal/desktop/pages/access/desktop"
+	"AgentSwitch/internal/desktop/pages/access/guide"
 	"AgentSwitch/internal/desktop/state"
 	"AgentSwitch/internal/desktop/uikit"
 )
@@ -80,7 +81,7 @@ func Page(c *ui.Context, st *state.State) {
 			// 在目标系统里手工填写），跳过 Agent 专属的全局配置/实际配置/
 			// 编辑器（提前退出本闭包，下方卡片不再渲染）。
 			if st.Access.App == "guide" {
-				guideCard(c, t, s, st)
+				guide.Card(c, t, s, st)
 				return
 			}
 			if st.Access.Glob == nil {
