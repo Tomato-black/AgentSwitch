@@ -147,6 +147,15 @@ func StateWord(state string) string {
 	}
 }
 
+// ReasonWord 把网关降级/失败原因译成用户可读文案：已知内部原因给中文，
+// 其余（系统错误原文，如端口占用）原样返回，便于用户排障。
+func ReasonWord(reason string) string {
+	if reason == "no enabled logical model or usable channel" {
+		return "没有可用的逻辑模型或渠道"
+	}
+	return reason
+}
+
 // stateColor 给状态配 LED 色：running=独立状态绿（Success，不再是品牌橙，
 // spec §1 绿橙分离），degraded=琥珀，failed=红，cooling=琥珀（密钥冷却，
 // 概览池状态条；常亮不呼吸），stopped/未知=弱灰。

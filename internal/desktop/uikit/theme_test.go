@@ -1,6 +1,7 @@
 package uikit
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -122,4 +123,18 @@ func TestSelectionStillVisible(t *testing.T) {
 func TestLedDotRenders(t *testing.T) {
 	th := BuildTheme(false, 1)
 	ui.NewTester(func(c *ui.Context) { LedDot(c, th, "running") }, 40, 40).Frame()
+}
+
+// TestReasonWord 覆盖降级原因翻译：已知内部原因给中文，其余（系统错误
+// 原文）原样透传便于排障。
+func TestReasonWord(t *testing.T) {
+	if got := ReasonWord("no enabled logical model or usable channel"); got != "没有可用的逻辑模型或渠道" {
+		t.Fatalf("known reason = %q", got)
+	}
+	if got := ReasonWord("listen tcp 127.0.0.1:17890: bind: address already in use"); !strings.Contains(got, "bind") {
+		t.Fatalf("unknown reason should pass through: %q", got)
+	}
+	if got := ReasonWord(""); got != "" {
+		t.Fatalf("empty reason = %q", got)
+	}
 }

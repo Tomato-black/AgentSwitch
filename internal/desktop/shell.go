@@ -83,6 +83,13 @@ func gatewayStatusBar(c *ui.Context, u *uiState) {
 			addr = "未监听"
 		}
 		ui.Text(c, addr).Font(uikit.MonoFont).TextColor(t.TextMuted)
+		if reason := uikit.ReasonWord(gs.DegradedReason); reason != "" {
+			color := t.Warning
+			if state == "failed" {
+				color = t.Danger
+			}
+			ui.Text(c, reason).SingleLine().TextColor(color)
+		}
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			if state == "stopped" || state == "failed" {
 				if uikit.PillButton(c, t, "启动网关").Clicked() {

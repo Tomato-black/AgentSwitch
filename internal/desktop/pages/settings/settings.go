@@ -11,11 +11,14 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/transfer"
 	"github.com/egoist/mygo/ui"
 
 	"AgentSwitch/internal/config"
 	"AgentSwitch/internal/desktop/state"
 	"AgentSwitch/internal/desktop/uikit"
+	"AgentSwitch/internal/telemetry"
 )
 
 // settingsToForm 把生效 Settings 编成表单（Settings→表单）：端口/超时进
@@ -96,6 +99,47 @@ func Page(c *ui.Context, st *state.State) {
 			})
 		})
 		uikit.Card(c, t, func() {
+			ui.Column(c).Gap(8).Children(func() {
+				ui.Text(c, "网关诊断").Bold()
+				ui.Row(c).Gap(12).Children(func() {
+					ui.Text(c, "状态").Width(120).TextColor(t.TextMuted)
+					ui.Text(c, uikit.StateWord(gs.State))
+					if reason := uikit.ReasonWord(gs.DegradedReason); reason != "" {
+						ui.Text(c, reason).TextColor(t.Warning).Grow(1).SingleLine()
+					}
+				})
+				ui.Row(c).Gap(12).Children(func() {
+					ui.Text(c, "地址").Width(120).TextColor(t.TextMuted)
+					addr := gs.Addr
+					if addr == "" {
+						addr = "未监听"
+					}
+					ui.Text(c, addr).Font(uikit.MonoFont)
+				})
+				if logPath := st.Svc.Gateway.A.LogPath(); logPath != "" {
+					ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, "日志").Width(120).TextColor(t.TextMuted)
+						ui.Text(c, logPath).Font(uikit.MonoFont).Grow(1).SingleLine()
+						if uikit.SoftButton(c, t, s, "gray", "复制").Clicked() {
+							mygo.Clipboard.Write(transfer.TextData(logPath))
+							st.Settings.Msg = "日志路径已复制"
+						}
+					})
+				}
+				ui.Text(c, "最近请求").Bold()
+				if len(st.Recent) == 0 {
+					ui.Text(c, "还没有请求记录——Agent 发起请求后会显示在这里").TextColor(t.TextMuted)
+				}
+				shown := len(st.Recent)
+				if shown > 8 {
+					shown = 8
+				}
+				for _, r := range st.Recent[:shown] {
+					ui.Text(c, recentLine(r)).Font(uikit.MonoFont).TextColor(t.TextMuted).SingleLine()
+				}
+			})
+		})
+		uikit.Card(c, t, func() {
 			ui.Column(c).Gap(6).Children(func() {
 				ui.Text(c, "关于").Bold()
 				v := gs.Version
@@ -106,4 +150,28 @@ func Page(c *ui.Context, st *state.State) {
 			})
 		})
 	})
+}
+
+// recentLine 把一条请求记录压成诊断行（时间 · 模型 · 渠道 · 状态 · 耗时），
+// 含故障转移次数与流式标记；只含脱敏元数据（无请求体/密钥）。
+func recentLine(r telemetry.RequestRecord) string {
+	status := "失败"
+	switch {
+	case r.Status >= 200 && r.Status < 300:
+		status = strconv.Itoa(r.Status) + " ✓"
+	case r.Status != 0:
+		status = strconv.Itoa(r.Status) + " ✗"
+	}
+	channel := r.Channel
+	if channel == "" {
+		channel = "-"
+	}
+	line := fmt.Sprintf("%s · %s · %s · %s · %dms", r.StartedAt.Format("15:04:05"), r.Model, channel, status, r.DurationMs)
+	if r.FailoverCount > 0 {
+		line += fmt.Sprintf(" · 切换%d", r.FailoverCount)
+	}
+	if r.Streaming {
+		line += " · 流"
+	}
+	return line
 }
