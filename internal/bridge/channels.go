@@ -101,7 +101,7 @@ func (s Channels) Create(presetID, name, baseURL, protocol, apiKey string, enabl
 		if c.CredentialRef != "" {
 			s.creds().Delete(c.CredentialRef)
 		}
-		return ChannelView{}, friendlySaveErr(err)
+		return ChannelView{}, uniqueErr(err, "渠道名已存在")
 	}
 	s.A.Log().Info("channel created", "id", id, "preset", presetID, "protocol", protocol, "actor", "ui", "result", "ok")
 	if c.CredentialRef != "" {
@@ -135,7 +135,7 @@ func (s Channels) Update(id, name, baseURL, protocol, apiKey string, enabled, al
 		keySet = true
 	}
 	if _, err := s.A.Store().Channels().Save(c); err != nil {
-		return friendlySaveErr(err)
+		return uniqueErr(err, "渠道名已存在")
 	}
 	s.A.Log().Info("channel updated", "id", id, "protocol", protocol, "actor", "ui", "result", "ok")
 	if keySet {
@@ -512,12 +512,4 @@ func validateChannelURL(baseURL string, allowPrivate bool) error {
 		return fmt.Errorf("需要填写 Base URL")
 	}
 	return provider.ValidateBaseURL(baseURL, allowPrivate)
-}
-
-// friendlySaveErr 把 name UNIQUE 冲突译成中文友好错误（repo 约定由 bridge 友好化）。
-func friendlySaveErr(err error) error {
-	if err != nil && strings.Contains(err.Error(), "UNIQUE") {
-		return fmt.Errorf("渠道名已存在")
-	}
-	return err
 }

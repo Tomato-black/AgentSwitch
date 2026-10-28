@@ -268,12 +268,3 @@ func parseAccessDoc(appType, raw string) (map[string]any, map[string]string, err
 	}
 	return doc, env, nil
 }
-
-// friendlyAccessSaveErr 把 UNIQUE(app_type, name) 冲突译成中文友好错误
-// （repo 约定由 bridge 友好化）。
-func friendlyAccessSaveErr(err error) error {
-	if err != nil && strings.Contains(err.Error(), "UNIQUE") {
-		return fmt.Errorf("配置名已存在")
-	}
-	return err
-}

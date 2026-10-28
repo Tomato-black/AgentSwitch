@@ -88,7 +88,7 @@ func (s AccessConfigs) Create(appType, name, logicalModelID, settingsJSON string
 		ID: id, AppType: appType, Name: name, LogicalModelID: logicalModelID, Settings: raw,
 	})
 	if err != nil {
-		return AccessConfigView{}, friendlyAccessSaveErr(err)
+		return AccessConfigView{}, uniqueErr(err, "配置名已存在")
 	}
 	s.A.Log().Info("access config created", "id", id, "app", appType, "actor", "ui", "result", "ok")
 	s.RegenerateDerived() // 新配置即落持久文件，其余派生文件同步刷新（spec「保存/更新时同步生成」）
@@ -121,7 +121,7 @@ func (s AccessConfigs) Update(id, name, logicalModelID, settingsJSON string) err
 	c.Name, c.LogicalModelID = name, logicalModelID
 	c.Settings = raw
 	if _, err := s.A.Store().AccessConfigs().Save(c); err != nil {
-		return friendlyAccessSaveErr(err)
+		return uniqueErr(err, "配置名已存在")
 	}
 	s.A.Log().Info("access config updated", "id", id, "app", c.AppType, "actor", "ui", "result", "ok")
 	s.RegenerateDerived() // 覆盖项/模型变了，全部派生文件同步刷新（spec「保存/更新时同步生成」）

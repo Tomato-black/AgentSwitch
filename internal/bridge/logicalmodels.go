@@ -85,9 +85,9 @@ func validateLogicalName(name string) error {
 }
 
 // friendlyModelError 把 UNIQUE 冲突译成中文友好错误（repo 约定由 bridge 友好化）：
-// logical_models.name 冲突与目标重复（channel_id+model_name）分别提示。
+// logical_models 表冲突=模型重名；否则为目标链重复。
 func friendlyModelError(err error) error {
-	if err == nil || !strings.Contains(err.Error(), "UNIQUE") {
+	if !isUniqueViolation(err) {
 		return err
 	}
 	if strings.Contains(err.Error(), "logical_models") {
