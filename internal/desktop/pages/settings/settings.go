@@ -72,10 +72,11 @@ func Page(c *ui.Context, st *state.State) {
 				})
 				ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 					ui.Text(c, "透传未登记模型").Width(120).TextColor(t.TextMuted)
-					ui.Switch(c, &st.Settings.PassthroughOn)
+					// 预留功能：首版不提供开关（避免用户误以为已生效）。
+					ui.Text(c, "关闭").TextColor(t.TextMuted)
 					uikit.SoftBadge(c, t, s, "gray", "预留")
 				})
-				ui.Text(c, "首版预留：开启后未登记模型仍返回 404").TextColor(t.TextMuted)
+				ui.Text(c, "预留功能：未登记模型仍返回 404，首版不提供开关").TextColor(t.TextMuted)
 				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 					if uikit.PillButton(c, t, "保存设置").Clicked() {
 						cfg, err := formToSettings(st.Settings.PortInput, st.Settings.TimeoutInput, st.Settings.PassthroughOn)
