@@ -32,7 +32,14 @@ func listView(c *ui.Context, st *state.State) {
 	}
 	if len(models) == 0 {
 		uikit.Card(c, t, func() {
-			ui.Text(c, "先建渠道，再把渠道挂进逻辑模型").TextColor(t.TextMuted)
+			ui.Column(c).Gap(10).AlignItems(ui.Center).Padding(24).Children(func() {
+				ui.Text(c, "还没有逻辑模型").Bold()
+				ui.Text(c, "先建渠道，再把渠道挂进逻辑模型").TextColor(t.TextMuted)
+				if uikit.PillButton(c, t, "去添加渠道").Clicked() {
+					st.Page = "channels"
+					st.Channels.View = ""
+				}
+			})
 		})
 	}
 	for _, m := range models {

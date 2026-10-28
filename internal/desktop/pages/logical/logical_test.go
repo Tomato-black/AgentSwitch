@@ -291,3 +291,19 @@ func TestDeleteShowsAccessRefs(t *testing.T) {
 		}
 	}
 }
+
+// TestLogicalEmptyStateCTA：空态「去添加渠道」直达渠道页（首次配置旅程
+// 顺序：渠道 → 逻辑模型 → 接入）。
+func TestLogicalEmptyStateCTA(t *testing.T) {
+	st, _ := uitest.New(t)
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 900, 700)
+	if !tt.HasText("去添加渠道") {
+		t.Fatalf("missing CTA: %v", tt.Texts())
+	}
+	if err := tt.Click("去添加渠道"); err != nil {
+		t.Fatal(err)
+	}
+	if st.Page != "channels" || st.Channels.View != "" {
+		t.Fatalf("page=%q view=%q", st.Page, st.Channels.View)
+	}
+}
