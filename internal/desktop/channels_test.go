@@ -3,8 +3,12 @@
 package desktop
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/egoist/mygo/ui"
 
 	"AgentSwitch/internal/bridge"
 	"AgentSwitch/internal/presets"
@@ -25,8 +29,8 @@ func TestPresetPreselectFillsForm(t *testing.T) {
 	qwen := presets.ChannelPreset{
 		ID: "qwen", DisplayName: "阿里千问",
 		Protocols: map[string]presets.ProtocolEndpoint{
-			"openai":     {BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", DefaultModels: []string{"qwen3.8-max", "qwen3.8-flash"}},
-			"anthropic":  {BaseURL: "https://dashscope.aliyuncs.com/apps/anthropic", DefaultModels: []string{"qwen3.8-max"}},
+			"openai":    {BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", DefaultModels: []string{"qwen3.8-max", "qwen3.8-flash"}},
+			"anthropic": {BaseURL: "https://dashscope.aliyuncs.com/apps/anthropic", DefaultModels: []string{"qwen3.8-max"}},
 		},
 	}
 	f := channelForm{name: "我的渠道"}
@@ -181,5 +185,112 @@ func TestSwitchProtocolRules(t *testing.T) {
 	}
 	if f.baseURL != "https://a.example" {
 		t.Fatalf("⑤ baseURL 应替换: %q", f.baseURL)
+	}
+}
+
+// --- 拉取模型（详情页 / 新建表单）---
+
+// TestChannelDetailFetchModelsOverwritesText：详情页点「拉取模型」把建议
+// 文本框覆盖为上游返回的 id 列表。
+func TestChannelDetailFetchModelsOverwritesText(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":[{"id":"m-a"},{"id":"m-b"}]}`))
+	}))
+	defer up.Close()
+	u, _ := testUI(t)
+	v, err := u.svc.Channels.Create("", "fetch", up.URL, "openai", "sk-drag-12345", true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.page = "channels"
+	u.chView = "detail"
+	u.openChannelDetail(v.ID)
+	if u.chSuggText != "" {
+		t.Fatalf("前置条件：详情页建议文本应为空, %q", u.chSuggText)
+	}
+	tt := ui.NewTester(u.view, 900, 700)
+	if err := tt.Click("拉取模型"); err != nil {
+		t.Fatalf("拉取模型按钮不可点: %v", err)
+	}
+	if u.chSuggText != "m-a\nm-b" {
+		t.Fatalf("chSuggText = %q, want m-a\\nm-b", u.chSuggText)
+	}
+	if !strings.Contains(u.chTestMsg, "2") {
+		t.Fatalf("chTestMsg = %q", u.chTestMsg)
+	}
+}
+
+// TestChannelDetailFetchModelsErrorKeepsText：无 Key 渠道点「拉取模型」→
+// 报错，且不覆盖已有文本。
+func TestChannelDetailFetchModelsErrorKeepsText(t *testing.T) {
+	u, _ := testUI(t)
+	v, err := u.svc.Channels.Create("", "nokey", "https://api.example.com", "openai", "", true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.page = "channels"
+	u.chView = "detail"
+	u.openChannelDetail(v.ID)
+	u.chSuggText = "keep-me"
+	tt := ui.NewTester(u.view, 900, 700)
+	if err := tt.Click("拉取模型"); err != nil {
+		t.Fatalf("拉取模型按钮不可点: %v", err)
+	}
+	if u.chSuggText != "keep-me" {
+		t.Fatalf("失败不应覆盖文本, %q", u.chSuggText)
+	}
+	if !strings.Contains(u.chTestMsg, "失败") && !strings.Contains(u.chTestMsg, "密钥") {
+		t.Fatalf("chTestMsg = %q", u.chTestMsg)
+	}
+}
+
+// TestChannelNewFetchModelsDraft：新建表单点「拉取模型」用表单里的
+// baseURL/protocol/key 直接拉取并覆盖建议文本（渠道尚未入库）。
+func TestChannelNewFetchModelsDraft(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":[{"id":"d-1"},{"id":"d-2"},{"id":"d-3"}]}`))
+	}))
+	defer up.Close()
+	u, _ := testUI(t)
+	u.page = "channels"
+	u.chView = "new"
+	u.chForm = channelForm{
+		protocol:    "openai",
+		baseURL:     up.URL,
+		apiKey:      "sk-draft-999",
+		suggestions: "stale-old-model",
+	}
+	tt := ui.NewTester(u.view, 900, 700)
+	if err := tt.Click("拉取模型"); err != nil {
+		t.Fatalf("拉取模型按钮不可点: %v", err)
+	}
+	if u.chForm.suggestions != "d-1\nd-2\nd-3" {
+		t.Fatalf("suggestions = %q", u.chForm.suggestions)
+	}
+	if !strings.Contains(u.chForm.msg, "3") {
+		t.Fatalf("chForm.msg = %q", u.chForm.msg)
+	}
+}
+
+// TestChannelNewFetchModelsDraftRequiresKey：新建表单缺 Key 时点「拉取模型」
+// 报错且不覆盖建议文本。
+func TestChannelNewFetchModelsDraftRequiresKey(t *testing.T) {
+	u, _ := testUI(t)
+	u.page = "channels"
+	u.chView = "new"
+	u.chForm = channelForm{
+		protocol:    "openai",
+		baseURL:     "https://api.example.com",
+		suggestions: "keep-draft",
+	}
+	tt := ui.NewTester(u.view, 900, 700)
+	if err := tt.Click("拉取模型"); err != nil {
+		t.Fatalf("拉取模型按钮不可点: %v", err)
+	}
+	if u.chForm.suggestions != "keep-draft" {
+		t.Fatalf("缺 Key 不应覆盖建议文本, %q", u.chForm.suggestions)
+	}
+	if !strings.Contains(u.chForm.msg, "Key") {
+		t.Fatalf("chForm.msg = %q", u.chForm.msg)
 	}
 }

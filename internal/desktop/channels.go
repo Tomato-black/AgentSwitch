@@ -245,6 +245,36 @@ func (u *uiState) testChannelDetail() {
 	u.chTestMsg = res.Stage + " 失败: " + res.Error
 }
 
+// applyFetchedModels 把拉取结果写进指定文本框（覆盖）并给信息位；空列表
+// 与错误都不覆盖（用户已填内容优先保留）。
+func applyFetchedModels(dst *string, msg *string, ids []string, err error, suffix string) {
+	if err != nil {
+		*msg = "拉取模型失败: " + err.Error()
+		return
+	}
+	if len(ids) == 0 {
+		*msg = "上游未返回模型"
+		return
+	}
+	*dst = strings.Join(ids, "\n")
+	*msg = fmt.Sprintf("已从上游拉取 %d 个模型（%s）", len(ids), suffix)
+}
+
+// fetchChannelModels 落「拉取模型」（详情页）：用已保存渠道的 Base URL/协议/
+// Key 拉上游模型列表，覆盖建议文本框；结果经 applyFetchedModels 统一处理。
+func (u *uiState) fetchChannelModels() {
+	ids, err := u.svc.Channels.FetchModels(u.chDetailID)
+	applyFetchedModels(&u.chSuggText, &u.chTestMsg, ids, err, "保存后生效")
+}
+
+// fetchChannelModelsDraft 同上，但用新建表单的 baseURL/protocol/key——渠道
+// 尚未入库，没有可读的 Key，只能走草稿拉取。
+func (u *uiState) fetchChannelModelsDraft() {
+	f := &u.chForm
+	ids, err := u.svc.Channels.FetchModelsFromDraft(f.baseURL, f.protocol, f.apiKey, f.allowPrivate)
+	applyFetchedModels(&f.suggestions, &f.msg, ids, err, "创建后生效")
+}
+
 // channelsView 是渠道页列表态：页头「＋ 添加渠道」+ 渠道卡流（名、协议、
 // base_url、HasKey、建议模型数）。卡体点击进详情；空态引导添加。
 func (u *uiState) channelsView(c *ui.Context) {
@@ -379,6 +409,18 @@ func (u *uiState) channelNewView(c *ui.Context) {
 					})
 				})
 			})
+			card(c, t, func() {
+				ui.Column(c).Gap(12).Children(func() {
+					ui.Row(c).Gap(8).Children(func() {
+						ui.Text(c, "建议模型").Bold().Grow(1)
+						if softButton(c, t, s, "act", "拉取模型").Clicked() {
+							u.fetchChannelModelsDraft()
+						}
+					})
+					ui.Text(c, "逗号或换行分隔；预设会自动回填默认模型").TextColor(t.TextMuted)
+					ui.TextArea(c, &u.chForm.suggestions).Grow(1).MinHeight(0).Height(96)
+				})
+			})
 		})
 	})
 }
@@ -489,7 +531,12 @@ func (u *uiState) channelDetailView(c *ui.Context) {
 			})
 			card(c, t, func() {
 				ui.Column(c).Gap(12).Children(func() {
-					ui.Text(c, "建议模型").Bold()
+					ui.Row(c).Gap(8).Children(func() {
+						ui.Text(c, "建议模型").Bold().Grow(1)
+						if softButton(c, t, s, "act", "拉取模型").Clicked() {
+							u.fetchChannelModels()
+						}
+					})
 					ui.Text(c, "逗号或换行分隔；逻辑模型目标编辑的下拉数据源").TextColor(t.TextMuted)
 					ui.TextArea(c, &u.chSuggText).Grow(1).MinHeight(0).Height(96)
 				})
