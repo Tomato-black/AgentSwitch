@@ -17,6 +17,7 @@ import (
 	"AgentSwitch/internal/desktop/accesskit"
 	"AgentSwitch/internal/desktop/pages/access/claude"
 	"AgentSwitch/internal/desktop/pages/access/codex"
+	accessdesktop "AgentSwitch/internal/desktop/pages/access/desktop"
 	"AgentSwitch/internal/desktop/state"
 	"AgentSwitch/internal/desktop/uikit"
 )
@@ -164,7 +165,7 @@ func Page(c *ui.Context, st *state.State) {
 							hasCurrent = true
 						}
 						if st.Access.App == "claude_desktop" {
-							desktopConfigRow(c, t, s, st, acc, v, gateOK)
+							accessdesktop.ConfigRow(c, t, s, st, acc, v, gateOK)
 						} else {
 							configRow(c, t, s, st, acc, v, gateOK)
 						}
@@ -192,7 +193,7 @@ func Page(c *ui.Context, st *state.State) {
 			// 编辑器卡（通用表单按 Agent 分发 / Desktop 角色映射表单）
 			if st.Access.App == "claude_desktop" {
 				if st.Access.DesktopForm.Open {
-					desktopEditorCard(c, t, s, st, acc, gateOK)
+					accessdesktop.EditorCard(c, t, s, st, acc, gateOK)
 				}
 			} else if st.Access.Form.Open {
 				if st.Access.App == "codex" {

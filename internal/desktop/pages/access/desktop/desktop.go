@@ -1,4 +1,4 @@
-package access
+package desktop
 
 import (
 	"encoding/json"
@@ -78,7 +78,7 @@ func desktopFormFromDoc(st *state.State, raw string) {
 }
 
 // desktopPreloadForm 打开 Desktop 编辑器：新建空表单；编辑回填配置。
-func desktopPreloadForm(st *state.State, acc bridge.AccessConfigs) {
+func PreloadForm(st *state.State, acc bridge.AccessConfigs) {
 	f := &st.Access.DesktopForm
 	if f.EditID == "" {
 		return
@@ -93,7 +93,7 @@ func desktopPreloadForm(st *state.State, acc bridge.AccessConfigs) {
 }
 
 // desktopEditorCard 渲染 Desktop 配置的新建/编辑表单。
-func desktopEditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, acc bridge.AccessConfigs, gateOK bool) {
+func EditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, acc bridge.AccessConfigs, gateOK bool) {
 	uikit.Card(c, t, func() {
 		ui.Column(c).Gap(10).Children(func() {
 			title := "新建配置"
@@ -187,7 +187,7 @@ func desktopSaveForm(st *state.State, acc bridge.AccessConfigs, models []bridge.
 
 // accessDesktopConfigRow 渲染 Desktop 配置行：应用/编辑/删除（无启动命令与
 // 终端——Desktop 是 GUI，重启其应用生效）。逻辑模型摘要展示角色映射。
-func desktopConfigRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, acc bridge.AccessConfigs, v bridge.AccessConfigView, gateOK bool) {
+func ConfigRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, acc bridge.AccessConfigs, v bridge.AccessConfigView, gateOK bool) {
 	ui.Row(c).Gap(10).Children(func() {
 		ui.Text(c, v.Name).Width(140)
 		if badge := accesskit.RowBadge(v.IsCurrent); badge != "" {
@@ -209,7 +209,7 @@ func desktopConfigRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state
 		}
 		if uikit.SoftButton(c, t, s, "gray", "编辑").Clicked() {
 			st.Access.DesktopForm = state.DesktopForm{Open: true, EditID: v.ID}
-			desktopPreloadForm(st, acc)
+			PreloadForm(st, acc)
 		}
 		if uikit.SoftButton(c, t, s, "danger", "删除").Clicked() {
 			if err := acc.Remove(v.ID); err != nil {
@@ -238,3 +238,6 @@ func desktopRolesSummary(docJSON string) string {
 	}
 	return strings.Join(parts, " · ")
 }
+
+// ResetForm 清空 Desktop 表单（切换页签时由宿主调用）。
+func ResetForm(st *state.State) { st.Access.DesktopForm = state.DesktopForm{} }
