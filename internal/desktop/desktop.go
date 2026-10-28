@@ -52,15 +52,6 @@ type uiState struct {
 	modelList  ui.ListState // 聚合表状态；Selected 经 modelSel 指向当前行
 	modelSel   int          // 聚合表当前行（-1=无）
 	modelQuery string       // 页头搜索框查询（filterModelRows 消费）
-	// 渠道页（Task 14：单 Key + 预设添加）：
-	chView      string      // 渠道子视图：""=列表 "new"=新建 "detail"=详情
-	chDetailID  string      // 详情页锚定渠道 id（openChannelDetail 落值）
-	chForm      channelForm // 新建/详情表单；editID 非空 = 编辑该渠道
-	chKeyInput  string      // 详情 Key 更新框（留空=不改）
-	chSuggText  string      // 详情建议模型多行文本（逗号/换行分隔）
-	chTestMsg   string      // 连通测试/操作结果信息位
-	chDeleteArm bool        // 删除渠道 AlertDialog open 位
-	chDeleteID  string      // 删除武装对象——弹窗仅对匹配 id 触发
 	// 接入页（2026-10-18-agent-access-config）：
 	accessApp     string      // Agent tab："claude"/"codex"/"claude_desktop"（"" 落 claude）
 	accessGlob    [][2]string // 全局配置编辑行（键/值；nil 时首帧从库加载）
@@ -71,14 +62,11 @@ type uiState struct {
 	desktopForm   desktopForm // Claude Desktop 角色映射表单（open 时渲染）
 }
 
-// channelForm 是渠道页表单（新建/详情编辑），定义与纯助手在 channels.go。
-
 func newUIState(svc state.Services, a *app.App) *uiState {
 	si := a.State()
 	st, _ := a.CurrentSettings()
 	u := &uiState{State: state.New(svc), status: si, token: st.GatewayToken,
 		logPath:  a.LogPath(),
-		chForm:   channelForm{protocol: "openai", enabled: true},
 		modelSel: -1}
 	u.Schedule = afterEvent
 	// 表格行选择：Selected 必须非 nil 点击才选行（mygo ui.ListState.Selected

@@ -28,8 +28,37 @@ type State struct {
 	HideWindow     func()       // 隐藏当前主窗（openWindow 注入；测试可为 nil）
 	Schedule       func(func()) // 把窗口操作推迟出 GTK 事件回调（默认 afterEvent）
 
+	Channels ChannelState
 	Logical  LogicalState
 	Settings SettingsState
+}
+
+// ChannelState 是渠道页状态：View 为子视图（""=列表，"new"=新建，
+// "detail"=详情），Form 是新建/详情表单（EditID 非空 = 编辑该渠道）。
+type ChannelState struct {
+	View      string
+	DetailID  string
+	Form      ChannelForm
+	KeyInput  string // 详情 Key 更新框（留空=不改）
+	SuggText  string // 详情建议模型多行文本（逗号/换行分隔）
+	TestMsg   string // 连通测试/操作结果信息位
+	DeleteArm bool   // 删除渠道 AlertDialog open 位
+	DeleteID  string // 删除武装对象——弹窗仅对匹配 id 触发
+}
+
+// ChannelForm 是渠道新建/详情编辑的表单状态：APIKey 留空 = 不改密钥
+// （详情态）；PresetID 由预设网格点选写入（自定义为空）。
+type ChannelForm struct {
+	PresetID     string
+	Protocol     string
+	Name         string
+	BaseURL      string
+	APIKey       string // 新建必填；详情留空=保持原 Key
+	Suggestions  string // 逗号/换行分隔；预设回填默认模型
+	Enabled      bool
+	AllowPrivate bool
+	Msg          string
+	EditID       string // 非空 = 编辑该渠道
 }
 
 // LogicalState 是逻辑模型页状态。
@@ -63,7 +92,10 @@ type SettingsState struct {
 	PassthroughOn bool   // 透传未登记模型开关（预留：SaveSettings 不消费）
 }
 
-// New 构造初始状态：默认落在逻辑模型页，并带上网关已有的最近请求记录。
+// New 构造初始状态：默认落在逻辑模型页，渠道新建表单预置 openai/启用，
+// 并带上网关已有的最近请求记录。
 func New(svc Services) *State {
-	return &State{Svc: svc, Recent: svc.Gateway.Recent(), Page: "logical"}
+	st := &State{Svc: svc, Recent: svc.Gateway.Recent(), Page: "logical"}
+	st.Channels.Form = ChannelForm{Protocol: "openai", Enabled: true}
+	return st
 }

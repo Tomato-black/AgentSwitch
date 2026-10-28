@@ -1,6 +1,6 @@
 // channels_test.go 是渠道页纯函数测试（Task 14）：预设回填、表单校验、
 // 删除引用警告。渲染薄壳不测字符串细节（同 logicalmodels 的纯函数口径）。
-package desktop
+package channels
 
 import (
 	"net/http"
@@ -12,6 +12,7 @@ import (
 
 	"AgentSwitch/internal/bridge"
 	"AgentSwitch/internal/desktop/state"
+	"AgentSwitch/internal/desktop/uitest"
 	"AgentSwitch/internal/presets"
 	"AgentSwitch/internal/telemetry"
 )
@@ -34,46 +35,46 @@ func TestPresetPreselectFillsForm(t *testing.T) {
 			"anthropic": {BaseURL: "https://dashscope.aliyuncs.com/apps/anthropic", DefaultModels: []string{"qwen3.8-max"}},
 		},
 	}
-	f := channelForm{name: "我的渠道"}
+	f := state.ChannelForm{Name: "我的渠道"}
 	applyPreset(&f, qwen)
-	if f.presetID != "qwen" {
-		t.Fatalf("presetID = %q, want qwen", f.presetID)
+	if f.PresetID != "qwen" {
+		t.Fatalf("presetID = %q, want qwen", f.PresetID)
 	}
-	if f.protocol != "openai" {
-		t.Fatalf("protocol = %q, want openai", f.protocol)
+	if f.Protocol != "openai" {
+		t.Fatalf("protocol = %q, want openai", f.Protocol)
 	}
-	if f.baseURL != "https://dashscope.aliyuncs.com/compatible-mode/v1" {
-		t.Fatalf("baseURL = %q", f.baseURL)
+	if f.BaseURL != "https://dashscope.aliyuncs.com/compatible-mode/v1" {
+		t.Fatalf("baseURL = %q", f.BaseURL)
 	}
-	if !strings.Contains(f.suggestions, "qwen3.8-max") {
-		t.Fatalf("suggestions = %q, want qwen3.8-max", f.suggestions)
+	if !strings.Contains(f.Suggestions, "qwen3.8-max") {
+		t.Fatalf("suggestions = %q, want qwen3.8-max", f.Suggestions)
 	}
-	if f.name != "我的渠道" {
-		t.Fatalf("applyPreset must not clobber name, got %q", f.name)
+	if f.Name != "我的渠道" {
+		t.Fatalf("applyPreset must not clobber name, got %q", f.Name)
 	}
 }
 
 // TestChannelFormValidate 覆盖缺 name/key/base_url 的错误信息；详情态
 // （editID 非空）Key 留空=不改，不拦。
 func TestChannelFormValidate(t *testing.T) {
-	f := channelForm{}
-	if err := f.validate(); err == nil || !strings.Contains(err.Error(), "名称") {
-		t.Fatalf("missing name: %v", err)
+	f := state.ChannelForm{}
+	if err := validate(f); err == nil || !strings.Contains(err.Error(), "名称") {
+		t.Fatalf("missing Name: %v", err)
 	}
-	f.name = "n"
-	if err := f.validate(); err == nil || !strings.Contains(err.Error(), "Key") {
+	f.Name = "n"
+	if err := validate(f); err == nil || !strings.Contains(err.Error(), "Key") {
 		t.Fatalf("missing key: %v", err)
 	}
-	f.apiKey = "sk-1"
-	if err := f.validate(); err == nil || !strings.Contains(err.Error(), "Base URL") {
+	f.APIKey = "sk-1"
+	if err := validate(f); err == nil || !strings.Contains(err.Error(), "Base URL") {
 		t.Fatalf("missing base_url: %v", err)
 	}
-	f.baseURL = "https://api.example.com"
-	if err := f.validate(); err != nil {
+	f.BaseURL = "https://api.example.com"
+	if err := validate(f); err != nil {
 		t.Fatalf("complete form: %v", err)
 	}
-	f2 := channelForm{editID: "c1", name: "n", baseURL: "https://api.example.com"}
-	if err := f2.validate(); err != nil {
+	f2 := state.ChannelForm{EditID: "c1", Name: "n", BaseURL: "https://api.example.com"}
+	if err := validate(f2); err != nil {
 		t.Fatalf("edit keep-key must pass: %v", err)
 	}
 }
@@ -111,23 +112,23 @@ func TestApplyPresetDualProtocol(t *testing.T) {
 			"anthropic": {BaseURL: "https://x.example", DefaultModels: []string{"m3"}},
 		},
 	}
-	f := channelForm{}
+	f := state.ChannelForm{}
 	applyPreset(&f, dual)
-	if f.protocol != "openai" || f.baseURL != "https://o.example/v1" || f.suggestions != "m1" {
+	if f.Protocol != "openai" || f.BaseURL != "https://o.example/v1" || f.Suggestions != "m1" {
 		t.Fatalf("dual → %+v", f)
 	}
-	if f.name != "阿里千问" {
-		t.Fatalf("空 name 应回填 DisplayName, got %q", f.name)
+	if f.Name != "阿里千问" {
+		t.Fatalf("空 name 应回填 DisplayName, got %q", f.Name)
 	}
-	f2 := channelForm{}
+	f2 := state.ChannelForm{}
 	applyPreset(&f2, anthropicOnly)
-	if f2.protocol != "anthropic" || f2.baseURL != "https://x.example" || f2.suggestions != "m3" {
+	if f2.Protocol != "anthropic" || f2.BaseURL != "https://x.example" || f2.Suggestions != "m3" {
 		t.Fatalf("anthropicOnly → %+v", f2)
 	}
-	f3 := channelForm{name: "我的中转"}
+	f3 := state.ChannelForm{Name: "我的中转"}
 	applyPreset(&f3, dual)
-	if f3.name != "我的中转" {
-		t.Fatalf("已填 name 不得覆盖, got %q", f3.name)
+	if f3.Name != "我的中转" {
+		t.Fatalf("已填 name 不得覆盖, got %q", f3.Name)
 	}
 }
 
@@ -142,50 +143,50 @@ func TestSwitchProtocolRules(t *testing.T) {
 		},
 	}
 	// ① 双协议切 anthropic：值替换。
-	f := channelForm{protocol: "openai", baseURL: "https://o.example/v1", suggestions: "m-o"}
+	f := state.ChannelForm{Protocol: "openai", BaseURL: "https://o.example/v1", Suggestions: "m-o"}
 	switchProtocol(&f, dual, "anthropic")
-	if f.baseURL != "https://a.example" || f.suggestions != "m-a" || f.protocol != "anthropic" {
+	if f.BaseURL != "https://a.example" || f.Suggestions != "m-a" || f.Protocol != "anthropic" {
 		t.Fatalf("① 切换替换失败: %+v", f)
 	}
 	// ② 手改保护：baseURL 已人为改为第三值 → 切协议不动。
-	f = channelForm{protocol: "openai", baseURL: "https://mine.example", suggestions: "m-o"}
+	f = state.ChannelForm{Protocol: "openai", BaseURL: "https://mine.example", Suggestions: "m-o"}
 	switchProtocol(&f, dual, "anthropic")
-	if f.baseURL != "https://mine.example" {
-		t.Fatalf("② 手改保护失败: %q", f.baseURL)
+	if f.BaseURL != "https://mine.example" {
+		t.Fatalf("② 手改保护失败: %q", f.BaseURL)
 	}
 	// 但建议模型仍是预设值 → 应替换（两字段独立判定）。
-	if f.suggestions != "m-a" {
-		t.Fatalf("② suggestions 应独立替换: %q", f.suggestions)
+	if f.Suggestions != "m-a" {
+		t.Fatalf("② suggestions 应独立替换: %q", f.Suggestions)
 	}
 	// ③ 空值恢复：切到无预设协议清空后切回 openai → 恢复预设。
-	f = channelForm{protocol: "anthropic", baseURL: "https://a.example", suggestions: "m-a"}
+	f = state.ChannelForm{Protocol: "anthropic", BaseURL: "https://a.example", Suggestions: "m-a"}
 	switchProtocol(&f, dual, "anthropic") // 先处于 anthropic 预设值
 	switchProtocol(&f, dual, "openai")
-	if f.baseURL != "https://o.example/v1" || f.suggestions != "m-o" {
+	if f.BaseURL != "https://o.example/v1" || f.Suggestions != "m-o" {
 		t.Fatalf("③ 往返恢复失败: %+v", f)
 	}
 	// ④ 仅 openai 预置切 anthropic → 清空（值为预设值时）。
 	onlyOpenAI := presets.ChannelPreset{ID: "q", Protocols: map[string]presets.ProtocolEndpoint{
 		"openai": {BaseURL: "https://q.example/v1", DefaultModels: []string{"mq"}},
 	}}
-	f = channelForm{protocol: "openai", baseURL: "https://q.example/v1", suggestions: "mq"}
+	f = state.ChannelForm{Protocol: "openai", BaseURL: "https://q.example/v1", Suggestions: "mq"}
 	switchProtocol(&f, onlyOpenAI, "anthropic")
-	if f.baseURL != "" || f.suggestions != "" || f.protocol != "anthropic" {
+	if f.BaseURL != "" || f.Suggestions != "" || f.Protocol != "anthropic" {
 		t.Fatalf("④ 无目标协议应清空: %+v", f)
 	}
 	// ④b 清空后切回 openai（空值=未修改）→ 恢复。
 	switchProtocol(&f, onlyOpenAI, "openai")
-	if f.baseURL != "https://q.example/v1" || f.suggestions != "mq" {
+	if f.BaseURL != "https://q.example/v1" || f.Suggestions != "mq" {
 		t.Fatalf("④b 空值恢复失败: %+v", f)
 	}
 	// ⑤ suggestions 手改后切协议不被覆盖，baseURL（预设值）正常替换。
-	f = channelForm{protocol: "openai", baseURL: "https://o.example/v1", suggestions: "my-model"}
+	f = state.ChannelForm{Protocol: "openai", BaseURL: "https://o.example/v1", Suggestions: "my-model"}
 	switchProtocol(&f, dual, "anthropic")
-	if f.suggestions != "my-model" {
-		t.Fatalf("⑤ suggestions 手改保护失败: %q", f.suggestions)
+	if f.Suggestions != "my-model" {
+		t.Fatalf("⑤ suggestions 手改保护失败: %q", f.Suggestions)
 	}
-	if f.baseURL != "https://a.example" {
-		t.Fatalf("⑤ baseURL 应替换: %q", f.baseURL)
+	if f.BaseURL != "https://a.example" {
+		t.Fatalf("⑤ baseURL 应替换: %q", f.BaseURL)
 	}
 }
 
@@ -201,51 +202,53 @@ func TestDetailProtocolSwitched(t *testing.T) {
 			"anthropic": {BaseURL: "https://a.example", DefaultModels: []string{"m-a"}},
 		},
 	}
-	// ① 未手改：baseURL 与建议文本都换到目标协议预设值，chSuggText 同步写回。
-	u := &uiState{State: &state.State{}, chForm: channelForm{presetID: "dual", protocol: "anthropic",
-		baseURL: "https://o.example/v1"}, chSuggText: "m-o"}
-	u.detailProtocolSwitched(dual)
-	if u.chForm.baseURL != "https://a.example" {
-		t.Fatalf("① baseURL 应联动: %q", u.chForm.baseURL)
+	// ① 未手改：baseURL 与建议文本都换到目标协议预设值，SuggText 同步写回。
+	st := &state.State{Channels: state.ChannelState{
+		Form:     state.ChannelForm{PresetID: "dual", Protocol: "anthropic", BaseURL: "https://o.example/v1"},
+		SuggText: "m-o"}}
+	detailProtocolSwitched(st, dual)
+	if st.Channels.Form.BaseURL != "https://a.example" {
+		t.Fatalf("① baseURL 应联动: %q", st.Channels.Form.BaseURL)
 	}
-	if u.chSuggText != "m-a" {
-		t.Fatalf("① 建议文本应联动写回: %q", u.chSuggText)
+	if st.Channels.SuggText != "m-a" {
+		t.Fatalf("① 建议文本应联动写回: %q", st.Channels.SuggText)
 	}
 	// ② 建议文本手改：保留；baseURL 未手改：仍联动（两字段独立判定）。
-	u = &uiState{State: &state.State{}, chForm: channelForm{presetID: "dual", protocol: "anthropic",
-		baseURL: "https://o.example/v1"}, chSuggText: "my-model"}
-	u.detailProtocolSwitched(dual)
-	if u.chSuggText != "my-model" {
-		t.Fatalf("② 手改建议文本应保留: %q", u.chSuggText)
+	st = &state.State{Channels: state.ChannelState{
+		Form:     state.ChannelForm{PresetID: "dual", Protocol: "anthropic", BaseURL: "https://o.example/v1"},
+		SuggText: "my-model"}}
+	detailProtocolSwitched(st, dual)
+	if st.Channels.SuggText != "my-model" {
+		t.Fatalf("② 手改建议文本应保留: %q", st.Channels.SuggText)
 	}
-	if u.chForm.baseURL != "https://a.example" {
-		t.Fatalf("② baseURL 应联动: %q", u.chForm.baseURL)
+	if st.Channels.Form.BaseURL != "https://a.example" {
+		t.Fatalf("② baseURL 应联动: %q", st.Channels.Form.BaseURL)
 	}
 }
 
 // TestSaveChannelDetailPersistsProtocol：详情页改协议后保存，协议落库。
 func TestSaveChannelDetailPersistsProtocol(t *testing.T) {
-	u, _ := testUI(t)
-	v, err := u.Svc.Channels.Create("qwen", "proto", "https://api.example.com/v1", "openai", "sk-proto-99", true, false)
+	st, _ := uitest.New(t)
+	v, err := st.Svc.Channels.Create("qwen", "proto", "https://api.example.com/v1", "openai", "sk-proto-99", true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	u.Page = "channels"
-	u.openChannelDetail(v.ID)
-	if u.chForm.protocol != "openai" {
-		t.Fatalf("前置条件：回显协议应为 openai, %q", u.chForm.protocol)
+	st.Page = "channels"
+	openDetail(st, v.ID)
+	if st.Channels.Form.Protocol != "openai" {
+		t.Fatalf("前置条件：回显协议应为 openai, %q", st.Channels.Form.Protocol)
 	}
-	u.chForm.protocol = "anthropic" // 模拟下拉切换
-	u.saveChannelDetail()
-	d, err := u.Svc.Channels.Get(v.ID)
+	st.Channels.Form.Protocol = "anthropic" // 模拟下拉切换
+	saveDetail(st)
+	d, err := st.Svc.Channels.Get(v.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if d.Protocol != "anthropic" {
 		t.Fatalf("保存后协议应为 anthropic, %q", d.Protocol)
 	}
-	if !strings.Contains(u.chTestMsg, "已保存") {
-		t.Fatalf("chTestMsg = %q", u.chTestMsg)
+	if !strings.Contains(st.Channels.TestMsg, "已保存") {
+		t.Fatalf("chTestMsg = %q", st.Channels.TestMsg)
 	}
 }
 
@@ -258,50 +261,50 @@ func TestChannelDetailFetchModelsOverwritesText(t *testing.T) {
 		w.Write([]byte(`{"data":[{"id":"m-a"},{"id":"m-b"}]}`))
 	}))
 	defer up.Close()
-	u, _ := testUI(t)
-	v, err := u.Svc.Channels.Create("", "fetch", up.URL, "openai", "sk-drag-12345", true, true)
+	st, _ := uitest.New(t)
+	v, err := st.Svc.Channels.Create("", "fetch", up.URL, "openai", "sk-drag-12345", true, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	u.Page = "channels"
-	u.chView = "detail"
-	u.openChannelDetail(v.ID)
-	if u.chSuggText != "" {
-		t.Fatalf("前置条件：详情页建议文本应为空, %q", u.chSuggText)
+	st.Page = "channels"
+	st.Channels.View = "detail"
+	openDetail(st, v.ID)
+	if st.Channels.SuggText != "" {
+		t.Fatalf("前置条件：详情页建议文本应为空, %q", st.Channels.SuggText)
 	}
-	tt := ui.NewTester(u.view, 900, 700)
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 900, 700)
 	if err := tt.Click("拉取模型"); err != nil {
 		t.Fatalf("拉取模型按钮不可点: %v", err)
 	}
-	if u.chSuggText != "m-a\nm-b" {
-		t.Fatalf("chSuggText = %q, want m-a\\nm-b", u.chSuggText)
+	if st.Channels.SuggText != "m-a\nm-b" {
+		t.Fatalf("chSuggText = %q, want m-a\\nm-b", st.Channels.SuggText)
 	}
-	if !strings.Contains(u.chTestMsg, "2") {
-		t.Fatalf("chTestMsg = %q", u.chTestMsg)
+	if !strings.Contains(st.Channels.TestMsg, "2") {
+		t.Fatalf("chTestMsg = %q", st.Channels.TestMsg)
 	}
 }
 
 // TestChannelDetailFetchModelsErrorKeepsText：无 Key 渠道点「拉取模型」→
 // 报错，且不覆盖已有文本。
 func TestChannelDetailFetchModelsErrorKeepsText(t *testing.T) {
-	u, _ := testUI(t)
-	v, err := u.Svc.Channels.Create("", "nokey", "https://api.example.com", "openai", "", true, false)
+	st, _ := uitest.New(t)
+	v, err := st.Svc.Channels.Create("", "nokey", "https://api.example.com", "openai", "", true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	u.Page = "channels"
-	u.chView = "detail"
-	u.openChannelDetail(v.ID)
-	u.chSuggText = "keep-me"
-	tt := ui.NewTester(u.view, 900, 700)
+	st.Page = "channels"
+	st.Channels.View = "detail"
+	openDetail(st, v.ID)
+	st.Channels.SuggText = "keep-me"
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 900, 700)
 	if err := tt.Click("拉取模型"); err != nil {
 		t.Fatalf("拉取模型按钮不可点: %v", err)
 	}
-	if u.chSuggText != "keep-me" {
-		t.Fatalf("失败不应覆盖文本, %q", u.chSuggText)
+	if st.Channels.SuggText != "keep-me" {
+		t.Fatalf("失败不应覆盖文本, %q", st.Channels.SuggText)
 	}
-	if !strings.Contains(u.chTestMsg, "失败") && !strings.Contains(u.chTestMsg, "密钥") {
-		t.Fatalf("chTestMsg = %q", u.chTestMsg)
+	if !strings.Contains(st.Channels.TestMsg, "失败") && !strings.Contains(st.Channels.TestMsg, "密钥") {
+		t.Fatalf("chTestMsg = %q", st.Channels.TestMsg)
 	}
 }
 
@@ -312,46 +315,46 @@ func TestChannelNewFetchModelsDraft(t *testing.T) {
 		w.Write([]byte(`{"data":[{"id":"d-1"},{"id":"d-2"},{"id":"d-3"}]}`))
 	}))
 	defer up.Close()
-	u, _ := testUI(t)
-	u.Page = "channels"
-	u.chView = "new"
-	u.chForm = channelForm{
-		protocol:    "openai",
-		baseURL:     up.URL,
-		apiKey:      "sk-draft-999",
-		suggestions: "stale-old-model",
+	st, _ := uitest.New(t)
+	st.Page = "channels"
+	st.Channels.View = "new"
+	st.Channels.Form = state.ChannelForm{
+		Protocol:    "openai",
+		BaseURL:     up.URL,
+		APIKey:      "sk-draft-999",
+		Suggestions: "stale-old-model",
 	}
-	tt := ui.NewTester(u.view, 900, 700)
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 900, 700)
 	if err := tt.Click("拉取模型"); err != nil {
 		t.Fatalf("拉取模型按钮不可点: %v", err)
 	}
-	if u.chForm.suggestions != "d-1\nd-2\nd-3" {
-		t.Fatalf("suggestions = %q", u.chForm.suggestions)
+	if st.Channels.Form.Suggestions != "d-1\nd-2\nd-3" {
+		t.Fatalf("suggestions = %q", st.Channels.Form.Suggestions)
 	}
-	if !strings.Contains(u.chForm.msg, "3") {
-		t.Fatalf("chForm.msg = %q", u.chForm.msg)
+	if !strings.Contains(st.Channels.Form.Msg, "3") {
+		t.Fatalf("chForm.msg = %q", st.Channels.Form.Msg)
 	}
 }
 
 // TestChannelNewFetchModelsDraftRequiresKey：新建表单缺 Key 时点「拉取模型」
 // 报错且不覆盖建议文本。
 func TestChannelNewFetchModelsDraftRequiresKey(t *testing.T) {
-	u, _ := testUI(t)
-	u.Page = "channels"
-	u.chView = "new"
-	u.chForm = channelForm{
-		protocol:    "openai",
-		baseURL:     "https://api.example.com",
-		suggestions: "keep-draft",
+	st, _ := uitest.New(t)
+	st.Page = "channels"
+	st.Channels.View = "new"
+	st.Channels.Form = state.ChannelForm{
+		Protocol:    "openai",
+		BaseURL:     "https://api.example.com",
+		Suggestions: "keep-draft",
 	}
-	tt := ui.NewTester(u.view, 900, 700)
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 900, 700)
 	if err := tt.Click("拉取模型"); err != nil {
 		t.Fatalf("拉取模型按钮不可点: %v", err)
 	}
-	if u.chForm.suggestions != "keep-draft" {
-		t.Fatalf("缺 Key 不应覆盖建议文本, %q", u.chForm.suggestions)
+	if st.Channels.Form.Suggestions != "keep-draft" {
+		t.Fatalf("缺 Key 不应覆盖建议文本, %q", st.Channels.Form.Suggestions)
 	}
-	if !strings.Contains(u.chForm.msg, "Key") {
-		t.Fatalf("chForm.msg = %q", u.chForm.msg)
+	if !strings.Contains(st.Channels.Form.Msg, "Key") {
+		t.Fatalf("chForm.msg = %q", st.Channels.Form.Msg)
 	}
 }

@@ -8,6 +8,7 @@ package desktop
 import (
 	"github.com/egoist/mygo/ui"
 
+	"AgentSwitch/internal/desktop/pages/channels"
 	"AgentSwitch/internal/desktop/pages/logical"
 	"AgentSwitch/internal/desktop/pages/settings"
 	"AgentSwitch/internal/desktop/uikit"
@@ -103,7 +104,7 @@ func gatewayStatusBar(c *ui.Context, u *uiState) {
 func (u *uiState) pageView(c *ui.Context) {
 	switch u.normalizedPage() {
 	case "channels":
-		u.channelsPage(c)
+		channels.Page(c, u.State)
 	case "access":
 		u.accessPage(c)
 	case "settings":
@@ -115,16 +116,5 @@ func (u *uiState) pageView(c *ui.Context) {
 
 // 以下四个 *Page 是页面占位视图（Task 11）：Task 12 填逻辑模型列表、
 // Task 14 填渠道页、Task 15 填接入页与设置页。签名即接线契约，不得改名。
-
-func (u *uiState) channelsPage(c *ui.Context) {
-	switch u.chView {
-	case "new":
-		u.channelNewView(c)
-	case "detail":
-		u.channelDetailView(c)
-	default:
-		u.channelsView(c)
-	}
-}
 
 // accessPage 的真身在 access.go（接入页）；设置页已迁 pages/settings。
