@@ -162,6 +162,13 @@ func TestAccessDeleteRequiresConfirm(t *testing.T) {
 	}
 	st.Access.App = "claude"
 	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 800)
+	// 次级操作收纳在「更多」：删除按钮展开后才可见。
+	if tt.HasText("删除") {
+		t.Fatalf("删除按钮应在「更多」里: %v", tt.Texts())
+	}
+	if err := tt.Click("更多"); err != nil {
+		t.Fatal(err)
+	}
 	if err := tt.Click("删除"); err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +185,7 @@ func TestAccessDeleteRequiresConfirm(t *testing.T) {
 	if got := acc.List("claude"); len(got) != 1 {
 		t.Fatalf("取消后应保留: %+v", got)
 	}
-	// 再次武装并确认删除。
+	// 再次武装并确认删除（「更多」仍处于展开态）。
 	if err := tt.Click("删除"); err != nil {
 		t.Fatal(err)
 	}

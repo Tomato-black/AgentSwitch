@@ -256,9 +256,24 @@ func ConfigRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State,
 			st.Access.DesktopForm = state.DesktopForm{Open: true, EditID: v.ID}
 			preloadForm(st, acc)
 		}
-		if uikit.SoftButton(c, t, s, "danger", "删除").Clicked() {
-			st.Access.DeleteArm = true
-			st.Access.DeleteID = v.ID
+		moreLabel := "更多"
+		if st.Access.RowMore == v.ID {
+			moreLabel = "收起"
+		}
+		if uikit.SoftButton(c, t, s, "gray", moreLabel).Clicked() {
+			if st.Access.RowMore == v.ID {
+				st.Access.RowMore = ""
+			} else {
+				st.Access.RowMore = v.ID
+			}
+		}
+		if st.Access.RowMore == v.ID {
+			ui.Row(c).Gap(10).Children(func() {
+				if uikit.SoftButton(c, t, s, "danger", "删除").Clicked() {
+					st.Access.DeleteArm = true
+					st.Access.DeleteID = v.ID
+				}
+			})
 		}
 	})
 }

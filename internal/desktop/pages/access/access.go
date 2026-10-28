@@ -319,27 +319,43 @@ func configRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State,
 			st.Access.Form = state.AccessForm{Open: true, EditID: v.ID}
 			preloadForm(st, acc)
 		}
-		if gateOK {
-			if uikit.SoftButton(c, t, s, "gray", "复制启动命令").Clicked() {
-				cmd, err := acc.LaunchCommand(v.ID)
-				if err != nil {
-					st.Access.Msg = "生成启动命令失败：" + err.Error()
-				} else {
-					mygo.Clipboard.Write(transfer.TextData(cmd))
-					st.Access.Msg = "启动命令已复制"
-				}
-			}
-			if uikit.SoftButton(c, t, s, "gray", "打开终端").Clicked() {
-				if err := acc.OpenTerminal(v.ID); err != nil {
-					st.Access.Msg = "打开终端失败：" + err.Error()
-				} else {
-					st.Access.Msg = ""
-				}
+		moreLabel := "更多"
+		if st.Access.RowMore == v.ID {
+			moreLabel = "收起"
+		}
+		if uikit.SoftButton(c, t, s, "gray", moreLabel).Clicked() {
+			if st.Access.RowMore == v.ID {
+				st.Access.RowMore = ""
+			} else {
+				st.Access.RowMore = v.ID
 			}
 		}
-		if uikit.SoftButton(c, t, s, "danger", "删除").Clicked() {
-			st.Access.DeleteArm = true
-			st.Access.DeleteID = v.ID
+		// 次级操作收纳在「更多」展开行：主次分明，窄窗不溢出。
+		if st.Access.RowMore == v.ID {
+			ui.Row(c).Gap(10).Padding(0, 0).Children(func() {
+				if gateOK {
+					if uikit.SoftButton(c, t, s, "gray", "复制启动命令").Clicked() {
+						cmd, err := acc.LaunchCommand(v.ID)
+						if err != nil {
+							st.Access.Msg = "生成启动命令失败：" + err.Error()
+						} else {
+							mygo.Clipboard.Write(transfer.TextData(cmd))
+							st.Access.Msg = "启动命令已复制"
+						}
+					}
+					if uikit.SoftButton(c, t, s, "gray", "打开终端").Clicked() {
+						if err := acc.OpenTerminal(v.ID); err != nil {
+							st.Access.Msg = "打开终端失败：" + err.Error()
+						} else {
+							st.Access.Msg = ""
+						}
+					}
+				}
+				if uikit.SoftButton(c, t, s, "danger", "删除").Clicked() {
+					st.Access.DeleteArm = true
+					st.Access.DeleteID = v.ID
+				}
+			})
 		}
 	})
 }
@@ -369,6 +385,9 @@ func deleteConfirm(c *ui.Context, st *state.State, acc bridge.AccessConfigs) {
 			st.Access.Msg = "删除失败：" + err.Error()
 		} else {
 			st.Access.Msg = "已删除「" + name + "」——Agent 配置文件保留最后状态"
+		}
+		if st.Access.RowMore == st.Access.DeleteID {
+			st.Access.RowMore = ""
 		}
 		st.Access.DeleteID = ""
 	case 0, ui.AlertDismissed:
@@ -401,6 +420,7 @@ func switchTab(st *state.State, acc bridge.AccessConfigs, app string) {
 	st.Access.Msg = ""
 	st.Access.Form = state.AccessForm{}
 	st.Access.DesktopForm = state.DesktopForm{}
+	st.Access.RowMore = ""
 	if app == "claude" || app == "codex" {
 		reloadGlobal(st, acc)
 	}
