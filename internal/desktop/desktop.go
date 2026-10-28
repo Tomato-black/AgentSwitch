@@ -46,9 +46,6 @@ type uiState struct {
 	token        string
 	logPath      string       // 日志文件路径（a.LogPath()；概览恒显的"日志:"提示）
 	showToken    bool         // 令牌明文显示开关
-	portInput    string       // 设置卡端口输入（为空时回显 Status.Port）
-	timeoutInput string       // 设置卡超时输入（为空时回显 Status.TimeoutSeconds）
-	settingsMsg  string       // 设置保存结果提示
 	confirmRegen bool         // 重新生成令牌的 AlertDialog open 位（选定后框架自关）
 	table        ui.ListState // 最近请求表状态
 	// 模型聚合页（Task 8 重写：搜索 + 每行开关）：
@@ -77,8 +74,6 @@ type uiState struct {
 	guideMsg      string      // 通用连接信息卡复制提示
 	accessForm    accessForm  // 新建/编辑表单（open 时渲染编辑器卡）
 	desktopForm   desktopForm // Claude Desktop 角色映射表单（open 时渲染）
-	// 设置页（Task 15）：
-	passthroughOn bool // 透传未登记模型开关（预留：SaveSettings 不消费）
 }
 
 // channelForm 是渠道页表单（新建/详情编辑），定义与纯助手在 channels.go。

@@ -27,6 +27,17 @@ type State struct {
 	Quitting       bool         // 退出流程中：放行窗口关闭（OnBeforeQuit 置位）
 	HideWindow     func()       // 隐藏当前主窗（openWindow 注入；测试可为 nil）
 	Schedule       func(func()) // 把窗口操作推迟出 GTK 事件回调（默认 afterEvent）
+
+	Settings SettingsState
+}
+
+// SettingsState 是设置页状态：输入框为空时按当前生效值回显（不与输入中的
+// 用户打架），保存成功后清空、下一帧回显新生效值。
+type SettingsState struct {
+	PortInput     string // 端口输入（为空时回显 Status.Port）
+	TimeoutInput  string // 超时输入（为空时回显 Status.TimeoutSeconds）
+	Msg           string // 保存结果提示
+	PassthroughOn bool   // 透传未登记模型开关（预留：SaveSettings 不消费）
 }
 
 // New 构造初始状态：默认落在逻辑模型页，并带上网关已有的最近请求记录。

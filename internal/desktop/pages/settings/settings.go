@@ -2,7 +2,7 @@
 // 透传未登记模型开关（预留——SaveSettings 不消费，spec 裁定 1「首版开关
 // 仅预留」）、关于版本。保存走 bridge.Gateway.SaveSettings；重启提示沿用
 // 既有文案（「已保存；重启网关后生效」）。
-package desktop
+package settings
 
 import (
 	"fmt"
@@ -11,6 +11,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"AgentSwitch/internal/config"
+	"AgentSwitch/internal/desktop/state"
 	"AgentSwitch/internal/desktop/uikit"
 )
 
@@ -33,22 +34,22 @@ func formToSettings(portInput, timeoutInput string, passthrough bool) (config.Se
 	}, nil
 }
 
-// settingsPage 是设置页（shell.go pageView 分发；签名即接线契约，不得改名）。
+// Page 是设置页（组合根 pageView 分发）。
 // 输入框为空时按当前生效值回显（不与输入中的用户打架）；保存成功（含需
 // 重启）即清空输入，下一帧按新生效值回显——校验/落库失败不清，留用户手改。
-func (u *uiState) settingsPage(c *ui.Context) {
+func Page(c *ui.Context, st *state.State) {
 	t := c.Theme()
 	s := uikit.Softs(t)
-	gs := u.Svc.Gateway.Status()
-	if u.portInput == "" || u.timeoutInput == "" {
+	gs := st.Svc.Gateway.Status()
+	if st.Settings.PortInput == "" || st.Settings.TimeoutInput == "" {
 		p, to, _ := settingsToForm(config.Settings{
 			Port: gs.Port, RequestTimeoutSeconds: gs.TimeoutSeconds,
 		})
-		if u.portInput == "" {
-			u.portInput = p
+		if st.Settings.PortInput == "" {
+			st.Settings.PortInput = p
 		}
-		if u.timeoutInput == "" {
-			u.timeoutInput = to
+		if st.Settings.TimeoutInput == "" {
+			st.Settings.TimeoutInput = to
 		}
 	}
 	ui.Column(c).Gap(12).Children(func() {
@@ -57,36 +58,36 @@ func (u *uiState) settingsPage(c *ui.Context) {
 				ui.Text(c, "网关").Bold()
 				ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 					ui.Text(c, "端口").Width(120).TextColor(t.TextMuted)
-					ui.TextInput(c, &u.portInput)
+					ui.TextInput(c, &st.Settings.PortInput)
 				})
 				ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 					ui.Text(c, "请求超时（秒）").Width(120).TextColor(t.TextMuted)
-					ui.TextInput(c, &u.timeoutInput)
+					ui.TextInput(c, &st.Settings.TimeoutInput)
 				})
 				ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 					ui.Text(c, "透传未登记模型").Width(120).TextColor(t.TextMuted)
-					ui.Switch(c, &u.passthroughOn)
+					ui.Switch(c, &st.Settings.PassthroughOn)
 					uikit.SoftBadge(c, t, s, "gray", "预留")
 				})
 				ui.Text(c, "首版预留：开启后未登记模型仍返回 404").TextColor(t.TextMuted)
 				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 					if uikit.PillButton(c, t, "保存设置").Clicked() {
-						st, err := formToSettings(u.portInput, u.timeoutInput, u.passthroughOn)
+						cfg, err := formToSettings(st.Settings.PortInput, st.Settings.TimeoutInput, st.Settings.PassthroughOn)
 						if err != nil {
-							u.settingsMsg = err.Error()
-						} else if restart, err := u.Svc.Gateway.SaveSettings(st.Port, st.RequestTimeoutSeconds); err != nil {
-							u.settingsMsg = err.Error()
+							st.Settings.Msg = err.Error()
+						} else if restart, err := st.Svc.Gateway.SaveSettings(cfg.Port, cfg.RequestTimeoutSeconds); err != nil {
+							st.Settings.Msg = err.Error()
 						} else {
 							if restart {
-								u.settingsMsg = "已保存；重启网关后生效"
+								st.Settings.Msg = "已保存；重启网关后生效"
 							} else {
-								u.settingsMsg = "已保存"
+								st.Settings.Msg = "已保存"
 							}
-							u.portInput, u.timeoutInput = "", ""
+							st.Settings.PortInput, st.Settings.TimeoutInput = "", ""
 						}
 					}
-					if u.settingsMsg != "" {
-						ui.Text(c, u.settingsMsg)
+					if st.Settings.Msg != "" {
+						ui.Text(c, st.Settings.Msg)
 					}
 				})
 			})

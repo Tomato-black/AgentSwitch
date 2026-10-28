@@ -1,4 +1,4 @@
-package desktop
+package settings
 
 import (
 	"testing"
@@ -6,6 +6,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"AgentSwitch/internal/config"
+	"AgentSwitch/internal/desktop/uitest"
 )
 
 // TestSettingsFormMapsPort 覆盖表单↔Settings 编解码纯函数：端口/超时/透传
@@ -38,9 +39,9 @@ func TestSettingsFormMapsPort(t *testing.T) {
 // TestSettingsPageRenders 覆盖设置页替换占位：端口/超时/透传预留/版本/
 // 保存按钮都在场；不再出现 TODO 占位。
 func TestSettingsPageRenders(t *testing.T) {
-	u, _ := testUI(t)
-	u.Page = "settings"
-	tt := ui.NewTester(u.view, 900, 600)
+	st, _ := uitest.New(t)
+	st.Page = "settings"
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 900, 600)
 	for _, want := range []string{"端口", "请求超时", "透传", "预留", "版本", "保存设置"} {
 		if !tt.HasText(want) {
 			t.Fatalf("missing %q in %v", want, tt.Texts())

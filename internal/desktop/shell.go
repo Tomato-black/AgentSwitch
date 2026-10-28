@@ -8,6 +8,7 @@ package desktop
 import (
 	"github.com/egoist/mygo/ui"
 
+	"AgentSwitch/internal/desktop/pages/settings"
 	"AgentSwitch/internal/desktop/uikit"
 )
 
@@ -107,7 +108,7 @@ func (u *uiState) pageView(c *ui.Context) {
 	case "access":
 		u.accessPage(c)
 	case "settings":
-		u.settingsPage(c)
+		settings.Page(c, u.State)
 	default:
 		u.logicalPage(c)
 	}
@@ -131,4 +132,4 @@ func (u *uiState) channelsPage(c *ui.Context) {
 	}
 }
 
-// accessPage/settingsPage 的真身在 access.go / settings.go（Task 15）。
+// accessPage 的真身在 access.go（接入页）；设置页已迁 pages/settings。
