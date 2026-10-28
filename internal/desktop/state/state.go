@@ -77,6 +77,7 @@ type AccessForm struct {
 	SubagentEffort  string
 	AutoReviewModel string
 	CodexPreview    string
+	ClaudePreview   string // Claude Code：预览将写入的 settings.json（live 合并结果）
 
 	// Baseline 是打开编辑器时的内容签名，用于页签切换脏检查。
 	Baseline string
@@ -85,12 +86,13 @@ type AccessForm struct {
 // DesktopForm 是 Claude Desktop 接入的新建/编辑表单状态；Models/OneM 与
 // bridge 角色固定序（sonnet/opus/haiku/fable）同序，Models[i] 为空 = 未启用。
 type DesktopForm struct {
-	Open   bool
-	EditID string // 非空 = 编辑该配置
-	Name   string
-	Models [4]string
-	OneM   [4]bool
-	Msg    string
+	Open    bool
+	EditID  string // 非空 = 编辑该配置
+	Name    string
+	Models  [4]string
+	OneM    [4]bool
+	Msg     string
+	Preview string // 预览将写入的网关 profile JSON
 
 	// Baseline 是打开编辑器时的内容签名，用于页签切换脏检查。
 	Baseline string

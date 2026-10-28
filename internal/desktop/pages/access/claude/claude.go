@@ -19,6 +19,16 @@ func EditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State
 			modelSection(c, t, st, acc, labels)
 			rolesSection(c, t, st, labels)
 		},
+		AfterDoc: func(c *ui.Context, t *ui.Theme, s uikit.SoftPalette) {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "将写入 ~/.claude/settings.json（只读）").Bold()
+				ui.Box(c).Grow(1)
+				if uikit.SoftButton(c, t, s, "gray", "刷新预览").Clicked() {
+					refreshPreview(st, acc, true)
+				}
+			})
+			ui.TextArea(c, &st.Access.Form.ClaudePreview).Height(220).ReadOnly(true)
+		},
 	})
 }
 
@@ -77,5 +87,39 @@ func rolesSection(c *ui.Context, t *ui.Theme, st *state.State, labels []string) 
 				accesskit.PatchRole(f, i)
 			}
 		})
+	}
+}
+
+// Prepare 在编辑器打开后生成只读 settings.json 预览（宿主 preloadForm 调用，
+// 失败静默——内容尚不完整时不该弹提示）。
+func Prepare(st *state.State, acc bridge.AccessConfigs) { refreshPreview(st, acc, false) }
+
+// refreshPreview 重新生成 settings.json 预览（live 合并结果）；report 为真时
+// 将错误写进表单信息位。
+func refreshPreview(st *state.State, acc bridge.AccessConfigs, report bool) {
+	f := &st.Access.Form
+	var models []bridge.ModelView
+	if st.Svc.Logical != nil {
+		models = st.Svc.Logical.List()
+	}
+	modelID := accesskit.ModelIDByLabel(models, f.ModelLabel)
+	if modelID == "" {
+		f.ClaudePreview = ""
+		if report {
+			f.Msg = "请选择逻辑模型后再预览"
+		}
+		return
+	}
+	p, err := acc.PreviewClaudeLive(modelID, f.DocJSON)
+	if err != nil {
+		f.ClaudePreview = ""
+		if report {
+			f.Msg = "预览失败：" + err.Error()
+		}
+		return
+	}
+	f.ClaudePreview = p
+	if report {
+		f.Msg = ""
 	}
 }

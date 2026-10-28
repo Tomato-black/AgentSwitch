@@ -182,6 +182,7 @@ func Page(c *ui.Context, st *state.State) {
 							if st.Access.App == "claude_desktop" {
 								st.Access.DesktopForm = state.DesktopForm{Open: true}
 								st.Access.DesktopForm.Baseline = st.Access.DesktopForm.Signature()
+								claudedesktop.Prepare(st, acc)
 							} else {
 								st.Access.Form = state.AccessForm{Open: true}
 								preloadForm(st, acc)
@@ -258,6 +259,10 @@ func preloadForm(st *state.State, acc bridge.AccessConfigs) {
 	if st.Access.App == "codex" {
 		// 编辑器打开即回填模型列表并生成只读 config.toml 预览。
 		codex.Prepare(st, acc)
+	}
+	if st.Access.App == "claude" {
+		// 编辑器打开即生成只读 settings.json 预览（live 合并结果）。
+		claude.Prepare(st, acc)
 	}
 	f.Baseline = f.Signature(st.Access.App)
 }

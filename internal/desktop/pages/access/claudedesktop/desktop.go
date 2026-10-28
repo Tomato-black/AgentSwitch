@@ -93,10 +93,39 @@ func preloadForm(st *state.State, acc bridge.AccessConfigs) {
 			f.Name = v.Name
 			desktopFormFromDoc(st, v.Settings)
 			f.Baseline = f.Signature()
+			refreshPreview(st, acc, false)
 			return
 		}
 	}
 	f.Baseline = f.Signature()
+}
+
+// Prepare 在编辑器打开后生成只读 profile 预览（新建表单由宿主调用；内容
+// 尚不完整时静默失败）。
+func Prepare(st *state.State, acc bridge.AccessConfigs) { refreshPreview(st, acc, false) }
+
+// refreshPreview 重新生成网关 profile JSON 预览；report 为真时错误进
+// 表单信息位。
+func refreshPreview(st *state.State, acc bridge.AccessConfigs, report bool) {
+	f := &st.Access.DesktopForm
+	doc, err := desktopDocFromForm(f)
+	if err != nil {
+		if report {
+			f.Msg = err.Error()
+		}
+		return
+	}
+	p, err := acc.PreviewDesktopProfile(doc)
+	if err != nil {
+		if report {
+			f.Msg = "预览失败：" + err.Error()
+		}
+		return
+	}
+	f.Preview = p
+	if report {
+		f.Msg = ""
+	}
 }
 
 // desktopEditorCard 渲染 Desktop 配置的新建/编辑表单。
@@ -132,6 +161,15 @@ func EditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State
 					}
 				})
 			}
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "将写入的网关 profile（只读）").Bold()
+				ui.Box(c).Grow(1)
+				if uikit.SoftButton(c, t, s, "gray", "刷新预览").Clicked() {
+					refreshPreview(st, acc, true)
+				}
+			})
+			ui.TextArea(c, &st.Access.DesktopForm.Preview).Height(200).ReadOnly(true)
+
 			gs := st.Svc.Gateway.Status()
 			ui.Text(c, fmt.Sprintf("「应用」写入 Desktop 配置（网关 http://127.0.0.1:%d）；改后需重启 Claude Desktop 生效", gs.Port)).TextColor(t.TextMuted)
 

@@ -308,29 +308,10 @@ func (s AccessConfigs) writeClaudeDesktopLive(plan desktopPlan, baseURL, token s
 		}
 	}
 	// 3: profile 文件整体重建（本工具私有文件，等价 cc-switch clear+set）。
-	models := make([]any, 0, len(plan.Routes))
-	for _, r := range plan.Routes {
-		if r.OneM {
-			models = append(models, map[string]any{
-				"name": r.RouteID, "supports1m": true, "prefer1m": true,
-			})
-		} else {
-			models = append(models, r.RouteID)
-		}
-	}
-	profile := map[string]any{
-		"coworkEgressAllowedHosts":     []any{"*"},
-		"disableDeploymentModeChooser": true,
-		"inferenceProvider":            "gateway",
-		"inferenceGatewayBaseUrl":      baseURL,
-		"inferenceGatewayApiKey":       token,
-		"inferenceGatewayAuthScheme":   "bearer",
-		"inferenceModels":              models,
-	}
 	if err := os.MkdirAll(filepath.Dir(p.profile), 0o755); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(profile, "", "  ")
+	b, err := desktopProfileJSON(plan, baseURL, token)
 	if err != nil {
 		return err
 	}
@@ -409,4 +390,45 @@ func (s AccessConfigs) saveDesktopAliases(aliases map[string]string) error {
 		return err
 	}
 	return s.A.Store().Settings().Set(storage.DesktopAliasesSettingsKey, string(b))
+}
+
+// desktopProfileJSON 构造 Desktop 网关 profile 文件内容（五键 + 两个开关 +
+// 角色路由模型表）；profile 文件是本工具私有文件，整体重建。
+func desktopProfileJSON(plan desktopPlan, baseURL, token string) ([]byte, error) {
+	models := make([]any, 0, len(plan.Routes))
+	for _, r := range plan.Routes {
+		if r.OneM {
+			models = append(models, map[string]any{
+				"name": r.RouteID, "supports1m": true, "prefer1m": true,
+			})
+		} else {
+			models = append(models, r.RouteID)
+		}
+	}
+	profile := map[string]any{
+		"coworkEgressAllowedHosts":     []any{"*"},
+		"disableDeploymentModeChooser": true,
+		"inferenceProvider":            "gateway",
+		"inferenceGatewayBaseUrl":      baseURL,
+		"inferenceGatewayApiKey":       token,
+		"inferenceGatewayAuthScheme":   "bearer",
+		"inferenceModels":              models,
+	}
+	return json.MarshalIndent(profile, "", "  ")
+}
+
+// PreviewDesktopProfile 预览「应用」后写入的网关 profile JSON（含真实网关
+// 令牌，与编辑器/JSON 同口径）；复用 composeDesktop 的角色与模型存在性
+// 校验，但不写盘、不持久化别名表。
+func (s AccessConfigs) PreviewDesktopProfile(docJSON string) (string, error) {
+	plan, err := s.composeDesktop(storage.AccessConfig{Settings: docJSON})
+	if err != nil {
+		return "", err
+	}
+	st := Gateway{A: s.A}.Status()
+	b, err := desktopProfileJSON(plan, fmt.Sprintf("http://127.0.0.1:%d", st.Port), st.Token)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }

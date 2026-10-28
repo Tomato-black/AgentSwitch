@@ -41,31 +41,52 @@ func (s AccessConfigs) writeClaudeLive(doc map[string]any, env map[string]string
 		return err
 	}
 	path := filepath.Join(dir, "settings.json")
-	root := map[string]any{}
-	if b, err := os.ReadFile(path); err == nil {
-		// 解析失败必须在任何写动作前返回，原文件保持不动。
-		// UseNumber：大整数保留原始数字文本，避免 float64 往返丢精度
-		//（评审 Minor#9）。
-		dec := json.NewDecoder(bytes.NewReader(b))
-		dec.UseNumber()
-		if err := dec.Decode(&root); err != nil {
-			return err
-		}
-		if root == nil { // 合法 JSON null → 视为空对象
-			root = map[string]any{}
-		}
-	} else if !errors.Is(err, fs.ErrNotExist) {
+	root, err := readClaudeSettings(path)
+	if err != nil {
 		return err
 	}
-	// 文档顶层键逐键写入（同键替换；live 中不在文档的键保留——只增改不删除，
-	// spec 2026-10-19 §4.1）。
+	if err := mergeClaudeLive(root, doc, env); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return err
+	}
+	return atomicWriteFile0600(path, b)
+}
+
+// readClaudeSettings 读取 live settings.json（缺失视为空对象）；解析失败
+// 必须在任何写动作前返回，原文件保持不动。UseNumber 保留大整数精度。
+func readClaudeSettings(path string) (map[string]any, error) {
+	root := map[string]any{}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return root, nil
+		}
+		return nil, err
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	if err := dec.Decode(&root); err != nil {
+		return nil, err
+	}
+	if root == nil { // 合法 JSON null → 视为空对象
+		root = map[string]any{}
+	}
+	return root, nil
+}
+
+// mergeClaudeLive 把接入文档顶层键与合成 env 合并进 live 根对象：同键替换、
+// live 中不在文档的键保留（只增改不删除，spec 2026-10-19 §4.1）；env 子对象
+// 已存在但非对象时报错（不猜测修复）。
+func mergeClaudeLive(root, doc map[string]any, env map[string]string) error {
 	for k, v := range doc {
 		if k == "env" {
 			continue
 		}
 		root[k] = v
 	}
-	// 确保 env 子对象存在；已有但非对象则报错（不猜测修复）。
 	envObj := map[string]any{}
 	if v, ok := root["env"]; ok && v != nil {
 		m, ok := v.(map[string]any)
@@ -78,11 +99,58 @@ func (s AccessConfigs) writeClaudeLive(doc map[string]any, env map[string]string
 		envObj[k] = v
 	}
 	root["env"] = envObj
+	return nil
+}
+
+// PreviewClaudeLive 预览「应用」后 ~/.claude/settings.json 的内容：以 live
+// 文件为底合并编辑器文档（经归一化）与合成 env；不写盘。含真实网关令牌
+// （与编辑器 JSON 同一口径，2026-10-21 用户裁定），不写日志。
+func (s AccessConfigs) PreviewClaudeLive(logicalModelID, settingsJSON string) (string, error) {
+	lm, err := s.A.Store().LogicalModels().Get(logicalModelID)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return "", fmt.Errorf("绑定的逻辑模型不存在，请改绑")
+		}
+		return "", err
+	}
+	raw, err := s.prepareDoc("claude", lm.Name, settingsJSON)
+	if err != nil {
+		return "", err
+	}
+	doc, docEnv, err := parseAccessDoc("claude", raw)
+	if err != nil {
+		return "", err
+	}
+	global := map[string]string{}
+	if rawGlobal, err := s.A.Store().Settings().Get("access.global.claude"); err != nil {
+		return "", err
+	} else if rawGlobal != "" {
+		if err := json.Unmarshal([]byte(rawGlobal), &global); err != nil {
+			return "", err
+		}
+	}
+	env, err := composeAccessEnv("claude", Gateway{A: s.A}.Status(), lm.Name, global, docEnv)
+	if err != nil {
+		return "", err
+	}
+	home := s.Home
+	if home == "" {
+		if home, err = os.UserHomeDir(); err != nil {
+			return "", err
+		}
+	}
+	root, err := readClaudeSettings(filepath.Join(home, ".claude", "settings.json"))
+	if err != nil {
+		return "", err
+	}
+	if err := mergeClaudeLive(root, doc, env); err != nil {
+		return "", err
+	}
 	b, err := json.MarshalIndent(root, "", "  ")
 	if err != nil {
-		return err
+		return "", err
 	}
-	return atomicWriteFile0600(path, b)
+	return string(b), nil
 }
 
 // liveBackupFiles 返回 appType 对应的 live 文件相对路径列表（简报钉死）：

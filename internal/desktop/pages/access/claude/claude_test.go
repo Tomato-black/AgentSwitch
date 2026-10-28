@@ -27,7 +27,7 @@ func TestEditorCardRendersClaudeSections(t *testing.T) {
 	}, 1000, 1400)
 	for _, want := range []string{
 		"逻辑模型:", "1M", "模型映射", "Sonnet", "Opus", "Fable", "Haiku", "Subagent",
-		"配置 JSON",
+		"配置 JSON", "将写入 ~/.claude/settings.json", "刷新预览",
 	} {
 		if !tt.HasText(want) {
 			t.Fatalf("missing %q in %v", want, tt.Texts())
