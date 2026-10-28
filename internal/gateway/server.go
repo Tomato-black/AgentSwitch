@@ -1,3 +1,6 @@
+// Package gateway 是模型数据面：对 Agent 暴露三入站（Anthropic Messages /
+// OpenAI Chat / OpenAI Responses），负责鉴权、并发与体积限额、上游错误映射
+// 与流式转发。路由决策在 router，协议转换在 protocol，本包只做编排。
 package gateway
 
 import (

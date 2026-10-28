@@ -1,3 +1,7 @@
+// Package channels 是渠道页：列表（单 Key 语义 + 近况统计）、预设网格新建
+// 页与详情页（协议可编辑、Key 更新留空不改、建议模型、连通测试、删除引用
+// 警告）。
+//
 // channels.go 是渠道页（logical-models spec §6.3 / Task 14）：卡片列表（单
 // Key 语义）+ 预设网格新建页 + 详情页（协议可编辑、Key 更新留空不改、建议
 // 模型编辑、连通测试、删除引用警告）。纯助手 applyPreset / channelForm.validate /

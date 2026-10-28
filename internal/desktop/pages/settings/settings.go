@@ -1,3 +1,6 @@
+// Package settings 是设置页：网关端口、请求超时、透传未登记模型开关
+// （预留）与关于版本；保存走 bridge.Gateway.SaveSettings。
+//
 // settings.go 是设置页（spec §6.5 / Task 15）：网关端口、请求超时、
 // 透传未登记模型开关（预留——SaveSettings 不消费，spec 裁定 1「首版开关
 // 仅预留」）、关于版本。保存走 bridge.Gateway.SaveSettings；重启提示沿用

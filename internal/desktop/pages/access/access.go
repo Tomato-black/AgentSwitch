@@ -1,3 +1,7 @@
+// Package access 是接入页宿主：Agent 页签行、全局配置卡、实际配置列表与
+// 编辑器分发；Claude/Codex/Claude Desktop/指南各自在子包，本包不反向被
+// 子包依赖。
+//
 // access.go 是接入页（spec 2026-10-18-agent-access-config-design）：每 Agent
 // （Claude Code / Codex，后者覆盖 CLI / 桌面版 / IDE 插件）多实际配置 +
 // 全局配置（合并进所有实际配置），

@@ -1,3 +1,5 @@
+// Package config 负责生效配置的加载与保存：settings 键读写、默认值
+// （端口/请求超时/网关令牌/透传未登记模型开关），供 app 与桌面设置页共用。
 package config
 
 import (

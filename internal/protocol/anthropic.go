@@ -1,3 +1,6 @@
+// Package protocol 是 Agent 入站协议与上游协议之间的纯转换层：Anthropic
+// Messages ↔ OpenAI Chat/Responses 的请求/响应/流式转换（含工具调用映射），
+// 不持可变状态、不做网络 IO（由 provider/gateway 调用）。
 package protocol
 
 import (

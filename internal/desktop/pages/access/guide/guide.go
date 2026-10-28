@@ -1,3 +1,6 @@
+// Package guide 是接入页「连接指南」页签：展示网关地址、三协议端点、
+// Bearer 认证说明、令牌掩码+复制与启用逻辑模型清单，供第三方系统（如 Kun）
+// 的用户照此在目标系统手工填写——AgentSwitch 不写第三方系统的配置。
 package guide
 
 import (

@@ -1,3 +1,5 @@
+// Package provider 是上游供应商适配层：按 anthropic/openai 协议直连上游并
+// 归一化结果，另含测速探针（Probe）、上游错误分类与密钥脱敏助手。
 package provider
 
 import (

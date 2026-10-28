@@ -1,3 +1,6 @@
+// Package storage 是 SQLite 持久化层：内嵌 schema 迁移、Repository 接口及
+// 实现（settings/channels/logical_models/access_configs/secrets/desktop
+// alias）；渠道密钥密文走 AES-256-GCM（主密钥由 credential 维护）。
 package storage
 
 import (

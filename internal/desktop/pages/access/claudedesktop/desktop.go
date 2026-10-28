@@ -1,3 +1,6 @@
+// Package claudedesktop 是接入页的 Claude Desktop 页签：角色映射（sonnet/
+// opus/haiku/fable → 逻辑模型 + 1M 声明）表单与配置行；「应用」由 bridge
+// 把网关 profile 写入 Desktop 配置并持久化网关别名表。
 package claudedesktop
 
 import (

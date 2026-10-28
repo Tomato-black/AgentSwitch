@@ -1,3 +1,5 @@
+// Package telemetry 是事件遥测与日志：内存环记录最近请求、按大小轮转的
+// 文件日志（gzip 归档）、敏感值打码（redact）。
 package telemetry
 
 import (

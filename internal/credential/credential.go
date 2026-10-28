@@ -1,7 +1,6 @@
-// Package credential defines where the gateway keeps provider API keys:
-// the interface plus the AES-256-GCM master key used by the SQLite-backed
-// store (internal/storage). 2026-10-18 存储改造：OS 钥匙串与明文降级文件
-// 已退役，密文落库由 storage.SecretRepo 承载。
+// Package credential 维护渠道密钥加密用的主密钥：库同目录 master.key
+// （32 字节、0600、缺失自动生成）。密文本体由 storage.SecretRepo 承载；
+// OS 钥匙串与明文降级文件已退役（2026-10-18 存储改造）。
 package credential
 
 import "errors"
