@@ -170,28 +170,6 @@ func TestAccessMoveCodexModel(t *testing.T) {
 	}
 }
 
-// TestAccessCodexModelMetaLines：只读元数据预览按 codexModels 顺序渲染，
-// 首行标「默认」，含显示名/上下文窗口/思考等级（含默认等级）；模型不存在
-// 时标注「（模型不存在）」。
-func TestAccessCodexModelMetaLines(t *testing.T) {
-	models := []bridge.ModelView{
-		{Name: "my-code", DisplayName: "My Code", ContextWindow: 1000000,
-			ReasoningLevels: []string{"low", "high"}, DefaultReasoningLevel: "high"},
-		{Name: "test", Enabled: true},
-	}
-	lines := modelMetaLines([]string{"my-code", "test", "gone"}, models)
-	if len(lines) != 3 {
-		t.Fatalf("%v", lines)
-	}
-	if !strings.Contains(lines[0], "My Code") || !strings.Contains(lines[0], "1000000") ||
-		!strings.Contains(lines[0], "low/high") || !strings.Contains(lines[0], "high") {
-		t.Fatalf("%v", lines[0])
-	}
-	if !strings.Contains(lines[2], "模型不存在") {
-		t.Fatalf("%v", lines[2])
-	}
-}
-
 // TestAccessCodexEditorShowsModelList：Codex 编辑器不再显示单一「逻辑模型」
 // 下拉，改为模型列表（首行「默认」）。
 func TestAccessCodexEditorShowsModelList(t *testing.T) {
@@ -378,5 +356,59 @@ func TestAccessCodexPreviewRendersManagedKeys(t *testing.T) {
 	RefreshPreview(st, bridge.AccessConfigs{A: a})
 	if st.Access.Form.CodexPreview != "" || !strings.Contains(st.Access.Form.Msg, "模型") {
 		t.Fatalf("空模型列表应内联中文提示: %+v", st.Access.Form)
+	}
+}
+
+// TestParseMeta：元数据编辑行解析——等级逗号分列/去重/默认取首项；未知
+// 等级与非负窗口校验报中文错误。
+func TestParseMeta(t *testing.T) {
+	m, err := parseMeta(&state.MetaEditState{DisplayName: " My Code ", ReasoningLevels: " low, high ,low "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.DisplayName != "My Code" || len(m.ReasoningLevels) != 2 || m.DefaultReasoningLevel != "low" {
+		t.Fatalf("%+v", m)
+	}
+	if _, err := parseMeta(&state.MetaEditState{ReasoningLevels: "bogus"}); err == nil {
+		t.Fatal("未知等级应报错")
+	}
+	if _, err := parseMeta(&state.MetaEditState{ContextWindow: "-1"}); err == nil {
+		t.Fatal("负窗口应报错")
+	}
+	empty, err := parseMeta(&state.MetaEditState{})
+	if err != nil || empty.ContextWindow != 0 || empty.DefaultReasoningLevel != "" {
+		t.Fatalf("empty meta = %+v, %v", empty, err)
+	}
+}
+
+// TestSaveMetaPersists：保存元数据写回逻辑模型（默认等级取列表首项），
+// 并给出成功提示；非法输入内联报错且不落库。
+func TestSaveMetaPersists(t *testing.T) {
+	st, a := uitest.New(t)
+	ch, err := st.Svc.Channels.Create("", "渠道A", "https://api.example.com", "openai", "sk-1", true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lm, err := st.Svc.Logical.Create("my-code", "", bridge.ModelMeta{}, []bridge.TargetSpec{{ChannelID: ch.ID, ModelName: "m1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ed := &state.MetaEditState{DisplayName: "My Code", ContextWindow: "1000000", ReasoningLevels: "low, high"}
+	saveMeta(st, bridge.AccessConfigs{A: a}, lm.ID, ed)
+	if ed.Msg != "已保存" {
+		t.Fatalf("msg = %q", ed.Msg)
+	}
+	got, err := st.Svc.Logical.Get(lm.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DisplayName != "My Code" || got.ContextWindow != 1000000 ||
+		len(got.ReasoningLevels) != 2 || got.DefaultReasoningLevel != "low" {
+		t.Fatalf("meta not saved: %+v", got)
+	}
+	bad := &state.MetaEditState{ReasoningLevels: "bogus"}
+	saveMeta(st, bridge.AccessConfigs{A: a}, lm.ID, bad)
+	if !strings.Contains(bad.Msg, "思考等级") {
+		t.Fatalf("invalid meta should report: %q", bad.Msg)
 	}
 }

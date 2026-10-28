@@ -46,10 +46,10 @@ func TestRootSmokeAccessTabs(t *testing.T) {
 		t.Fatalf("claude tab missing 模型映射: %v", tt.Texts())
 	}
 
-	// Codex：模型列表编辑器段（首项默认 + 元数据预览）。
+	// Codex：模型列表编辑器段（首项默认 + 元数据编辑）。
 	u.Access.App = "codex"
 	u.Access.Form = state.AccessForm{Open: true, ModelLabel: "my-code", DocJSON: `{"env":{}}`}
-	if tt := ui.NewTester(u.view, 1000, 1400); !tt.HasText("模型列表") || !tt.HasText("将写入 Codex 的模型") {
+	if tt := ui.NewTester(u.view, 1000, 1400); !tt.HasText("模型列表") || !tt.HasText("模型元数据") {
 		t.Fatalf("codex tab missing sections: %v", tt.Texts())
 	}
 

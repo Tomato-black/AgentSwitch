@@ -79,9 +79,21 @@ type AccessForm struct {
 	AutoReviewModel string
 	CodexPreview    string
 	ClaudePreview   string // Claude Code：预览将写入的 settings.json（live 合并结果）
+	// CodexMeta 是 Codex 接入页的模型元数据编辑行（按模型名索引；2026-10-28
+	// 从逻辑模型编辑页迁入——显示名/上下文窗口/思考等级只影响 Codex 目录）。
+	CodexMeta map[string]*MetaEditState
 
 	// Baseline 是打开编辑器时的内容签名，用于页签切换脏检查。
 	Baseline string
+}
+
+// MetaEditState 是 Codex 模型元数据的一行编辑状态（原始字符串，保存时解析）。
+type MetaEditState struct {
+	DisplayName           string
+	ContextWindow         string
+	ReasoningLevels       string
+	DefaultReasoningLevel string
+	Msg                   string
 }
 
 // DesktopForm 是 Claude Desktop 接入的新建/编辑表单状态；Models/OneM 与
@@ -174,14 +186,10 @@ type LogicalState struct {
 // 前按下标重排）；元数据以原始字符串保存（在 meta 校验时解析）；Msg 是
 // 表单信息位（校验/保存错误）。
 type LMForm struct {
-	Name                  string
-	Description           string
-	DisplayName           string
-	ContextWindow         string
-	ReasoningLevels       string
-	DefaultReasoningLevel string
-	Targets               []bridge.TargetSpec
-	Msg                   string
+	Name        string
+	Description string
+	Targets     []bridge.TargetSpec
+	Msg         string
 }
 
 // SettingsState 是设置页状态：输入框为空时按当前生效值回显（不与输入中的

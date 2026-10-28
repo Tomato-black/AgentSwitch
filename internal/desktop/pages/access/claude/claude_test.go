@@ -33,7 +33,7 @@ func TestEditorCardRendersClaudeSections(t *testing.T) {
 			t.Fatalf("missing %q in %v", want, tt.Texts())
 		}
 	}
-	for _, unwanted := range []string{"模型列表", "将写入 Codex 的模型", "子代理模型"} {
+	for _, unwanted := range []string{"模型列表", "模型元数据", "子代理模型"} {
 		if tt.HasText(unwanted) {
 			t.Fatalf("Codex 段落泄漏进 Claude 编辑器: %q in %v", unwanted, tt.Texts())
 		}

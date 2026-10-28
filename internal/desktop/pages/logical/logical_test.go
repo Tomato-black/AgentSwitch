@@ -94,52 +94,9 @@ func TestEditValidationEmptyName(t *testing.T) {
 	}
 }
 
-// TestLmFormMetaParsesLevels 覆盖元数据表单解析：思考等级按逗号分隔、
-// 去空格、去空项、去重且保持首次出现顺序；未知等级与非数字上下文窗口
-// 都报中文错误。
-func TestLmFormMetaParsesLevels(t *testing.T) {
-	f := state.LMForm{ReasoningLevels: " low, high ,low ", DefaultReasoningLevel: "high"}
-	m, err := meta(f)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(m.ReasoningLevels) != 2 || m.ReasoningLevels[0] != "low" ||
-		m.ReasoningLevels[1] != "high" || m.DefaultReasoningLevel != "high" {
-		t.Fatalf("%+v", m)
-	}
-	if _, err := meta(state.LMForm{ReasoningLevels: "bogus"}); err == nil {
-		t.Fatal("未知等级应报错")
-	}
-	if _, err := meta(state.LMForm{ContextWindow: "abc"}); err == nil {
-		t.Fatal("非数字上下文窗口应报错")
-	}
-}
-
-// TestLmFormMetaDefaultsToFirstLevel 覆盖归一化规则：等级非空而默认等级
-// 为空时取首项（spec §4），否则目录会写出空字符串。
-func TestLmFormMetaDefaultsToFirstLevel(t *testing.T) {
-	m, err := meta(state.LMForm{ReasoningLevels: "medium, high"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if m.DefaultReasoningLevel != "medium" {
-		t.Fatalf("default = %q, want medium", m.DefaultReasoningLevel)
-	}
-	empty, err := meta(state.LMForm{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if empty.DefaultReasoningLevel != "" || empty.ContextWindow != 0 || len(empty.ReasoningLevels) != 0 {
-		t.Fatalf("empty form must stay unset: %+v", empty)
-	}
-	if _, err := meta(state.LMForm{ReasoningLevels: "low", DefaultReasoningLevel: "high"}); err == nil {
-		t.Fatal("默认等级不在列表应报错")
-	}
-}
-
-// TestLogicalEditBackfillsMeta 覆盖编辑页回填元数据（显示名、上下文
-// 窗口、等级列表与默认等级），保存时原样写回。
-func TestLogicalEditBackfillsMeta(t *testing.T) {
+// TestLogicalSavePreservesExistingMeta：元数据已移至接入页维护，逻辑模型
+// 编辑页保存时不得清空既有 Codex 元数据（显示名/窗口/思考等级）。
+func TestLogicalSavePreservesExistingMeta(t *testing.T) {
 	st, _ := uitest.New(t)
 	ch, err := st.Svc.Channels.Create("", "渠道A", "https://api.example.com", "openai", "sk-1", true, false)
 	if err != nil {
@@ -153,30 +110,17 @@ func TestLogicalEditBackfillsMeta(t *testing.T) {
 		t.Fatal(err)
 	}
 	openEdit(st, m.ID)
-	if st.Logical.Edit.DisplayName != "My Code" || st.Logical.Edit.ContextWindow != "1000000" ||
-		st.Logical.Edit.ReasoningLevels != "low,high" || st.Logical.Edit.DefaultReasoningLevel != "high" {
+	if st.Logical.Edit.Name != "my-code" || len(st.Logical.Edit.Targets) != 1 {
 		t.Fatalf("backfill = %+v", st.Logical.Edit)
 	}
-}
-
-// TestLogicalSaveRejectsBadMeta 覆盖元数据校验失败路径：不写库、留在
-// 编辑页并把中文错误放进表单信息位。
-func TestLogicalSaveRejectsBadMeta(t *testing.T) {
-	st, _ := uitest.New(t)
-	ch, err := st.Svc.Channels.Create("", "渠道A", "https://api.example.com", "openai", "sk-1", true, false)
+	save(st)
+	got, err := st.Svc.Logical.Get(m.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	openNew(st)
-	st.Logical.Edit.Name = "my-code"
-	st.Logical.Edit.ContextWindow = "abc"
-	st.Logical.Edit.Targets = []bridge.TargetSpec{{ChannelID: ch.ID, ModelName: "m1"}}
-	save(st)
-	if st.Page != "logical-edit" || !strings.Contains(st.Logical.Edit.Msg, "上下文窗口") {
-		t.Fatalf("page=%q msg=%q", st.Page, st.Logical.Edit.Msg)
-	}
-	if got := st.Svc.Logical.List(); len(got) != 0 {
-		t.Fatalf("must not persist on bad meta: %+v", got)
+	if got.DisplayName != "My Code" || got.ContextWindow != 1000000 ||
+		len(got.ReasoningLevels) != 2 || got.DefaultReasoningLevel != "high" {
+		t.Fatalf("save must preserve metadata: %+v", got)
 	}
 }
 
@@ -187,8 +131,7 @@ func TestLogicalEditViewRenders(t *testing.T) {
 	openNew(st)
 	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 900, 700)
 	for _, want := range []string{
-		"新建逻辑模型", "名称:", "描述:", "显示名:", "上下文窗口:", "思考等级:",
-		"默认思考等级:", "模板默认", "目标链", "添加目标", "保存",
+		"新建逻辑模型", "名称:", "描述:", "目标链", "添加目标", "保存",
 	} {
 		if !tt.HasText(want) {
 			t.Fatalf("missing %q in %v", want, tt.Texts())
@@ -218,9 +161,6 @@ func TestLogicalSaveReturnsToList(t *testing.T) {
 	}
 	openNew(st)
 	st.Logical.Edit.Name = "my-code"
-	st.Logical.Edit.DisplayName = "My Code"
-	st.Logical.Edit.ContextWindow = "1000000"
-	st.Logical.Edit.ReasoningLevels = "low, high" // 默认等级留空 → 保存时取首项
 	st.Logical.Edit.Targets = []bridge.TargetSpec{
 		{ChannelID: ch.ID, ModelName: "m2", Priority: 9},
 		{ChannelID: ch.ID, ModelName: "m1", Priority: 9},
@@ -235,10 +175,6 @@ func TestLogicalSaveReturnsToList(t *testing.T) {
 	}
 	if m.Name != "my-code" || len(m.Targets) != 2 {
 		t.Fatalf("saved %q with %d targets", m.Name, len(m.Targets))
-	}
-	if m.DisplayName != "My Code" || m.ContextWindow != 1000000 ||
-		len(m.ReasoningLevels) != 2 || m.DefaultReasoningLevel != "low" {
-		t.Fatalf("metadata not saved: %+v", m)
 	}
 	if m.Targets[0].ModelName != "m2" || m.Targets[0].Priority != 0 ||
 		m.Targets[1].ModelName != "m1" || m.Targets[1].Priority != 1 {

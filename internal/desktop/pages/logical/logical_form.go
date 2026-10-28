@@ -4,69 +4,11 @@ package logical
 
 import (
 	"fmt"
-	"slices"
-	"strconv"
 	"strings"
 
 	"AgentSwitch/internal/bridge"
 	"AgentSwitch/internal/desktop/state"
 )
-
-// lmReasoningLevels 是 Codex 认可的思考等级（spec §4），与 bridge 的
-// reasoningLevelWhitelist 保持一致。桌面层提前校验，错误直接进表单信息位；
-// bridge 保存时仍会再校验一次（防御纵深）。
-var lmReasoningLevels = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}
-
-// lmParsedLevels 把思考等级输入框（逗号分隔）解析成选项列表：去空格、
-// 去空项、按首次出现去重。渲染默认等级下拉与 meta() 共用同一规则。
-func lmParsedLevels(raw string) []string {
-	seen := make(map[string]bool)
-	var out []string
-	for _, lv := range strings.Split(raw, ",") {
-		lv = strings.TrimSpace(lv)
-		if lv == "" || seen[lv] {
-			continue
-		}
-		seen[lv] = true
-		out = append(out, lv)
-	}
-	return out
-}
-
-// meta 把表单字符串解析成桥接层元数据：上下文窗口空串=0、否则须为非负
-// 整数；思考等级须在白名单内；默认等级空时取列表首项（spec §4「非空但
-// 默认空 → 列表第一项」），非空须属于列表。错误信息中文、可进信息位。
-func meta(f state.LMForm) (bridge.ModelMeta, error) {
-	meta := bridge.ModelMeta{DisplayName: strings.TrimSpace(f.DisplayName)}
-	if raw := strings.TrimSpace(f.ContextWindow); raw != "" {
-		n, err := strconv.ParseInt(raw, 10, 64)
-		if err != nil || n < 0 {
-			return meta, fmt.Errorf("上下文窗口需要是非负整数，如 1000000")
-		}
-		meta.ContextWindow = n
-	}
-	known := make(map[string]bool, len(lmReasoningLevels))
-	for _, lv := range lmReasoningLevels {
-		known[lv] = true
-	}
-	meta.ReasoningLevels = lmParsedLevels(f.ReasoningLevels)
-	for _, lv := range meta.ReasoningLevels {
-		if !known[lv] {
-			return meta, fmt.Errorf("未知思考等级「%s」，可用：%s",
-				lv, strings.Join(lmReasoningLevels, "、"))
-		}
-	}
-	def := strings.TrimSpace(f.DefaultReasoningLevel)
-	if def == "" && len(meta.ReasoningLevels) > 0 {
-		def = meta.ReasoningLevels[0]
-	}
-	inList := slices.Contains(meta.ReasoningLevels, def)
-	if def != "" && !inList {
-		return meta, fmt.Errorf("默认思考等级「%s」不在思考等级列表中", def)
-	}
-	meta.DefaultReasoningLevel = def
-	return meta, nil
-}
 
 // moveTarget 把 targets[i] 与相邻行换位（delta=-1 上移 / +1 下移）；首行
 // 上移、末行下移与越界下标都是 no-op。只换序不写 Priority——落库前按下标
@@ -138,12 +80,6 @@ func openEdit(st *state.State, id string) {
 		} else {
 			st.Logical.Edit.Name = m.Name
 			st.Logical.Edit.Description = m.Description
-			st.Logical.Edit.DisplayName = m.DisplayName
-			if m.ContextWindow > 0 {
-				st.Logical.Edit.ContextWindow = strconv.FormatInt(m.ContextWindow, 10)
-			}
-			st.Logical.Edit.ReasoningLevels = strings.Join(m.ReasoningLevels, ",")
-			st.Logical.Edit.DefaultReasoningLevel = m.DefaultReasoningLevel
 			for _, tg := range m.Targets {
 				st.Logical.Edit.Targets = append(st.Logical.Edit.Targets, bridge.TargetSpec{
 					ChannelID: tg.ChannelID, ModelName: tg.ModelName, Priority: tg.Priority,
@@ -166,10 +102,16 @@ func save(st *state.State) {
 		st.Logical.Edit.Msg = "逻辑模型服务未就绪"
 		return
 	}
-	modelMeta, err := meta(st.Logical.Edit)
-	if err != nil {
-		st.Logical.Edit.Msg = err.Error()
-		return
+	// Codex 元数据（显示名/上下文窗口/思考等级）已移至接入页维护：
+	// 保存时保留既有值，新建模型不带元数据。
+	var modelMeta bridge.ModelMeta
+	if st.Logical.EditModelID != "" {
+		if m, err := st.Svc.Logical.Get(st.Logical.EditModelID); err == nil {
+			modelMeta = bridge.ModelMeta{
+				DisplayName: m.DisplayName, ContextWindow: m.ContextWindow,
+				ReasoningLevels: m.ReasoningLevels, DefaultReasoningLevel: m.DefaultReasoningLevel,
+			}
+		}
 	}
 	targets := make([]bridge.TargetSpec, len(st.Logical.Edit.Targets))
 	for i, tg := range st.Logical.Edit.Targets {

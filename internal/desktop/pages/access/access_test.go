@@ -87,8 +87,8 @@ func TestAccessPreloadFormRendersGatewayToken(t *testing.T) {
 	}
 }
 
-// TestAccessCodexEditorShowsModelMetaPreview：模型列表与高级设置之间渲染
-// 只读「将写入 Codex 的模型」元数据预览；Claude 编辑器不出现该区块。
+// TestAccessCodexEditorShowsModelMetaEditor：Codex 编辑器渲染「模型元数据」
+// 编辑区（2026-10-28 自逻辑模型页迁入）；Claude 编辑器不出现该区块。
 func TestAccessCodexEditorShowsModelMetaPreview(t *testing.T) {
 	st, a := uitest.New(t)
 	a.Store().LogicalModels().Save(storage.LogicalModel{
@@ -100,7 +100,7 @@ func TestAccessCodexEditorShowsModelMetaPreview(t *testing.T) {
 	st.Access.App = "codex"
 	st.Access.Form = state.AccessForm{Open: true, ModelLabel: "my-code", DocJSON: `{"env":{}}`}
 	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
-	for _, want := range []string{"将写入 Codex 的模型", "My Code", "1000000", "low/high"} {
+	for _, want := range []string{"模型元数据", "保存元数据"} {
 		if !tt.HasText(want) {
 			t.Fatalf("missing %q in %v", want, tt.Texts())
 		}
@@ -108,8 +108,8 @@ func TestAccessCodexEditorShowsModelMetaPreview(t *testing.T) {
 	st.Access.App = "claude"
 	st.Access.Form = state.AccessForm{Open: true, ModelLabel: "my-code", DocJSON: `{"env":{}}`}
 	tt = ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
-	if tt.HasText("将写入 Codex 的模型") {
-		t.Fatal("Claude 编辑器不应出现 Codex 模型预览")
+	if tt.HasText("模型元数据") || tt.HasText("保存元数据") {
+		t.Fatal("Claude 编辑器不应出现 Codex 元数据编辑区")
 	}
 }
 

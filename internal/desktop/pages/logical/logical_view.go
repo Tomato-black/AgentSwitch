@@ -143,30 +143,6 @@ func editView(c *ui.Context, st *state.State) {
 						ui.Text(c, "描述:").Width(112).TextColor(t.TextMuted)
 						ui.TextInput(c, &st.Logical.Edit.Description).Grow(1)
 					})
-					ui.Row(c).Gap(12).Children(func() {
-						ui.Text(c, "显示名:").Width(112).TextColor(t.TextMuted)
-						ui.TextInput(c, &st.Logical.Edit.DisplayName).Grow(1).
-							Placeholder("Codex 模型菜单显示名（空 = 模型名）")
-					})
-					ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
-						ui.Text(c, "上下文窗口:").Width(112).TextColor(t.TextMuted)
-						ui.TextInput(c, &st.Logical.Edit.ContextWindow).Grow(1).
-							Placeholder("如 1000000；空 = 不声明")
-						if uikit.SoftButton(c, t, s, "gray", "1M").Clicked() {
-							st.Logical.Edit.ContextWindow = "1000000"
-						}
-					})
-					ui.Row(c).Gap(12).Children(func() {
-						ui.Text(c, "思考等级:").Width(112).TextColor(t.TextMuted)
-						ui.TextInput(c, &st.Logical.Edit.ReasoningLevels).Grow(1).
-							Placeholder("low,medium,high,xhigh")
-					})
-					ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
-						ui.Text(c, "默认思考等级:").Width(112).TextColor(t.TextMuted)
-						lmLevelSelect(c, t, &st.Logical.Edit.DefaultReasoningLevel,
-							lmParsedLevels(st.Logical.Edit.ReasoningLevels))
-						ui.Text(c, "空 = 模板默认；有等级时默认取首项").TextColor(t.TextMuted)
-					})
 				})
 			})
 			uikit.Card(c, t, func() {
@@ -268,38 +244,6 @@ func lmChannelSelect(c *ui.Context, t *ui.Theme, id *string, chans []bridge.Chan
 				item.Background(t.SurfaceHover)
 			}
 			item.Children(func() { ui.Text(c, ch.Name).SingleLine() })
-		}
-	})
-}
-
-// lmLevelSelect 是默认思考等级下拉：值绑等级字符串，空串显示「模板默认」。
-// 选项由当前已填写的等级实时解析（spec §4），首项永远是「模板默认」以便
-// 清空；选中不在列表中的旧值时仍显示原值，保存时由 meta() 报错提示。
-func lmLevelSelect(c *ui.Context, t *ui.Theme, level *string, levels []string) {
-	label := *level
-	if label == "" {
-		label = "模板默认"
-	}
-	sel := ui.SelectBase(c, level)
-	sel.Trigger.Padding(6, 10).Border(1, t.Border).Radius(t.Radius).
-		Background(t.Surface).MinWidth(140).Children(func() {
-		ui.Text(c, label).SingleLine()
-	})
-	sel.Popup(func(panel ui.Element) {
-		panel.Padding(4).Background(t.Surface).Border(1, t.Border).Radius(t.Radius)
-		for _, lv := range append([]string{""}, levels...) {
-			item := sel.Item(lv).Padding(6, 10).Radius(t.Radius)
-			switch {
-			case item.Highlighted():
-				item.Background(t.Accent).TextColor(t.AccentText)
-			case lv == *level:
-				item.Background(t.SurfaceHover)
-			}
-			text := lv
-			if text == "" {
-				text = "模板默认"
-			}
-			item.Children(func() { ui.Text(c, text).SingleLine() })
 		}
 	})
 }

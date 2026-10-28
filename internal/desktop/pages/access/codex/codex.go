@@ -129,49 +129,6 @@ func effortOptions(current string) []string {
 	return opts
 }
 
-// accessCodexModelMetaLines 把 Codex 模型列表渲染为只读元数据预览行
-// （spec 2026-10-27 §6.2）：按 codexModels 顺序，首行标「默认」；每行含
-// 名称、显示名（为空或与名称相同则省略）、上下文窗口与思考等级
-// （含默认等级）；上下文窗口/思考等级为空时省略对应字段；模型不存在时
-// 标「（模型不存在）」，避免预览与目录内容无声不一致。
-func modelMetaLines(codexModels []string, models []bridge.ModelView) []string {
-	byName := make(map[string]bridge.ModelView, len(models))
-	for _, m := range models {
-		if _, ok := byName[m.Name]; !ok {
-			byName[m.Name] = m
-		}
-	}
-	out := make([]string, 0, len(codexModels))
-	for i, name := range codexModels {
-		line := name
-		if i == 0 {
-			line = "默认 · " + line
-		}
-		m, ok := byName[name]
-		if !ok {
-			out = append(out, line+"（模型不存在）")
-			continue
-		}
-		display := strings.TrimSpace(m.DisplayName)
-		parts := []string{line}
-		if display != "" && display != name {
-			parts = append(parts, display)
-		}
-		if m.ContextWindow > 0 {
-			parts = append(parts, strconv.FormatInt(m.ContextWindow, 10))
-		}
-		if len(m.ReasoningLevels) > 0 {
-			levels := strings.Join(m.ReasoningLevels, "/")
-			if m.DefaultReasoningLevel != "" {
-				levels += "（默认 " + m.DefaultReasoningLevel + "）"
-			}
-			parts = append(parts, levels)
-		}
-		out = append(out, strings.Join(parts, " · "))
-	}
-	return out
-}
-
 // accessCodexModelsSection 渲染 Codex 模型列表编辑（spec 2026-10-27 §4.2）：
 // 有序 Select 行 + 上移/下移/删除，首行「默认」徽标，底部「＋ 添加模型」。
 // 行内按钮只记动作、循环结束后统一应用（构建中改切片会越界）；任何变化
@@ -237,16 +194,171 @@ func modelsSection(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.St
 	return dirty
 }
 
-// accessCodexModelMetaSection 渲染只读「将写入 Codex 的模型」预览
-// （spec 2026-10-27 §6.2）：数据来自逻辑模型元数据，按模型列表顺序展示
-// 名称/显示名/上下文窗口/思考等级；仅文本行，不提供编辑控件（编辑入口在
-// 「逻辑模型」页）。
-func modelMetaSection(c *ui.Context, t *ui.Theme, st *state.State, models []bridge.ModelView) {
-	ui.Text(c, "将写入 Codex 的模型").Bold()
-	ui.Text(c, "来自逻辑模型元数据；此处只读").TextColor(t.TextMuted)
-	for _, line := range modelMetaLines(st.Access.Form.CodexModels, models) {
-		ui.Text(c, line)
+// Codex 元数据（显示名/上下文窗口/思考等级）的编辑与校验（2026-10-28 从
+// 逻辑模型编辑页迁入）：数据仍存在逻辑模型上（Codex 目录按模型名取），
+// 但在接入页集中维护。
+var reasoningLevelChoices = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+
+// parsedLevels 把思考等级输入框（逗号分隔）解析成选项列表：去空格、去空项、
+// 按首次出现去重。下拉与保存校验共用同一规则。
+func parsedLevels(raw string) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, lv := range strings.Split(raw, ",") {
+		lv = strings.TrimSpace(lv)
+		if lv == "" || seen[lv] {
+			continue
+		}
+		seen[lv] = true
+		out = append(out, lv)
 	}
+	return out
+}
+
+// parseMeta 把编辑行解析成 bridge 元数据：上下文窗口空串=0、否则须为非负
+// 整数；思考等级须在白名单内；默认等级空时取列表首项，非空须属于列表。
+func parseMeta(ed *state.MetaEditState) (bridge.ModelMeta, error) {
+	meta := bridge.ModelMeta{DisplayName: strings.TrimSpace(ed.DisplayName)}
+	if raw := strings.TrimSpace(ed.ContextWindow); raw != "" {
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || n < 0 {
+			return meta, fmt.Errorf("上下文窗口需要是非负整数，如 1000000")
+		}
+		meta.ContextWindow = n
+	}
+	known := make(map[string]bool, len(reasoningLevelChoices))
+	for _, lv := range reasoningLevelChoices {
+		known[lv] = true
+	}
+	meta.ReasoningLevels = parsedLevels(ed.ReasoningLevels)
+	for _, lv := range meta.ReasoningLevels {
+		if !known[lv] {
+			return meta, fmt.Errorf("未知思考等级「%s」，可用：%s", lv, strings.Join(reasoningLevelChoices, "、"))
+		}
+	}
+	def := strings.TrimSpace(ed.DefaultReasoningLevel)
+	if def == "" && len(meta.ReasoningLevels) > 0 {
+		def = meta.ReasoningLevels[0]
+	}
+	if def != "" && !slices.Contains(meta.ReasoningLevels, def) {
+		return meta, fmt.Errorf("默认思考等级「%s」不在思考等级列表中", def)
+	}
+	meta.DefaultReasoningLevel = def
+	return meta, nil
+}
+
+// ensureMetaEntries 为模型列表补齐元数据编辑行（只补缺失项，不覆盖用户
+// 正在编辑的内容）；条目取自逻辑模型的现有元数据。
+func ensureMetaEntries(f *state.AccessForm, models []bridge.ModelView) {
+	if f.CodexMeta == nil {
+		f.CodexMeta = map[string]*state.MetaEditState{}
+	}
+	byName := map[string]bridge.ModelView{}
+	for _, m := range models {
+		if _, ok := byName[m.Name]; !ok {
+			byName[m.Name] = m
+		}
+	}
+	for _, name := range f.CodexModels {
+		if _, ok := f.CodexMeta[name]; ok {
+			continue
+		}
+		ed := &state.MetaEditState{}
+		if m, ok := byName[name]; ok {
+			ed.DisplayName = m.DisplayName
+			if m.ContextWindow > 0 {
+				ed.ContextWindow = strconv.FormatInt(m.ContextWindow, 10)
+			}
+			ed.ReasoningLevels = strings.Join(m.ReasoningLevels, ",")
+			ed.DefaultReasoningLevel = m.DefaultReasoningLevel
+		}
+		f.CodexMeta[name] = ed
+	}
+}
+
+// metaLevelSelect 是默认思考等级下拉：值绑等级字符串，空串显示「模板默认」。
+func metaLevelSelect(c *ui.Context, t *ui.Theme, level *string, levels []string) {
+	label := *level
+	if label == "" {
+		label = "模板默认"
+	}
+	sel := ui.SelectBase(c, level)
+	sel.Trigger.Padding(6, 10).Border(1, t.Border).Radius(t.Radius).
+		Background(t.Surface).MinWidth(120).Children(func() {
+		ui.Text(c, label).SingleLine()
+	})
+	sel.Popup(func(panel ui.Element) {
+		panel.Padding(4).Background(t.Surface).Border(1, t.Border).Radius(t.Radius)
+		for _, lv := range append([]string{""}, levels...) {
+			item := sel.Item(lv).Padding(6, 10).Radius(t.Radius)
+			switch {
+			case item.Highlighted():
+				item.Background(t.Accent).TextColor(t.AccentText)
+			case lv == *level:
+				item.Background(t.SurfaceHover)
+			}
+			text := lv
+			if text == "" {
+				text = "模板默认"
+			}
+			item.Children(func() { ui.Text(c, text).SingleLine() })
+		}
+	})
+}
+
+// modelMetaSection 渲染「模型元数据」编辑区：按模型列表顺序为每个模型提供
+// 显示名/上下文窗口/思考等级/默认等级编辑，保存写回逻辑模型（对所有 Codex
+// 接入共享），并刷新只读 config.toml 预览。
+func modelMetaSection(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, acc bridge.AccessConfigs, models []bridge.ModelView) {
+	f := &st.Access.Form
+	ui.Text(c, "模型元数据").Bold()
+	ui.Text(c, "显示名/上下文窗口/思考等级写入 Codex 模型菜单（保存到逻辑模型，所有 Codex 接入共享）").TextColor(t.TextMuted)
+	ensureMetaEntries(f, models)
+	byName := map[string]bridge.ModelView{}
+	for _, m := range models {
+		if _, ok := byName[m.Name]; !ok {
+			byName[m.Name] = m
+		}
+	}
+	for _, name := range f.CodexModels {
+		m, ok := byName[name]
+		if !ok {
+			ui.Text(c, name+"（模型不存在）").TextColor(t.Danger)
+			continue
+		}
+		ed := f.CodexMeta[name]
+		if ed == nil {
+			continue
+		}
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, name).Width(150).Bold().SingleLine()
+			ui.TextInput(c, &ed.DisplayName).Width(150).Placeholder("显示名")
+			ui.TextInput(c, &ed.ContextWindow).Width(120).Placeholder("上下文窗口")
+			ui.TextInput(c, &ed.ReasoningLevels).Grow(1).Placeholder("思考等级：low,medium,high")
+			metaLevelSelect(c, t, &ed.DefaultReasoningLevel, parsedLevels(ed.ReasoningLevels))
+			if uikit.SoftButton(c, t, s, "gray", "保存元数据").Clicked() {
+				saveMeta(st, acc, m.ID, ed)
+			}
+		})
+		if ed.Msg != "" {
+			ui.Text(c, ed.Msg).TextColor(t.TextMuted)
+		}
+	}
+}
+
+// saveMeta 校验并写回逻辑模型元数据；成功后刷新 config.toml 预览。
+func saveMeta(st *state.State, acc bridge.AccessConfigs, modelID string, ed *state.MetaEditState) {
+	meta, err := parseMeta(ed)
+	if err != nil {
+		ed.Msg = err.Error()
+		return
+	}
+	if err := st.Svc.Logical.UpdateMeta(modelID, meta); err != nil {
+		ed.Msg = err.Error()
+		return
+	}
+	ed.Msg = "已保存"
+	RefreshPreview(st, acc)
 }
 
 // accessCodexAdvancedSection 渲染 Codex 高级设置（spec 2026-10-27 §4.2）：
@@ -297,7 +409,7 @@ func advancedSection(c *ui.Context, t *ui.Theme, st *state.State) bool {
 	return changed
 }
 
-// codexEditorCard 渲染 Codex 编辑器：模型列表 + 只读元数据 + 高级设置作为
+// EditorCard 渲染 Codex 编辑器：模型列表 + 元数据编辑 + 高级设置作为
 // 模型段落注入通用 EditorCard，配置 JSON 之后追加只读 config.toml 预览。
 // （T8 暂留宿主包，T9 迁入 codex 子包。）
 func EditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, acc bridge.AccessConfigs, gateOK bool) {
@@ -307,7 +419,7 @@ func EditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State
 			// 默认模型（保存时的 logical_model_id）。
 			syncFromDoc(st, models)
 			changed := modelsSection(c, t, s, st, labels)
-			modelMetaSection(c, t, st, models)
+			modelMetaSection(c, t, s, st, acc, models)
 			changed = advancedSection(c, t, st) || changed
 			// 模型列表/高级设置变化后刷新只读 config.toml 预览；文本域手动
 			// 编辑不逐键刷新（模板加载会跑 codex debug models，每帧调用卡顿），
@@ -377,6 +489,7 @@ func Prepare(st *state.State, acc bridge.AccessConfigs) {
 	if st.Svc.Logical != nil {
 		models = st.Svc.Logical.List()
 	}
+	st.Access.Form.CodexMeta = nil // 打开/重开时按最新库值重建编辑行
 	syncFromDoc(st, models)
 	RefreshPreview(st, acc)
 }
