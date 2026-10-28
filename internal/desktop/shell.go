@@ -82,12 +82,12 @@ func gatewayStatusBar(c *ui.Context, u *uiState) {
 		ui.Text(c, addr).Font(uikit.MonoFont).TextColor(t.TextMuted)
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			if state == "stopped" || state == "failed" {
-				if pillButton(c, t, "启动网关").Clicked() {
+				if uikit.PillButton(c, t, "启动网关").Clicked() {
 					go func() { _ = u.svc.Gateway.Start() }()
 				}
 			}
 			if state == "running" || state == "degraded" {
-				if softButton(c, t, s, "danger", "停止网关").Clicked() {
+				if uikit.SoftButton(c, t, s, "danger", "停止网关").Clicked() {
 					go func() { _ = u.svc.Gateway.Stop() }()
 				}
 			}

@@ -65,7 +65,7 @@ func (u *uiState) guideCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette) {
 		}
 	}
 	rows := gatewayGuideRows(st.Port, st.Token, models)
-	card(c, t, func() {
+	uikit.Card(c, t, func() {
 		ui.Column(c).Gap(10).Children(func() {
 			ui.Row(c).Gap(8).Children(func() {
 				ui.Text(c, "通用连接信息").Bold()
@@ -80,7 +80,7 @@ func (u *uiState) guideCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette) {
 					ui.Text(c, row.label).TextColor(t.TextMuted).Width(110)
 					ui.Text(c, row.value).Grow(1)
 					if row.copyValue != "" {
-						if softButton(c, t, s, "gray", "复制").Clicked() {
+						if uikit.SoftButton(c, t, s, "gray", "复制").Clicked() {
 							mygo.Clipboard.Write(transfer.TextData(row.copyValue))
 							u.guideMsg = "已复制：" + row.label
 						}

@@ -104,7 +104,7 @@ func (u *uiState) desktopPreloadForm(acc bridge.AccessConfigs) {
 
 // desktopEditorCard 渲染 Desktop 配置的新建/编辑表单。
 func (u *uiState) desktopEditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, acc bridge.AccessConfigs, gateOK bool) {
-	card(c, t, func() {
+	uikit.Card(c, t, func() {
 		ui.Column(c).Gap(10).Children(func() {
 			title := "新建配置"
 			if u.desktopForm.editID != "" {
@@ -145,10 +145,10 @@ func (u *uiState) desktopEditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPale
 				if !gateOK {
 					ui.Text(c, "网关未运行——保存后需启动网关才能「应用」").TextColor(t.TextMuted)
 				}
-				if pillButton(c, t, "保存").Clicked() {
+				if uikit.PillButton(c, t, "保存").Clicked() {
 					u.desktopSaveForm(acc, models)
 				}
-				if softButton(c, t, s, "gray", "取消").Clicked() {
+				if uikit.SoftButton(c, t, s, "gray", "取消").Clicked() {
 					u.desktopForm = desktopForm{}
 				}
 			})
@@ -201,7 +201,7 @@ func (u *uiState) accessDesktopConfigRow(c *ui.Context, t *ui.Theme, s uikit.Sof
 	ui.Row(c).Gap(10).Children(func() {
 		ui.Text(c, v.Name).Width(140)
 		if badge := accessRowBadge(v.IsCurrent); badge != "" {
-			softBadge(c, t, s, "ok", badge)
+			uikit.SoftBadge(c, t, s, "ok", badge)
 		}
 		ui.Text(c, "→ "+desktopRolesSummary(v.Settings)).TextColor(t.TextMuted).Grow(1)
 		if gateOK {
@@ -209,7 +209,7 @@ func (u *uiState) accessDesktopConfigRow(c *ui.Context, t *ui.Theme, s uikit.Sof
 			if v.IsCurrent {
 				label = "重新应用"
 			}
-			if softButton(c, t, s, "act", label).Clicked() {
+			if uikit.SoftButton(c, t, s, "act", label).Clicked() {
 				if err := acc.Apply(v.ID); err != nil {
 					u.accessMsg = "应用失败：" + err.Error()
 				} else {
@@ -217,11 +217,11 @@ func (u *uiState) accessDesktopConfigRow(c *ui.Context, t *ui.Theme, s uikit.Sof
 				}
 			}
 		}
-		if softButton(c, t, s, "gray", "编辑").Clicked() {
+		if uikit.SoftButton(c, t, s, "gray", "编辑").Clicked() {
 			u.desktopForm = desktopForm{open: true, editID: v.ID}
 			u.desktopPreloadForm(acc)
 		}
-		if softButton(c, t, s, "danger", "删除").Clicked() {
+		if uikit.SoftButton(c, t, s, "danger", "删除").Clicked() {
 			if err := acc.Remove(v.ID); err != nil {
 				u.accessMsg = "删除失败：" + err.Error()
 			} else {

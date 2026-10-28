@@ -1,8 +1,8 @@
 // widgets.go 是「交换机面板」的共享视觉词汇（spec §4 组件词汇表）：卡片、
 // 软徽章、软底胶囊钮、胶囊主钮与渠道类型 tile。全部建立在 Task 1 的软色板
-// （theme.go softs/uikit.SoftPalette）之上；Task 3–8 的页面按本文件签名消费，
+// （theme.go softs/SoftPalette）之上；Task 3–8 的页面按本文件签名消费，
 // 签名即契约，不得改名。
-package desktop
+package uikit
 
 import (
 	"hash/fnv"
@@ -10,19 +10,17 @@ import (
 	"strings"
 
 	"github.com/egoist/mygo/ui"
-
-	"AgentSwitch/internal/desktop/uikit"
 )
 
 // card 是各页容器卡片（spec §3.4「卡片一律 Radius 12」）：12 显式盖过主题
 // 控件圆角 8，Surface 底 + 1px Border + 14 内边距。
-func card(c *ui.Context, t *ui.Theme, fn func()) {
+func Card(c *ui.Context, t *ui.Theme, fn func()) {
 	ui.Box(c).Radius(12).Background(t.Surface).Border(1, t.Border).Padding(14).Children(fn)
 }
 
 // softPair 按 kind 取软色板同组的一对（底，字）；未知 kind 落 gray——
 // 调用方拼错字符串时宁可弱化为中性也不染错语义色。
-func softPair(s uikit.SoftPalette, kind string) (bg, fg ui.Color) {
+func softPair(s SoftPalette, kind string) (bg, fg ui.Color) {
 	switch kind {
 	case "act":
 		return s.Act, s.ActText
@@ -39,7 +37,7 @@ func softPair(s uikit.SoftPalette, kind string) (bg, fg ui.Color) {
 
 // softBadge 是软底胶囊徽章（首选/启用/冷却/停用/计数，spec §5.2）：999
 // 全圆底 + 小一号字（FontSize-2），底与字取软色板同组。
-func softBadge(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, kind, label string) {
+func SoftBadge(c *ui.Context, t *ui.Theme, s SoftPalette, kind, label string) {
 	bg, fg := softPair(s, kind)
 	ui.Box(c).Radius(999).Background(bg).TextColor(fg).Padding(2, 8).Shrink(0).
 		Children(func() { ui.Text(c, label).FontSize(t.FontSize - 2) })
@@ -48,8 +46,8 @@ func softBadge(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, kind, label stri
 // pillButton 是胶囊主钮（spec §5.2「＋ 添加渠道」）：ButtonBase（可聚焦，
 // 指针/Enter/Space 报 Clicked）之上全圆角 Accent 实心 + AccentText 字；
 // 交互底色走主题现成的 AccentHover/AccentPressed token。返回 Element，
-// 调用方以 if pillButton(...).Clicked() 消费（同帧有效）。
-func pillButton(c *ui.Context, t *ui.Theme, label string) ui.Element {
+// 调用方以 if PillButton(...).Clicked() 消费（同帧有效）。
+func PillButton(c *ui.Context, t *ui.Theme, label string) ui.Element {
 	return capsuleButton(c, t, t.Accent, t.AccentHover, t.AccentPressed, t.AccentText, label)
 }
 
@@ -57,7 +55,7 @@ func pillButton(c *ui.Context, t *ui.Theme, label string) ui.Element {
 // 导入」act 软底，spec §5.2/§5.3）：底与字取软色板同组；软色板没有 hover
 // token，交互底色由 bg 向 fg 轻混派生（token 表本身仍全硬编码，不违
 // theme.go 口径）。危险动作用 kind="danger"。
-func softButton(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, kind, label string) ui.Element {
+func SoftButton(c *ui.Context, t *ui.Theme, s SoftPalette, kind, label string) ui.Element {
 	bg, fg := softPair(s, kind)
 	return capsuleButton(c, t, bg, bg.Mix(fg, 0.10), bg.Mix(fg, 0.22), fg, label)
 }
@@ -96,7 +94,7 @@ var tileRots = [3]tileRot{
 // act（软橙），含 openai/gpt → ok（软绿）；其余 fnv32a(name)%3 轮转
 // rot0/rot1/rot2 三组固定色。匹配大小写不敏感（用户起的渠道名大小写
 // 任意），同输入恒同输出（tile 底色不许逐帧漂移）。
-func tileSoft(name string) string {
+func TileSoft(name string) string {
 	n := strings.ToLower(name)
 	switch {
 	case strings.Contains(n, "anthropic") || strings.Contains(n, "claude"):
@@ -112,9 +110,9 @@ func tileSoft(name string) string {
 // tile 是渠道类型色块（渠道卡图标位，spec §5.2「40px 类型 tile」）：size
 // 见方、Radius=size/4 圆角方块，居中名称前 2 字符缩写（按 rune 截，中文
 // 渠道名不碎字）；字号随 size 缩放（40px tile ≈ 14）。
-func tile(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, name string, size float32) {
+func Tile(c *ui.Context, t *ui.Theme, s SoftPalette, name string, size float32) {
 	var bg, fg ui.Color
-	switch kind := tileSoft(name); {
+	switch kind := TileSoft(name); {
 	case kind == "act":
 		bg, fg = s.Act, s.ActText
 	case kind == "ok":

@@ -52,7 +52,7 @@ func (u *uiState) settingsPage(c *ui.Context) {
 		}
 	}
 	ui.Column(c).Gap(12).Children(func() {
-		card(c, t, func() {
+		uikit.Card(c, t, func() {
 			ui.Column(c).Gap(8).Children(func() {
 				ui.Text(c, "网关").Bold()
 				ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
@@ -66,11 +66,11 @@ func (u *uiState) settingsPage(c *ui.Context) {
 				ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 					ui.Text(c, "透传未登记模型").Width(120).TextColor(t.TextMuted)
 					ui.Switch(c, &u.passthroughOn)
-					softBadge(c, t, s, "gray", "预留")
+					uikit.SoftBadge(c, t, s, "gray", "预留")
 				})
 				ui.Text(c, "首版预留：开启后未登记模型仍返回 404").TextColor(t.TextMuted)
 				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-					if pillButton(c, t, "保存设置").Clicked() {
+					if uikit.PillButton(c, t, "保存设置").Clicked() {
 						st, err := formToSettings(u.portInput, u.timeoutInput, u.passthroughOn)
 						if err != nil {
 							u.settingsMsg = err.Error()
@@ -91,7 +91,7 @@ func (u *uiState) settingsPage(c *ui.Context) {
 				})
 			})
 		})
-		card(c, t, func() {
+		uikit.Card(c, t, func() {
 			ui.Column(c).Gap(6).Children(func() {
 				ui.Text(c, "关于").Bold()
 				v := gs.Version

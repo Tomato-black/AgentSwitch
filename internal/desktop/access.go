@@ -584,26 +584,26 @@ func (u *uiState) accessPage(c *ui.Context) {
 		ui.Column(c).Gap(12).Children(func() {
 			// Agent tab 行（切 tab 重置编辑态，避免表单跨 Agent 误存）
 			ui.Row(c).Gap(8).Children(func() {
-				if softButton(c, t, s, tabKind(u.accessApp == "claude"), claudeTitle).Clicked() {
+				if uikit.SoftButton(c, t, s, tabKind(u.accessApp == "claude"), claudeTitle).Clicked() {
 					u.accessApp = "claude"
 					u.accessMsg = ""
 					u.accessForm = accessForm{}
 					u.accessReloadGlobal(acc)
 				}
-				if softButton(c, t, s, tabKind(u.accessApp == "codex"), codexTitle).Clicked() {
+				if uikit.SoftButton(c, t, s, tabKind(u.accessApp == "codex"), codexTitle).Clicked() {
 					u.accessApp = "codex"
 					u.accessMsg = ""
 					u.accessForm = accessForm{}
 					u.desktopForm = desktopForm{}
 					u.accessReloadGlobal(acc)
 				}
-				if softButton(c, t, s, tabKind(u.accessApp == "claude_desktop"), desktopTitle).Clicked() {
+				if uikit.SoftButton(c, t, s, tabKind(u.accessApp == "claude_desktop"), desktopTitle).Clicked() {
 					u.accessApp = "claude_desktop"
 					u.accessMsg = ""
 					u.accessForm = accessForm{}
 					u.desktopForm = desktopForm{}
 				}
-				if softButton(c, t, s, tabKind(u.accessApp == "guide"), guideTitle).Clicked() {
+				if uikit.SoftButton(c, t, s, tabKind(u.accessApp == "guide"), guideTitle).Clicked() {
 					u.accessApp = "guide"
 					u.accessMsg = ""
 					u.accessForm = accessForm{}
@@ -623,7 +623,7 @@ func (u *uiState) accessPage(c *ui.Context) {
 
 			// 全局配置卡（Desktop 无 env 合成层，不显示）
 			if u.accessApp != "claude_desktop" {
-				card(c, t, func() {
+				uikit.Card(c, t, func() {
 					ui.Column(c).Gap(10).Children(func() {
 						ui.Text(c, "全局配置").Bold()
 						ui.Text(c, "以下环境变量会应用到本 Agent 的所有实际配置（实际配置的同名覆盖项优先）").TextColor(t.TextMuted)
@@ -635,7 +635,7 @@ func (u *uiState) accessPage(c *ui.Context) {
 							ui.Row(c).Gap(8).Children(func() {
 								ui.TextInput(c, &row[0]).Width(220).Placeholder("键")
 								ui.TextInput(c, &row[1]).Grow(1).Placeholder("值")
-								if softButton(c, t, s, "danger", "删除").Clicked() {
+								if uikit.SoftButton(c, t, s, "danger", "删除").Clicked() {
 									globDel = i
 								}
 							})
@@ -644,10 +644,10 @@ func (u *uiState) accessPage(c *ui.Context) {
 							u.accessGlob = append(u.accessGlob[:globDel], u.accessGlob[globDel+1:]...)
 						}
 						ui.Row(c).Gap(8).Children(func() {
-							if softButton(c, t, s, "gray", "＋ 添加一项").Clicked() {
+							if uikit.SoftButton(c, t, s, "gray", "＋ 添加一项").Clicked() {
 								u.accessGlob = append(u.accessGlob, [2]string{})
 							}
-							if softButton(c, t, s, "act", "保存全局配置").Clicked() {
+							if uikit.SoftButton(c, t, s, "act", "保存全局配置").Clicked() {
 								// 行绑定随输入即时更新，此处 u.accessGlob 已是待保存
 								// 的新值；重定位旧派生值需要保存前的持久基线。
 								oldGlobal, _ := acc.GlobalConfig(u.accessApp)
@@ -679,7 +679,7 @@ func (u *uiState) accessPage(c *ui.Context) {
 			}
 
 			// 实际配置列表卡
-			card(c, t, func() {
+			uikit.Card(c, t, func() {
 				ui.Column(c).Gap(10).Children(func() {
 					ui.Text(c, "实际配置").Bold()
 					if u.accessApp == "codex" {
@@ -712,7 +712,7 @@ func (u *uiState) accessPage(c *ui.Context) {
 					}
 					ui.Row(c).Children(func() {
 						ui.Box(c).Grow(1)
-						if pillButton(c, t, "＋ 新建配置").Clicked() {
+						if uikit.PillButton(c, t, "＋ 新建配置").Clicked() {
 							if u.accessApp == "claude_desktop" {
 								u.desktopForm = desktopForm{open: true}
 							} else {
@@ -847,7 +847,7 @@ func (u *uiState) accessConfigRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalett
 	ui.Row(c).Gap(10).Children(func() {
 		ui.Text(c, v.Name).Width(140)
 		if badge := accessRowBadge(v.IsCurrent); badge != "" {
-			softBadge(c, t, s, "ok", badge)
+			uikit.SoftBadge(c, t, s, "ok", badge)
 		}
 		ui.Text(c, "→ "+v.LogicalModelName).TextColor(t.TextMuted).Grow(1)
 		// 应用/复制命令/打开终端依赖网关（终审#3：编辑/删除是纯 DB 操作，
@@ -868,16 +868,16 @@ func (u *uiState) accessConfigRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalett
 			if v.IsCurrent {
 				label = "重新应用"
 			}
-			if softButton(c, t, s, "act", label).Clicked() {
+			if uikit.SoftButton(c, t, s, "act", label).Clicked() {
 				apply()
 			}
 		}
-		if softButton(c, t, s, "gray", "编辑").Clicked() {
+		if uikit.SoftButton(c, t, s, "gray", "编辑").Clicked() {
 			u.accessForm = accessForm{open: true, editID: v.ID}
 			u.accessPreloadForm(acc)
 		}
 		if gateOK {
-			if softButton(c, t, s, "gray", "复制启动命令").Clicked() {
+			if uikit.SoftButton(c, t, s, "gray", "复制启动命令").Clicked() {
 				cmd, err := acc.LaunchCommand(v.ID)
 				if err != nil {
 					u.accessMsg = "生成启动命令失败：" + err.Error()
@@ -886,7 +886,7 @@ func (u *uiState) accessConfigRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalett
 					u.accessMsg = "启动命令已复制"
 				}
 			}
-			if softButton(c, t, s, "gray", "打开终端").Clicked() {
+			if uikit.SoftButton(c, t, s, "gray", "打开终端").Clicked() {
 				if err := acc.OpenTerminal(v.ID); err != nil {
 					u.accessMsg = "打开终端失败：" + err.Error()
 				} else {
@@ -894,7 +894,7 @@ func (u *uiState) accessConfigRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalett
 				}
 			}
 		}
-		if softButton(c, t, s, "danger", "删除").Clicked() {
+		if uikit.SoftButton(c, t, s, "danger", "删除").Clicked() {
 			if err := acc.Remove(v.ID); err != nil {
 				u.accessMsg = "删除失败：" + err.Error()
 			} else {
@@ -908,7 +908,7 @@ func (u *uiState) accessConfigRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalett
 // 下拉（主模型，锁定键）、网关只读行、配置 JSON（TextArea，令牌渲染真值）。
 // 保存原文送 bridge（校验+归一化在 bridge）。
 func (u *uiState) accessEditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, acc bridge.AccessConfigs, gateOK bool) {
-	card(c, t, func() {
+	uikit.Card(c, t, func() {
 		ui.Column(c).Gap(10).Children(func() {
 			title := "新建配置"
 			if u.accessForm.editID != "" {
@@ -1020,7 +1020,7 @@ func (u *uiState) accessEditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalet
 				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 					ui.Text(c, "将写入的 config.toml（只读）").Bold()
 					ui.Box(c).Grow(1)
-					if softButton(c, t, s, "gray", "刷新预览").Clicked() {
+					if uikit.SoftButton(c, t, s, "gray", "刷新预览").Clicked() {
 						u.accessRefreshCodexPreview(acc)
 					}
 				})
@@ -1035,10 +1035,10 @@ func (u *uiState) accessEditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalet
 				if !gateOK {
 					ui.Text(c, "网关未运行——保存后需启动网关才能「应用」").TextColor(t.TextMuted)
 				}
-				if pillButton(c, t, "保存").Clicked() {
+				if uikit.PillButton(c, t, "保存").Clicked() {
 					u.accessSaveForm(acc, models)
 				}
-				if softButton(c, t, s, "gray", "取消").Clicked() {
+				if uikit.SoftButton(c, t, s, "gray", "取消").Clicked() {
 					u.accessForm = accessForm{}
 				}
 			})
@@ -1076,15 +1076,15 @@ func (u *uiState) accessCodexModelsSection(c *ui.Context, t *ui.Theme, s uikit.S
 				changed = true
 			}
 			if i == 0 {
-				softBadge(c, t, s, "ok", "默认")
+				uikit.SoftBadge(c, t, s, "ok", "默认")
 			}
-			if softButton(c, t, s, "gray", "上移").Clicked() {
+			if uikit.SoftButton(c, t, s, "gray", "上移").Clicked() {
 				act, actI = "up", i
 			}
-			if softButton(c, t, s, "gray", "下移").Clicked() {
+			if uikit.SoftButton(c, t, s, "gray", "下移").Clicked() {
 				act, actI = "down", i
 			}
-			if len(f.codexModels) > 1 && softButton(c, t, s, "danger", "删除").Clicked() {
+			if len(f.codexModels) > 1 && uikit.SoftButton(c, t, s, "danger", "删除").Clicked() {
 				act, actI = "del", i
 			}
 		})
@@ -1101,7 +1101,7 @@ func (u *uiState) accessCodexModelsSection(c *ui.Context, t *ui.Theme, s uikit.S
 	if dirty {
 		u.accessPatchCodexModels()
 	}
-	if softButton(c, t, s, "act", "＋ 添加模型").Clicked() {
+	if uikit.SoftButton(c, t, s, "act", "＋ 添加模型").Clicked() {
 		if next, ok := accessCodexNextModel(labels, f.codexModels); ok {
 			f.codexModels = append(f.codexModels, next)
 			u.accessPatchCodexModels()

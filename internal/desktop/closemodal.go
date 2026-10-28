@@ -39,10 +39,10 @@ func (u *uiState) closeModal(c *ui.Context) {
 				})
 				ui.Row(c).Gap(t.Space(2)).AlignItems(ui.Center).Children(func() {
 					ui.Box(c).Grow(1)
-					if softButton(c, t, s, "gray", "取消").Clicked() {
+					if uikit.SoftButton(c, t, s, "gray", "取消").Clicked() {
 						u.closeNotice = false
 					}
-					if pillButton(c, t, "最小化到托盘").Clicked() {
+					if uikit.PillButton(c, t, "最小化到托盘").Clicked() {
 						u.minimizeToTray()
 					}
 				})

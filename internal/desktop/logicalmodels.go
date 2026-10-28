@@ -146,7 +146,7 @@ func logicalModelsView(c *ui.Context, u *uiState) {
 	s := uikit.Softs(t)
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, "逻辑模型").Bold().FontSize(16).Grow(1)
-		if pillButton(c, t, "＋ 新建逻辑模型").Clicked() {
+		if uikit.PillButton(c, t, "＋ 新建逻辑模型").Clicked() {
 			u.openLogicalNew()
 		}
 	})
@@ -155,23 +155,23 @@ func logicalModelsView(c *ui.Context, u *uiState) {
 		models = u.svc.Logical.List()
 	}
 	if len(models) == 0 {
-		card(c, t, func() {
+		uikit.Card(c, t, func() {
 			ui.Text(c, "先建渠道，再把渠道挂进逻辑模型").TextColor(t.TextMuted)
 		})
 	}
 	for _, m := range models {
-		card(c, t, func() {
+		uikit.Card(c, t, func() {
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 				ui.Text(c, m.Name).Bold().Grow(1).SingleLine()
 				if m.Enabled {
-					softBadge(c, t, s, "ok", "启用")
+					uikit.SoftBadge(c, t, s, "ok", "启用")
 				} else {
-					softBadge(c, t, s, "gray", "停用")
+					uikit.SoftBadge(c, t, s, "gray", "停用")
 				}
-				if softButton(c, t, s, "gray", "编辑").Clicked() {
+				if uikit.SoftButton(c, t, s, "gray", "编辑").Clicked() {
 					u.openLogicalEdit(m.ID)
 				}
-				if softButton(c, t, s, "danger", "删除").Clicked() {
+				if uikit.SoftButton(c, t, s, "danger", "删除").Clicked() {
 					u.lmDeleteArm = true
 					u.lmDeleteID = m.ID
 				}
@@ -179,7 +179,7 @@ func logicalModelsView(c *ui.Context, u *uiState) {
 				if !m.Enabled {
 					toggleLabel = "启用"
 				}
-				if softButton(c, t, s, "act", toggleLabel).Clicked() && u.svc.Logical != nil {
+				if uikit.SoftButton(c, t, s, "act", toggleLabel).Clicked() && u.svc.Logical != nil {
 					u.svc.Logical.SetEnabled(m.ID, !m.Enabled)
 				}
 			})
@@ -317,7 +317,7 @@ func (u *uiState) logicalModelEditView(c *ui.Context) {
 				}
 				ui.Text(c, title).Bold().FontSize(t.FontSize + 2)
 			})
-			card(c, t, func() {
+			uikit.Card(c, t, func() {
 				ui.Column(c).Gap(12).Children(func() {
 					ui.Text(c, "基本信息").Bold()
 					ui.Row(c).Gap(12).Children(func() {
@@ -337,7 +337,7 @@ func (u *uiState) logicalModelEditView(c *ui.Context) {
 						ui.Text(c, "上下文窗口:").Width(112).TextColor(t.TextMuted)
 						ui.TextInput(c, &u.lmEdit.contextWindow).Grow(1).
 							Placeholder("如 1000000；空 = 不声明")
-						if softButton(c, t, s, "gray", "1M").Clicked() {
+						if uikit.SoftButton(c, t, s, "gray", "1M").Clicked() {
 							u.lmEdit.contextWindow = "1000000"
 						}
 					})
@@ -354,7 +354,7 @@ func (u *uiState) logicalModelEditView(c *ui.Context) {
 					})
 				})
 			})
-			card(c, t, func() {
+			uikit.Card(c, t, func() {
 				ui.Column(c).Gap(12).Children(func() {
 					ui.Text(c, "目标链").Bold()
 					ui.Text(c, "按序故障转移：靠前的目标优先").TextColor(t.TextMuted)
@@ -377,13 +377,13 @@ func (u *uiState) logicalModelEditView(c *ui.Context) {
 					case "del":
 						u.lmEdit.targets = append(u.lmEdit.targets[:actI], u.lmEdit.targets[actI+1:]...)
 					}
-					if softButton(c, t, s, "act", "＋ 添加目标").Clicked() {
+					if uikit.SoftButton(c, t, s, "act", "＋ 添加目标").Clicked() {
 						u.lmEdit.targets = append(u.lmEdit.targets, bridge.TargetSpec{})
 					}
 				})
 			})
 			ui.Row(c).Gap(8).Children(func() {
-				if pillButton(c, t, "保存").Clicked() {
+				if uikit.PillButton(c, t, "保存").Clicked() {
 					u.saveLogicalModel()
 				}
 				ui.Box(c).Grow(1)
@@ -414,13 +414,13 @@ func (u *uiState) lmTargetRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, i
 		} else {
 			ui.TextInput(c, &tg.ModelName).Grow(1).Placeholder("模型名")
 		}
-		if softButton(c, t, s, "gray", "上移").Clicked() {
+		if uikit.SoftButton(c, t, s, "gray", "上移").Clicked() {
 			act = "up"
 		}
-		if softButton(c, t, s, "gray", "下移").Clicked() {
+		if uikit.SoftButton(c, t, s, "gray", "下移").Clicked() {
 			act = "down"
 		}
-		if softButton(c, t, s, "danger", "删除").Clicked() {
+		if uikit.SoftButton(c, t, s, "danger", "删除").Clicked() {
 			act = "del"
 		}
 	})

@@ -297,7 +297,7 @@ func (u *uiState) channelsView(c *ui.Context) {
 			ui.Text(c, "渠道").Bold().FontSize(t.FontSize + 2)
 			ui.Textf(c, "%d 个渠道", len(chans)).TextColor(t.TextMuted)
 			ui.Box(c).Grow(1)
-			if pillButton(c, t, "＋ 添加渠道").Clicked() {
+			if uikit.PillButton(c, t, "＋ 添加渠道").Clicked() {
 				u.openChannelNew()
 			}
 		})
@@ -308,7 +308,7 @@ func (u *uiState) channelsView(c *ui.Context) {
 			ui.Column(c).Gap(10).AlignItems(ui.Center).Padding(24).Children(func() {
 				ui.Text(c, "还没有渠道").Bold()
 				ui.Text(c, "添加渠道后，逻辑模型目标才能挂上").TextColor(t.TextMuted)
-				if pillButton(c, t, "＋ 添加渠道").Clicked() {
+				if uikit.PillButton(c, t, "＋ 添加渠道").Clicked() {
 					u.openChannelNew()
 				}
 			})
@@ -324,21 +324,21 @@ func (u *uiState) channelsView(c *ui.Context) {
 // base_url + 建议模型数与近况 meta。卡体 ButtonBase 点击进详情。
 func (u *uiState) channelCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, ch bridge.ChannelView) {
 	okN, failN := channelStats(u.recent, ch.Name)
-	card(c, t, func() {
+	uikit.Card(c, t, func() {
 		b := ui.ButtonBase(c).Grow(1).Gap(12).Children(func() {
-			tile(c, t, s, ch.Name, 40)
+			uikit.Tile(c, t, s, ch.Name, 40)
 			ui.Column(c).Gap(4).Grow(1).Children(func() {
 				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 					ui.Text(c, ch.Name).Bold().SingleLine()
 					if ch.Enabled {
-						softBadge(c, t, s, "ok", "启用")
+						uikit.SoftBadge(c, t, s, "ok", "启用")
 					} else {
-						softBadge(c, t, s, "gray", "已停用")
+						uikit.SoftBadge(c, t, s, "gray", "已停用")
 					}
 					if ch.HasKey {
-						softBadge(c, t, s, "act", "有 Key")
+						uikit.SoftBadge(c, t, s, "act", "有 Key")
 					} else {
-						softBadge(c, t, s, "warn", "无 Key")
+						uikit.SoftBadge(c, t, s, "warn", "无 Key")
 					}
 				})
 				ui.Text(c, ch.Protocol+" · "+ch.BaseURL).Font(uikit.MonoFont).TextColor(t.TextMuted).SingleLine()
@@ -379,7 +379,7 @@ func (u *uiState) channelNewView(c *ui.Context) {
 				}
 				u.customTile(c, t, s)
 			})
-			card(c, t, func() {
+			uikit.Card(c, t, func() {
 				ui.Column(c).Gap(12).Children(func() {
 					ui.Text(c, "连接配置").Bold()
 					ui.Row(c).Gap(12).Children(func() {
@@ -414,17 +414,17 @@ func (u *uiState) channelNewView(c *ui.Context) {
 					}
 					ui.Row(c).Children(func() {
 						ui.Box(c).Grow(1)
-						if pillButton(c, t, "创建渠道").Clicked() {
+						if uikit.PillButton(c, t, "创建渠道").Clicked() {
 							u.createChannel()
 						}
 					})
 				})
 			})
-			card(c, t, func() {
+			uikit.Card(c, t, func() {
 				ui.Column(c).Gap(12).Children(func() {
 					ui.Row(c).Gap(8).Children(func() {
 						ui.Text(c, "建议模型").Bold().Grow(1)
-						if softButton(c, t, s, "act", "拉取模型").Clicked() {
+						if uikit.SoftButton(c, t, s, "act", "拉取模型").Clicked() {
 							u.fetchChannelModelsDraft()
 						}
 					})
@@ -448,7 +448,7 @@ func (u *uiState) presetTile(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, p 
 	}
 	b.Radius(8).Background(bg).Padding(8).Gap(8).AlignItems(ui.Center).
 		Children(func() {
-			tile(c, t, s, p.DisplayName, 32)
+			uikit.Tile(c, t, s, p.DisplayName, 32)
 			ui.Column(c).Gap(2).Children(func() {
 				ui.Text(c, p.DisplayName).Bold().SingleLine()
 				ui.Text(c, p.ID).FontSize(t.FontSize - 2).TextColor(t.TextMuted).SingleLine()
@@ -471,7 +471,7 @@ func (u *uiState) customTile(c *ui.Context, t *ui.Theme, s uikit.SoftPalette) {
 	}
 	b.Radius(8).Background(bg).Padding(8).Gap(8).AlignItems(ui.Center).
 		Children(func() {
-			tile(c, t, s, "自定义", 32)
+			uikit.Tile(c, t, s, "自定义", 32)
 			ui.Column(c).Gap(2).Children(func() {
 				ui.Text(c, "自定义").Bold().SingleLine()
 				ui.Text(c, "custom").FontSize(t.FontSize - 2).TextColor(t.TextMuted).SingleLine()
@@ -508,12 +508,12 @@ func (u *uiState) channelDetailView(c *ui.Context) {
 				}
 				ui.Text(c, d.Name).Bold().FontSize(t.FontSize + 2)
 				if d.HasKey {
-					softBadge(c, t, s, "act", "有 Key")
+					uikit.SoftBadge(c, t, s, "act", "有 Key")
 				} else {
-					softBadge(c, t, s, "warn", "无 Key")
+					uikit.SoftBadge(c, t, s, "warn", "无 Key")
 				}
 			})
-			card(c, t, func() {
+			uikit.Card(c, t, func() {
 				ui.Column(c).Gap(12).Children(func() {
 					ui.Text(c, "连接配置").Bold()
 					ui.Row(c).Gap(12).Children(func() {
@@ -547,11 +547,11 @@ func (u *uiState) channelDetailView(c *ui.Context) {
 					})
 				})
 			})
-			card(c, t, func() {
+			uikit.Card(c, t, func() {
 				ui.Column(c).Gap(12).Children(func() {
 					ui.Row(c).Gap(8).Children(func() {
 						ui.Text(c, "建议模型").Bold().Grow(1)
-						if softButton(c, t, s, "act", "拉取模型").Clicked() {
+						if uikit.SoftButton(c, t, s, "act", "拉取模型").Clicked() {
 							u.fetchChannelModels()
 						}
 					})
@@ -560,14 +560,14 @@ func (u *uiState) channelDetailView(c *ui.Context) {
 				})
 			})
 			ui.Row(c).Gap(8).Children(func() {
-				if pillButton(c, t, "保存").Clicked() {
+				if uikit.PillButton(c, t, "保存").Clicked() {
 					u.saveChannelDetail()
 				}
-				if softButton(c, t, s, "act", "测试连通").Clicked() {
+				if uikit.SoftButton(c, t, s, "act", "测试连通").Clicked() {
 					u.testChannelDetail()
 				}
 				ui.Box(c).Grow(1)
-				if softButton(c, t, s, "danger", "删除渠道").Clicked() {
+				if uikit.SoftButton(c, t, s, "danger", "删除渠道").Clicked() {
 					u.chDeleteID, u.chDeleteArm = d.ID, true
 				}
 			})
