@@ -9,10 +9,8 @@
 package desktop
 
 import (
-	"encoding/json"
 	"fmt"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -21,6 +19,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"AgentSwitch/internal/bridge"
+	"AgentSwitch/internal/desktop/accesskit"
 	"AgentSwitch/internal/desktop/uikit"
 )
 
@@ -47,215 +46,6 @@ type accessForm struct {
 	subagentEffort  string
 	autoReviewModel string
 	codexPreview    string
-}
-
-// accessTabTitles 返回接入页四个 tab 的标题（字符串快照锚点）：三个受管
-// Agent + 连接指南（第三方系统照指南手工接入，AgentSwitch 不写其配置）。
-func accessTabTitles() (claude, codex, desktop, guide string) {
-	return "Claude Code", "Codex", "Claude Desktop", "连接指南"
-}
-
-// accessRowBadge 返回配置行「使用中」徽标文本（非 current 为空串）。
-func accessRowBadge(isCurrent bool) string {
-	if isCurrent {
-		return "使用中"
-	}
-	return ""
-}
-
-// accessOverridesFromRows 把键值行转成 overrides map（空键/空值都剔除
-// ——半填行是误操作，清空请删行；同键后者胜——与合成层 overrides 优先
-// 语义一致）。用于全局配置卡。
-func accessOverridesFromRows(rows [][2]string) map[string]string {
-	out := map[string]string{}
-	for _, r := range rows {
-		k := strings.TrimSpace(r[0])
-		v := strings.TrimSpace(r[1])
-		if k == "" || v == "" {
-			continue
-		}
-		out[k] = r[1]
-	}
-	return out
-}
-
-// accessDocObject 解析接入文档为通用 JSON 对象（空文本视为空对象；null/
-// 非对象报错）。各文档补丁/回填函数共用的解析入口。
-func accessDocObject(raw string) (map[string]any, error) {
-	doc := map[string]any{}
-	if trimmed := strings.TrimSpace(raw); trimmed != "" {
-		if err := json.Unmarshal([]byte(trimmed), &doc); err != nil {
-			return nil, err
-		}
-		if doc == nil {
-			return nil, fmt.Errorf("配置必须是 JSON 对象")
-		}
-	}
-	return doc, nil
-}
-
-// accessMarshalDoc 把文档按 2 空格缩进序列化（UI 编辑器可读格式）。
-func accessMarshalDoc(doc map[string]any) (string, error) {
-	b, err := json.MarshalIndent(doc, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
-}
-
-// accessDocSetModels 解析 raw 文档并整体替换 models 键（Codex 模型列表，
-// 顺序即优先级）；空列表删除键（保存/应用时回退绑定模型 + 启用模型）。
-// 解析失败返回 error（调用方保留旧文本）。
-func accessDocSetModels(raw string, models []string) (string, error) {
-	doc, err := accessDocObject(raw)
-	if err != nil {
-		return "", err
-	}
-	if len(models) == 0 {
-		delete(doc, "models")
-	} else {
-		doc["models"] = models
-	}
-	return accessMarshalDoc(doc)
-}
-
-// accessDocSetCodex 解析 raw 文档并整体替换 codex 高级设置对象；三项
-// （去空白后）全空时删除 codex 键，其余顶层键原样保留。
-func accessDocSetCodex(raw, subagentModel, subagentEffort, autoReview string) (string, error) {
-	doc, err := accessDocObject(raw)
-	if err != nil {
-		return "", err
-	}
-	codex := map[string]any{}
-	if v := strings.TrimSpace(subagentModel); v != "" {
-		codex["subagent_model"] = v
-	}
-	if v := strings.TrimSpace(subagentEffort); v != "" {
-		codex["subagent_reasoning_effort"] = v
-	}
-	if v := strings.TrimSpace(autoReview); v != "" {
-		codex["auto_review_model"] = v
-	}
-	if len(codex) == 0 {
-		delete(doc, "codex")
-	} else {
-		doc["codex"] = codex
-	}
-	return accessMarshalDoc(doc)
-}
-
-// accessDocModels 从文档提取显式 models 列表；缺省/null/空数组/非字符串
-// 元素均视为不可用（调用方回退到绑定模型 + 启用模型），与 bridge 的
-// codexModelsFromDoc 语义一致。
-func accessDocModels(doc map[string]any) ([]string, bool) {
-	v, ok := doc["models"]
-	if !ok || v == nil {
-		return nil, false
-	}
-	xs, ok := v.([]any)
-	if !ok || len(xs) == 0 {
-		return nil, false
-	}
-	out := make([]string, 0, len(xs))
-	for _, x := range xs {
-		s, ok := x.(string)
-		if !ok {
-			return nil, false
-		}
-		s = strings.TrimSpace(s)
-		if s == "" {
-			return nil, false
-		}
-		out = append(out, s)
-	}
-	return out, true
-}
-
-// accessDocCodexString 取 codex 对象中的字符串字段（去空白；缺失/非字符串
-// 按空处理）——编辑到一半的坏值不应阻塞回填。
-func accessDocCodexString(codex map[string]any, key string) string {
-	if codex == nil {
-		return ""
-	}
-	s, _ := codex[key].(string)
-	return strings.TrimSpace(s)
-}
-
-// accessCodexFallbackModels 返回未显式声明 models 时的回退列表：绑定模型
-// 置首，其后按逻辑模型列表顺序追加启用项（去重）。
-func accessCodexFallbackModels(label string, models []bridge.ModelView) []string {
-	out := make([]string, 0, len(models)+1)
-	if label = strings.TrimSpace(label); label != "" {
-		out = append(out, label)
-	}
-	for _, m := range models {
-		if !m.Enabled {
-			continue
-		}
-		name := strings.TrimSpace(m.Name)
-		if name == "" || slices.Contains(out, name) {
-			continue
-		}
-		out = append(out, name)
-	}
-	return out
-}
-
-// accessDocSetEnv 解析 raw 文档并对 env 键打补丁（value=="" 删除该键），2 空格
-// 缩进序列化。解析失败返回 error（调用方保留旧文本）。仅 UI 本地补丁用，不做
-// appType 校验（保存校验在 bridge）。
-func accessDocSetEnv(raw, key, value string) (string, error) {
-	doc, err := accessDocObject(raw)
-	if err != nil {
-		return "", err
-	}
-	env := map[string]any{}
-	if v, ok := doc["env"]; ok && v != nil {
-		m, ok := v.(map[string]any)
-		if !ok {
-			return "", fmt.Errorf("env 必须是 JSON 对象")
-		}
-		env = m
-	}
-	if value == "" {
-		delete(env, key)
-	} else {
-		env[key] = value
-	}
-	doc["env"] = env
-	return accessMarshalDoc(doc)
-}
-
-// accessDocEnvStrings 提取文档 env 字符串 map（角色行回填数据源）；env 值非
-// 字符串/JSON 非法返回 error——调用方保留上一合法状态。
-func accessDocEnvStrings(raw string) (map[string]string, error) {
-	doc, err := accessDocObject(raw)
-	if err != nil {
-		return nil, err
-	}
-	out := map[string]string{}
-	if v, ok := doc["env"]; ok && v != nil {
-		m, ok := v.(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("env 必须是 JSON 对象")
-		}
-		for k, val := range m {
-			s, ok := val.(string)
-			if !ok {
-				return nil, fmt.Errorf("env 值必须是字符串: %s", k)
-			}
-			out[k] = s
-		}
-	}
-	return out, nil
-}
-
-// accessParseOneM 剥离值尾部 "[1M]"（大小写不敏感）——1M 勾选状态回显。
-func accessParseOneM(v string) (string, bool) {
-	if len(v) >= 4 && strings.EqualFold(v[len(v)-4:], "[1M]") {
-		return v[:len(v)-4], true
-	}
-	return v, false
 }
 
 // accessRole 是 Claude 模型映射一行（spec 2026-10-19 §3.2）：角色 → 文档 env
@@ -287,19 +77,19 @@ func accessRoleIndexByEnvKey(envKey string) int {
 // accessSyncRolesFromDoc JSON→表单回填：解析成功才覆盖角色行（失败保留旧状态，
 // cc-switch 同款「编辑到一半不闪烁」）。
 func (u *uiState) accessSyncRolesFromDoc() {
-	env, err := accessDocEnvStrings(u.accessForm.docJSON)
+	env, err := accesskit.DocEnvStrings(u.accessForm.docJSON)
 	if err != nil {
 		return
 	}
 	f := &u.accessForm
-	_, f.mainOneM = accessParseOneM(env["ANTHROPIC_MODEL"])
+	_, f.mainOneM = accesskit.ParseOneM(env["ANTHROPIC_MODEL"])
 	for len(f.roleModels) < len(accessClaudeRoles) {
 		f.roleModels = append(f.roleModels, accessRoleFollow)
 		f.roleNames = append(f.roleNames, "")
 		f.roleOneM = append(f.roleOneM, false)
 	}
 	for i, r := range accessClaudeRoles {
-		name, oneM := accessParseOneM(env[r.envKey])
+		name, oneM := accesskit.ParseOneM(env[r.envKey])
 		if name == "" {
 			f.roleModels[i] = accessRoleFollow
 		} else {
@@ -324,11 +114,11 @@ func (u *uiState) accessPatchRole(i int) {
 	if val != "" && f.roleOneM[i] {
 		val += "[1M]"
 	}
-	if raw, err := accessDocSetEnv(f.docJSON, r.envKey, val); err == nil {
+	if raw, err := accesskit.DocSetEnv(f.docJSON, r.envKey, val); err == nil {
 		f.docJSON = raw
 	}
 	if r.nameKey != "" {
-		if raw, err := accessDocSetEnv(f.docJSON, r.nameKey, strings.TrimSpace(f.roleNames[i])); err == nil {
+		if raw, err := accesskit.DocSetEnv(f.docJSON, r.nameKey, strings.TrimSpace(f.roleNames[i])); err == nil {
 			f.docJSON = raw
 		}
 	}
@@ -344,7 +134,7 @@ func (u *uiState) accessPatchMainModel() {
 	if u.accessForm.mainOneM {
 		val += "[1M]"
 	}
-	if raw, err := accessDocSetEnv(u.accessForm.docJSON, "ANTHROPIC_MODEL", val); err == nil {
+	if raw, err := accesskit.DocSetEnv(u.accessForm.docJSON, "ANTHROPIC_MODEL", val); err == nil {
 		u.accessForm.docJSON = raw
 	}
 }
@@ -353,27 +143,27 @@ func (u *uiState) accessPatchMainModel() {
 // 回退「绑定模型 + 启用逻辑模型」；同时回填 codex 高级设置。解析失败保留
 // 旧状态（与角色回填同款「编辑到一半不闪烁」）。
 func (u *uiState) accessSyncCodexFromDoc(models []bridge.ModelView) {
-	doc, err := accessDocObject(u.accessForm.docJSON)
+	doc, err := accesskit.DocObject(u.accessForm.docJSON)
 	if err != nil {
 		return
 	}
 	f := &u.accessForm
-	if names, ok := accessDocModels(doc); ok {
+	if names, ok := accesskit.DocModels(doc); ok {
 		f.codexModels = names
 	} else {
-		f.codexModels = accessCodexFallbackModels(f.modelLabel, models)
+		f.codexModels = accesskit.CodexFallbackModels(f.modelLabel, models)
 	}
 	codex, _ := doc["codex"].(map[string]any)
-	f.subagentModel = accessDocCodexString(codex, "subagent_model")
-	f.subagentEffort = accessDocCodexString(codex, "subagent_reasoning_effort")
-	f.autoReviewModel = accessDocCodexString(codex, "auto_review_model")
+	f.subagentModel = accesskit.DocCodexString(codex, "subagent_model")
+	f.subagentEffort = accesskit.DocCodexString(codex, "subagent_reasoning_effort")
+	f.autoReviewModel = accesskit.DocCodexString(codex, "auto_review_model")
 }
 
 // accessPatchCodexModels 表单→JSON 补丁：模型列表写回文档 models，默认
 // 模型（保存时的 logical_model_id）跟随首行。补丁失败保留旧文档。
 func (u *uiState) accessPatchCodexModels() {
 	f := &u.accessForm
-	raw, err := accessDocSetModels(f.docJSON, f.codexModels)
+	raw, err := accesskit.DocSetModels(f.docJSON, f.codexModels)
 	if err != nil {
 		return
 	}
@@ -408,7 +198,7 @@ func accessMoveCodexModel(models []string, i, delta int) {
 // （全空删除键）；补丁失败保留旧文档。
 func (u *uiState) accessPatchCodexSettings() {
 	f := &u.accessForm
-	raw, err := accessDocSetCodex(f.docJSON, f.subagentModel, f.subagentEffort, f.autoReviewModel)
+	raw, err := accesskit.DocSetCodex(f.docJSON, f.subagentModel, f.subagentEffort, f.autoReviewModel)
 	if err != nil {
 		return
 	}
@@ -472,17 +262,6 @@ func accessCodexEffortOptions(current string) []string {
 	return opts
 }
 
-// accessModelLabels 返回 enabled 逻辑模型名列表（编辑器 Select 数据源）。
-func accessModelLabels(models []bridge.ModelView) []string {
-	var out []string
-	for _, m := range models {
-		if m.Enabled {
-			out = append(out, m.Name)
-		}
-	}
-	return out
-}
-
 // accessCodexModelMetaLines 把 Codex 模型列表渲染为只读元数据预览行
 // （spec 2026-10-27 §6.2）：按 codexModels 顺序，首行标「默认」；每行含
 // 名称、显示名（为空或与名称相同则省略）、上下文窗口与思考等级
@@ -526,39 +305,9 @@ func accessCodexModelMetaLines(codexModels []string, models []bridge.ModelView) 
 	return out
 }
 
-// accessModelIDByLabel 按名映射回逻辑模型 ID（未命中返回空串；
-// disabled 项也参与命中——编辑旧配置时回显不应丢引用）。
-func accessModelIDByLabel(models []bridge.ModelView, label string) string {
-	for _, m := range models {
-		if m.Name == label {
-			return m.ID
-		}
-	}
-	return ""
-}
-
-// accessGlobalRows 把全局 env map 转成有序编辑行（键字典序，UI 稳定渲染）。
-func accessGlobalRows(env map[string]string) [][2]string {
-	keys := make([]string, 0, len(env))
-	for k := range env {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	rows := make([][2]string, 0, len(keys))
-	for _, k := range keys {
-		rows = append(rows, [2]string{k, env[k]})
-	}
-	return rows
-}
-
 // accessGatewayGate 返回网关是否可用（应用/启动类操作的前提）与原因。
-// 网关运行状态取实际服务状态（Status().State），不是按钮状态（架构不变量）。
 func (u *uiState) accessGatewayGate() (bool, string) {
-	st := u.Svc.Gateway.Status()
-	if st.State != "running" && st.State != "degraded" {
-		return false, "网关未运行——请先在侧栏底条启动网关"
-	}
-	return true, ""
+	return accesskit.GatewayGate(u.Svc.Gateway)
 }
 
 // accessSvc 返回本页的接入配置桥接（每帧构造，与既有页面惯例一致）。
@@ -575,7 +324,7 @@ func (u *uiState) accessPage(c *ui.Context) {
 	if u.accessApp == "" {
 		u.accessApp = "claude"
 	}
-	claudeTitle, codexTitle, desktopTitle, guideTitle := accessTabTitles()
+	claudeTitle, codexTitle, desktopTitle, guideTitle := accesskit.TabTitles()
 	gateOK, gateReason := u.accessGatewayGate()
 
 	// 内容列包 Scroll（同 channels/logicalmodels 的长页面）：编辑器（角色表 +
@@ -584,26 +333,26 @@ func (u *uiState) accessPage(c *ui.Context) {
 		ui.Column(c).Gap(12).Children(func() {
 			// Agent tab 行（切 tab 重置编辑态，避免表单跨 Agent 误存）
 			ui.Row(c).Gap(8).Children(func() {
-				if uikit.SoftButton(c, t, s, tabKind(u.accessApp == "claude"), claudeTitle).Clicked() {
+				if uikit.SoftButton(c, t, s, accesskit.TabKind(u.accessApp == "claude"), claudeTitle).Clicked() {
 					u.accessApp = "claude"
 					u.accessMsg = ""
 					u.accessForm = accessForm{}
 					u.accessReloadGlobal(acc)
 				}
-				if uikit.SoftButton(c, t, s, tabKind(u.accessApp == "codex"), codexTitle).Clicked() {
+				if uikit.SoftButton(c, t, s, accesskit.TabKind(u.accessApp == "codex"), codexTitle).Clicked() {
 					u.accessApp = "codex"
 					u.accessMsg = ""
 					u.accessForm = accessForm{}
 					u.desktopForm = desktopForm{}
 					u.accessReloadGlobal(acc)
 				}
-				if uikit.SoftButton(c, t, s, tabKind(u.accessApp == "claude_desktop"), desktopTitle).Clicked() {
+				if uikit.SoftButton(c, t, s, accesskit.TabKind(u.accessApp == "claude_desktop"), desktopTitle).Clicked() {
 					u.accessApp = "claude_desktop"
 					u.accessMsg = ""
 					u.accessForm = accessForm{}
 					u.desktopForm = desktopForm{}
 				}
-				if uikit.SoftButton(c, t, s, tabKind(u.accessApp == "guide"), guideTitle).Clicked() {
+				if uikit.SoftButton(c, t, s, accesskit.TabKind(u.accessApp == "guide"), guideTitle).Clicked() {
 					u.accessApp = "guide"
 					u.accessMsg = ""
 					u.accessForm = accessForm{}
@@ -651,7 +400,7 @@ func (u *uiState) accessPage(c *ui.Context) {
 								// 行绑定随输入即时更新，此处 u.accessGlob 已是待保存
 								// 的新值；重定位旧派生值需要保存前的持久基线。
 								oldGlobal, _ := acc.GlobalConfig(u.accessApp)
-								if err := acc.SaveGlobalConfig(u.accessApp, accessOverridesFromRows(u.accessGlob)); err != nil {
+								if err := acc.SaveGlobalConfig(u.accessApp, accesskit.OverridesFromRows(u.accessGlob)); err != nil {
 									u.accessGlobMsg = err.Error()
 								} else {
 									u.accessGlobMsg = "已保存"
@@ -736,14 +485,6 @@ func (u *uiState) accessPage(c *ui.Context) {
 	})
 }
 
-// tabKind 把选中态译成软按钮 kind（选中 act 高亮，未选 gray）。
-func tabKind(selected bool) string {
-	if selected {
-		return "act"
-	}
-	return "gray"
-}
-
 // accessReloadGlobal 把全局配置读入编辑行（tab 切换/首帧；不覆盖正在
 // 编辑的行以外的时机由调用点控制）。
 func (u *uiState) accessReloadGlobal(acc bridge.AccessConfigs) {
@@ -752,7 +493,7 @@ func (u *uiState) accessReloadGlobal(acc bridge.AccessConfigs) {
 		u.accessGlobMsg = err.Error()
 		return
 	}
-	u.accessGlob = accessGlobalRows(env)
+	u.accessGlob = accesskit.GlobalRows(env)
 	u.accessGlobMsg = ""
 }
 
@@ -765,7 +506,7 @@ func (u *uiState) accessPreloadForm(acc bridge.AccessConfigs) {
 		models = u.Svc.Logical.List()
 	}
 	if f.modelLabel == "" {
-		if labels := accessModelLabels(models); len(labels) > 0 {
+		if labels := accesskit.ModelLabels(models); len(labels) > 0 {
 			f.modelLabel = labels[0]
 		}
 	}
@@ -779,7 +520,7 @@ func (u *uiState) accessPreloadForm(acc bridge.AccessConfigs) {
 			}
 		}
 	}
-	modelID := accessModelIDByLabel(models, f.modelLabel)
+	modelID := accesskit.ModelIDByLabel(models, f.modelLabel)
 	preview, err := acc.PreviewDoc(u.accessApp, modelID, raw)
 	if err != nil {
 		f.docJSON = raw
@@ -808,7 +549,7 @@ func (u *uiState) accessRefreshCodexPreview(acc bridge.AccessConfigs) {
 	if u.Svc.Logical != nil {
 		models = u.Svc.Logical.List()
 	}
-	modelID := accessModelIDByLabel(models, label)
+	modelID := accesskit.ModelIDByLabel(models, label)
 	if modelID == "" {
 		f.codexPreview = ""
 		f.msg = "请至少添加一个模型后再预览 config.toml"
@@ -830,7 +571,7 @@ func (u *uiState) accessRepreviewForm(acc bridge.AccessConfigs) {
 	if u.Svc.Logical != nil {
 		models = u.Svc.Logical.List()
 	}
-	modelID := accessModelIDByLabel(models, u.accessForm.modelLabel)
+	modelID := accesskit.ModelIDByLabel(models, u.accessForm.modelLabel)
 	preview, err := acc.PreviewDoc(u.accessApp, modelID, u.accessForm.docJSON)
 	if err != nil {
 		u.accessForm.msg = "预览失败：" + err.Error()
@@ -846,7 +587,7 @@ func (u *uiState) accessRepreviewForm(acc bridge.AccessConfigs) {
 func (u *uiState) accessConfigRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, acc bridge.AccessConfigs, v bridge.AccessConfigView, gateOK bool) {
 	ui.Row(c).Gap(10).Children(func() {
 		ui.Text(c, v.Name).Width(140)
-		if badge := accessRowBadge(v.IsCurrent); badge != "" {
+		if badge := accesskit.RowBadge(v.IsCurrent); badge != "" {
 			uikit.SoftBadge(c, t, s, "ok", badge)
 		}
 		ui.Text(c, "→ "+v.LogicalModelName).TextColor(t.TextMuted).Grow(1)
@@ -925,7 +666,7 @@ func (u *uiState) accessEditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalet
 			if u.Svc.Logical != nil {
 				models = u.Svc.Logical.List()
 			}
-			labels := accessModelLabels(models)
+			labels := accesskit.ModelLabels(models)
 			if u.accessApp == "codex" {
 				// 文档 → 模型列表回填（打开配置/编辑 JSON 后同步）；首项即
 				// 默认模型（保存时的 logical_model_id）。
@@ -1187,7 +928,7 @@ func (u *uiState) accessSaveForm(acc bridge.AccessConfigs, models []bridge.Model
 		}
 		modelLabel = f.codexModels[0]
 	}
-	modelID := accessModelIDByLabel(models, modelLabel)
+	modelID := accesskit.ModelIDByLabel(models, modelLabel)
 	if modelID == "" {
 		f.msg = "请选择逻辑模型"
 		return

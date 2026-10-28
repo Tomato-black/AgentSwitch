@@ -8,6 +8,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"AgentSwitch/internal/bridge"
+	"AgentSwitch/internal/desktop/accesskit"
 	"AgentSwitch/internal/desktop/uikit"
 )
 
@@ -120,7 +121,7 @@ func (u *uiState) desktopEditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPale
 			if u.Svc.Logical != nil {
 				models = u.Svc.Logical.List()
 			}
-			labels := accessModelLabels(models)
+			labels := accesskit.ModelLabels(models)
 			ui.Text(c, "角色映射（未设置 = 该角色不启用；1M 为 1M 上下文声明）").TextColor(t.TextMuted)
 			if len(labels) == 0 {
 				ui.Text(c, "还没有启用的逻辑模型——先在「逻辑模型」页创建并启用").TextColor(t.TextMuted)
@@ -172,7 +173,7 @@ func (u *uiState) desktopSaveForm(acc bridge.AccessConfigs, models []bridge.Mode
 	bindID := ""
 	for i := range f.models {
 		if m := strings.TrimSpace(f.models[i]); m != "" {
-			bindID = accessModelIDByLabel(models, m)
+			bindID = accesskit.ModelIDByLabel(models, m)
 			break
 		}
 	}
@@ -200,7 +201,7 @@ func (u *uiState) desktopSaveForm(acc bridge.AccessConfigs, models []bridge.Mode
 func (u *uiState) accessDesktopConfigRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, acc bridge.AccessConfigs, v bridge.AccessConfigView, gateOK bool) {
 	ui.Row(c).Gap(10).Children(func() {
 		ui.Text(c, v.Name).Width(140)
-		if badge := accessRowBadge(v.IsCurrent); badge != "" {
+		if badge := accesskit.RowBadge(v.IsCurrent); badge != "" {
 			uikit.SoftBadge(c, t, s, "ok", badge)
 		}
 		ui.Text(c, "→ "+desktopRolesSummary(v.Settings)).TextColor(t.TextMuted).Grow(1)

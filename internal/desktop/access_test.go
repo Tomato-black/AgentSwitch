@@ -11,48 +11,10 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"AgentSwitch/internal/bridge"
+	"AgentSwitch/internal/desktop/accesskit"
 	"AgentSwitch/internal/desktop/state"
 	"AgentSwitch/internal/storage"
 )
-
-// TestAccessTabTitles 覆盖接入页四个 tab 标题快照（三个受管 Agent +
-// 连接指南——第三方系统照指南手工接入，AgentSwitch 不写其配置）。
-func TestAccessTabTitles(t *testing.T) {
-	if a, b, d, g := accessTabTitles(); a != "Claude Code" || b != "Codex" || d != "Claude Desktop" || g != "连接指南" {
-		t.Fatal(a, b, d, g)
-	}
-}
-
-// TestAccessConfigRowShowsCurrentBadge 覆盖「使用中」徽标纯函数。
-func TestAccessConfigRowShowsCurrentBadge(t *testing.T) {
-	if got := accessRowBadge(true); got != "使用中" {
-		t.Fatal(got)
-	}
-	if accessRowBadge(false) != "" {
-		t.Fatal("非 current 应无徽标")
-	}
-}
-
-// TestAccessOverridesFromRows 覆盖覆盖项行→map：空键/空值都剔除（半填行
-// 是误操作——评审裁定按计划语义收口）。
-func TestAccessOverridesFromRows(t *testing.T) {
-	got := accessOverridesFromRows([][2]string{{"K", "V"}, {"", "x"}, {"K2", ""}})
-	if len(got) != 1 || got["K"] != "V" {
-		t.Fatal(got)
-	}
-}
-
-// TestAccessModelIDByLabel 覆盖模型名→ID 映射：命中含 disabled 项（编辑
-// 旧配置回显不丢引用）；未命中空串。
-func TestAccessModelIDByLabel(t *testing.T) {
-	ms := []bridge.ModelView{{ID: "id1", Name: "m1", Enabled: true}, {ID: "id2", Name: "m2"}}
-	if accessModelIDByLabel(ms, "m2") != "id2" {
-		t.Fatal("应命中含 disabled 项")
-	}
-	if accessModelIDByLabel(ms, "nope") != "" {
-		t.Fatal("未命中应空串")
-	}
-}
 
 // TestAccessPageRenders 覆盖接入页骨架：两 tab、全局配置卡、实际配置卡、
 // 空态引导与网关未运行提示在场；旧片段页元素（当前逻辑模型选择器）不再出现。
@@ -105,70 +67,6 @@ func TestAccessPageScrollsWhenEditorOpen(t *testing.T) {
 	}
 	if after.Y >= 600 {
 		t.Fatalf("接入页不可滚动：保存按钮滚动前后 y=%v → %v", before.Y, after.Y)
-	}
-}
-
-// TestAccessGlobalRowsOrdered 覆盖全局配置编辑行的键序稳定（字典序）。
-func TestAccessGlobalRowsOrdered(t *testing.T) {
-	rows := accessGlobalRows(map[string]string{"b": "2", "a": "1"})
-	if rows[0][0] != "a" || rows[1][0] != "b" {
-		t.Fatal(rows)
-	}
-}
-
-func TestAccessDocSetEnv(t *testing.T) {
-	raw, err := accessDocSetEnv(`{"env":{"A":"1"},"language":"zh-CN"}`, "B", "2")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var doc map[string]any
-	json.Unmarshal([]byte(raw), &doc)
-	env := doc["env"].(map[string]any)
-	if env["A"] != "1" || env["B"] != "2" || doc["language"] != "zh-CN" {
-		t.Fatal(raw)
-	}
-	// value=="" 删除键
-	raw2, err := accessDocSetEnv(raw, "A", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	json.Unmarshal([]byte(raw2), &doc)
-	if _, ok := doc["env"].(map[string]any)["A"]; ok {
-		t.Fatal("空值应删键: " + raw2)
-	}
-	// 非法 JSON 报错
-	if _, err := accessDocSetEnv(`{bad`, "A", "1"); err == nil {
-		t.Fatal("非法 JSON 应报错")
-	}
-	// env 非对象（非 null）必须报错，不得静默清空（Minor#4）
-	if _, err := accessDocSetEnv(`{"env":5}`, "A", "1"); err == nil ||
-		!strings.Contains(err.Error(), "env 必须是 JSON 对象") {
-		t.Fatalf("env 非对象应报错: %v", err)
-	}
-	// env:null 视为缺省
-	if _, err := accessDocSetEnv(`{"env":null}`, "A", "1"); err != nil {
-		t.Fatalf("env:null 应视为缺省: %v", err)
-	}
-}
-
-func TestAccessDocEnvStrings(t *testing.T) {
-	env, err := accessDocEnvStrings(`{"env":{"A":"1"}}`)
-	if err != nil || env["A"] != "1" {
-		t.Fatalf("%v %v", env, err)
-	}
-	if _, err := accessDocEnvStrings(`{"env":{"A":1}}`); err == nil {
-		t.Fatal("非字符串值应报错（保留旧状态）")
-	}
-	if _, err := accessDocEnvStrings(`{bad`); err == nil {
-		t.Fatal("非法 JSON 应报错")
-	}
-	// env 非对象（非 null）必须报错，不得静默返回空表（Minor#4）
-	if _, err := accessDocEnvStrings(`{"env":5}`); err == nil ||
-		!strings.Contains(err.Error(), "env 必须是 JSON 对象") {
-		t.Fatalf("env 非对象应报错: %v", err)
-	}
-	if env, err := accessDocEnvStrings(`{"env":null}`); err != nil || len(env) != 0 {
-		t.Fatalf("env:null 应视为缺省: %v %v", env, err)
 	}
 }
 
@@ -243,44 +141,30 @@ func TestAccessPreloadFormRendersGatewayToken(t *testing.T) {
 	}
 }
 
-func TestAccessParseOneM(t *testing.T) {
-	cases := map[string][2]any{
-		"my-code[1M]": {"my-code", true},
-		"my-code[1m]": {"my-code", true},
-		"my-code":     {"my-code", false},
-	}
-	for in, want := range cases {
-		name, oneM := accessParseOneM(in)
-		if name != want[0] || oneM != want[1] {
-			t.Fatalf("accessParseOneM(%q)=%v,%v want %v", in, name, oneM, want)
-		}
-	}
-}
-
 func TestAccessRoleRoundTrip(t *testing.T) {
 	// 补丁：选模型+1M+显示名
-	raw, err := accessDocSetEnv(`{"env":{}}`, "ANTHROPIC_DEFAULT_SONNET_MODEL", "fast[1M]")
+	raw, err := accesskit.DocSetEnv(`{"env":{}}`, "ANTHROPIC_DEFAULT_SONNET_MODEL", "fast[1M]")
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err = accessDocSetEnv(raw, "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME", "极速")
+	raw, err = accesskit.DocSetEnv(raw, "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME", "极速")
 	if err != nil {
 		t.Fatal(err)
 	}
-	env, err := accessDocEnvStrings(raw)
+	env, err := accesskit.DocEnvStrings(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
-	name, oneM := accessParseOneM(env["ANTHROPIC_DEFAULT_SONNET_MODEL"])
+	name, oneM := accesskit.ParseOneM(env["ANTHROPIC_DEFAULT_SONNET_MODEL"])
 	if name != "fast" || !oneM || env["ANTHROPIC_DEFAULT_SONNET_MODEL_NAME"] != "极速" {
 		t.Fatal(raw)
 	}
 	// 回填：Subagent 无显示名键；空键 = 跟随主模型
-	env2, err := accessDocEnvStrings(`{"env":{}}`)
+	env2, err := accesskit.DocEnvStrings(`{"env":{}}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	name2, oneM2 := accessParseOneM(env2["CLAUDE_CODE_SUBAGENT_MODEL"])
+	name2, oneM2 := accesskit.ParseOneM(env2["CLAUDE_CODE_SUBAGENT_MODEL"])
 	if name2 != "" || oneM2 {
 		t.Fatal("空值应回落跟随主模型")
 	}
@@ -298,7 +182,7 @@ func TestAccessMainModelOneMPatchAndSync(t *testing.T) {
 	}
 	u.accessForm.mainOneM = false
 	u.accessPatchMainModel()
-	env, err := accessDocEnvStrings(u.accessForm.docJSON)
+	env, err := accesskit.DocEnvStrings(u.accessForm.docJSON)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,7 +191,7 @@ func TestAccessMainModelOneMPatchAndSync(t *testing.T) {
 	}
 	u.accessForm.mainOneM = true
 	u.accessPatchMainModel()
-	env, err = accessDocEnvStrings(u.accessForm.docJSON)
+	env, err = accesskit.DocEnvStrings(u.accessForm.docJSON)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,95 +211,12 @@ func TestAccessSyncRolesAndPatch(t *testing.T) {
 	}
 	u.accessForm.roleOneM[i] = false
 	u.accessPatchRole(i)
-	env, err := accessDocEnvStrings(u.accessForm.docJSON)
+	env, err := accesskit.DocEnvStrings(u.accessForm.docJSON)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] != "fast" {
 		t.Fatal(u.accessForm.docJSON)
-	}
-}
-
-// TestAccessDocSetModelsRoundTrip：Codex 文档 models 键写为有序字符串数组；
-// 空列表删除键（保存/应用时回退绑定模型 + 启用模型）；其他键原样保留。
-func TestAccessDocSetModelsRoundTrip(t *testing.T) {
-	raw, err := accessDocSetModels(`{"env":{"A":"1"}}`, []string{"my-code", "test"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	doc := map[string]any{}
-	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
-		t.Fatal(err)
-	}
-	got, ok := doc["models"].([]any)
-	if !ok || len(got) != 2 || got[0] != "my-code" || got[1] != "test" {
-		t.Fatalf("models 未按序写入: %s", raw)
-	}
-	if doc["env"].(map[string]any)["A"] != "1" {
-		t.Fatalf("其他键被破坏: %s", raw)
-	}
-	empty, err := accessDocSetModels(raw, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	doc = map[string]any{}
-	if err := json.Unmarshal([]byte(empty), &doc); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := doc["models"]; ok {
-		t.Fatalf("空列表应删除 models: %s", empty)
-	}
-	if _, err := accessDocSetModels(`{bad`, []string{"x"}); err == nil {
-		t.Fatal("非法 JSON 应报错")
-	}
-}
-
-// TestAccessDocSetCodexRoundTrip：codex 对象只写非空字段；全空删除 codex
-// 键；其他顶层键保留。
-func TestAccessDocSetCodexRoundTrip(t *testing.T) {
-	raw, err := accessDocSetCodex(`{"models":["my-code"]}`, "test", "high", "my-code")
-	if err != nil {
-		t.Fatal(err)
-	}
-	doc := map[string]any{}
-	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
-		t.Fatal(err)
-	}
-	codex, ok := doc["codex"].(map[string]any)
-	if !ok || codex["subagent_model"] != "test" ||
-		codex["subagent_reasoning_effort"] != "high" ||
-		codex["auto_review_model"] != "my-code" {
-		t.Fatalf("codex 字段未写入: %s", raw)
-	}
-	// 空字段不落键（去空白后视为空）。
-	raw, err = accessDocSetCodex(raw, " test ", "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	doc = map[string]any{}
-	json.Unmarshal([]byte(raw), &doc)
-	codex = doc["codex"].(map[string]any)
-	if _, ok := codex["subagent_reasoning_effort"]; ok {
-		t.Fatalf("空字段不应落键: %s", raw)
-	}
-	if _, ok := codex["auto_review_model"]; ok {
-		t.Fatalf("空字段不应落键: %s", raw)
-	}
-	// 全空删除 codex，models 保留。
-	raw, err = accessDocSetCodex(raw, "", "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	doc = map[string]any{}
-	json.Unmarshal([]byte(raw), &doc)
-	if _, ok := doc["codex"]; ok {
-		t.Fatalf("全空应删除 codex: %s", raw)
-	}
-	if _, ok := doc["models"]; !ok {
-		t.Fatalf("其他顶层键应保留: %s", raw)
-	}
-	if _, err := accessDocSetCodex(`{bad`, "", "", ""); err == nil {
-		t.Fatal("非法 JSON 应报错")
 	}
 }
 
