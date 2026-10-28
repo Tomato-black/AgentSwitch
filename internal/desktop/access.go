@@ -580,6 +580,9 @@ func (u *uiState) accessPage(c *ui.Context) {
 	// 320 高 TextArea）会让页面超出视口，没有滚动容器时底部内容不可达。
 	ui.Scroll(c).Grow(1).Children(func() {
 		ui.Column(c).Gap(12).Children(func() {
+			// 通用连接信息卡（页顶、所有页签可见）：第三方系统（Kun 等）
+			// 的用户照此手工填写，AgentSwitch 不写其配置文件。
+			u.guideCard(c, t, s)
 			// Agent tab 行（切 tab 重置编辑态，避免表单跨 Agent 误存）
 			ui.Row(c).Gap(8).Children(func() {
 				if softButton(c, t, s, tabKind(u.accessApp == "claude"), claudeTitle).Clicked() {

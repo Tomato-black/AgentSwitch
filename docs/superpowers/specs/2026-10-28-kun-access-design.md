@@ -60,7 +60,7 @@ Kun（https://github.com/KunAgent/Kun，本地优先的桌面 AI 工作台，Ele
 
 ### 「应用」流程（internal/bridge，新文件 accesskun.go）
 
-1. **网关自检与模型清单**：读网关状态（端口 + `auth.gateway_token`，与现有 composeAccessEnv 同源）；`GET` 自身 `/v1/models`（带令牌）确认有效并取逻辑模型清单；失败则报「网关令牌无效」类错误，不向 Kun 发任何请求。第一项作为 `selectedModel`。
+1. **网关自检与模型清单（2026-10-28 修订：进程内取数，不发 HTTP 自查）**：端口与令牌从网关状态/设置取（与现有 composeAccessEnv 同源）；运行态取 `app.State()`（须为 running）；模型清单取 `LogicalModels().List()` 过滤 `Enabled`（第一项作为 `selectedModel`）。修订理由：`/v1/models` 会为 Claude Desktop 附加 `claude-*` 别名条目，不属于 Kun 的模型清单；进程内取数语义等价且可完全离线测试。令牌为空或网关未运行则报错，不向 Kun 发任何请求。
 2. **定位 Kun**：按上节读取端口与 runtimeToken；失败即报错返回。
 3. **读 revision 与现状**：`GET http://127.0.0.1:<port>/v1/model-connections`（Bearer runtimeToken）→ 取 `revision` 与 `agentswitch` 连接是否存在。
 4. **创建或更新**：
@@ -81,10 +81,10 @@ Kun（https://github.com/KunAgent/Kun，本地优先的桌面 AI 工作台，Ele
        "select": true
      }
      ```
-   - 已存在 → `PATCH /v1/model-connections/agentswitch`（`expectedRevision`、`baseUrl`、`name`、`models`、`selectedModel`）；若当前网关令牌与上次应用不同（见状态记录）或 Kun 侧凭据指纹不可知，则同时 `PUT /v1/model-connections/agentswitch/credential` 更新凭据。PUT 的请求体与是否两段式（fence/commit）以实现时对真实 Kun 的实测为准——本设计锁定语义：「更新受管连接的 API Key 为网关令牌」。
+   - 已存在 → `PATCH /v1/model-connections/agentswitch`（`expectedRevision`、`baseUrl`、`name`、`models`、`selectedModel`）；若当前网关令牌与上次应用不同（见状态记录），则同时 `PUT /v1/model-connections/agentswitch/credential`（body `{expectedRevision, credential}`）更新凭据。**已确认（2026-10-28 源码核实）**：不带 operation token 的 PUT 走 `replaceCredential` 单段式直接替换；prepare/commit 两段式只在携带 operation token 时启用，本设计不用。
    - `probe: false`：不让 Kun 在 connect 时自行探测（探测失败会拒绝连接；连通性由 AgentSwitch 侧自检与用户在 Kun 内的实际使用体现）。
 5. **记录状态**：apply 成功后把摘要写 settings 键 `access.kun.last_applied`（JSON：`baseUrl`、`models`、`selectedModel`、`appliedAt`、网关令牌指纹 SHA-256 前 8 字节），供页签显示「已同步 / 已过期」。**不存令牌本身**。
-6. **CAS 冲突**：任一写请求因 revision 冲突失败 → 重读 revision 重试一次；再失败报「Kun 配置正在被其他客户端修改，请重试」。
+6. **CAS 冲突**：任一写请求返回 HTTP 409（body `code: "revision_conflict"`，响应含最新 snapshot）→ 用其中的最新 revision 重试一次；再失败报「Kun 配置正在被其他客户端修改，请重试」。
 
 ### 状态语义（页签展示）
 
@@ -124,7 +124,7 @@ Kun（https://github.com/KunAgent/Kun，本地优先的桌面 AI 工作台，Ele
 | 设置文件不存在 | 未检测到 Kun（未安装，或安装后从未启动过） |
 | 端口/token 缺失、连接拒绝、超时 | Kun 管理接口不可用，请确认 Kun 正在运行 |
 | runtimeToken 401 | Kun 管理接口认证失败，可能 Kun 已升级或设置文件被改，请重启 Kun 后重试 |
-| 网关自查 401 | 网关令牌无效，请在设置页重新生成令牌后再应用 |
+| 网关令牌为空 | 网关令牌无效，请在设置页重新生成令牌后再应用 |
 | 网关未运行 | 网关未启动，请先在底条启动网关 |
 | CAS 冲突（重试后仍失败） | Kun 配置正在被其他客户端修改，请稍后重试 |
 | connect/PATCH 其他 4xx/5xx | Kun 拒绝了配置写入：\<脱敏后的响应摘要\> |

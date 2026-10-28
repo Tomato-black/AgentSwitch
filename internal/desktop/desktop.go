@@ -83,6 +83,7 @@ type uiState struct {
 	accessGlob    [][2]string // 全局配置编辑行（键/值；nil 时首帧从库加载）
 	accessGlobMsg string      // 全局配置卡提示
 	accessMsg     string      // 列表卡操作结果提示
+	guideMsg      string      // 通用连接信息卡复制提示
 	accessForm    accessForm  // 新建/编辑表单（open 时渲染编辑器卡）
 	desktopForm   desktopForm // Claude Desktop 角色映射表单（open 时渲染）
 	// 设置页（Task 15）：
