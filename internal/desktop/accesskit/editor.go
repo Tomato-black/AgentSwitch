@@ -48,7 +48,7 @@ func EditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State
 			if hooks.ModelSection != nil {
 				hooks.ModelSection(c, t, s, labels, models)
 			} else {
-				DefaultModelSection(c, t, st, acc, labels)
+				DefaultModelSection(c, t, st, acc, labels, ModelHooks{})
 			}
 
 			gs := st.Svc.Gateway.Status()
@@ -86,10 +86,20 @@ func EditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State
 	})
 }
 
-// DefaultModelSection 是默认的「逻辑模型下拉 + 1M」段落（Claude Code 用；
-// 其他 Agent 由 hooks.ModelSection 覆盖）。主模型切换时先按旧模型的
-// SMALL_FAST 派生值重定位，再重新取合成预览；1M 勾选写回 ANTHROPIC_MODEL 后缀。
-func DefaultModelSection(c *ui.Context, t *ui.Theme, st *state.State, acc bridge.AccessConfigs, labels []string) {
+// ModelHooks 让 Agent 在主模型下拉行注入自己的行为（差异归 Agent 子包，
+// 共享 kit 不含任何 Agent 专属分支）：
+//   - OnChanged 在主模型切换后、重新预览前调用（Agent 可重定位派生键、
+//     同步 1M 声明等）；
+//   - Extra 在下拉行内追加 Agent 控件（如 Claude 的 1M 勾选）。
+type ModelHooks struct {
+	OnChanged func(prev string)
+	Extra     func()
+}
+
+// DefaultModelSection 是通用的「逻辑模型下拉」段落：切换主模型后经
+// hooks.OnChanged 交给 Agent 处理，再重新取合成预览；hooks.Extra 渲染在
+// 下拉行内。
+func DefaultModelSection(c *ui.Context, t *ui.Theme, st *state.State, acc bridge.AccessConfigs, labels []string, hooks ModelHooks) {
 	f := &st.Access.Form
 	ui.Row(c).Gap(12).Children(func() {
 		ui.Text(c, "逻辑模型:").Width(96).TextColor(t.TextMuted)
@@ -100,24 +110,13 @@ func DefaultModelSection(c *ui.Context, t *ui.Theme, st *state.State, acc bridge
 		prev := f.ModelLabel
 		sel := ui.Select(c, &f.ModelLabel, labels)
 		if sel.Changed() && f.ModelLabel != prev {
-			if st.Access.App == "claude" {
-				if rebased, err := bridge.RebaseAccessDoc(st.Access.App, f.DocJSON,
-					map[string]string{"ANTHROPIC_SMALL_FAST_MODEL": prev}); err == nil {
-					f.DocJSON = rebased
-				}
-				if f.MainOneM {
-					PatchMainModel(f) // 1M 声明跟随新模型名
-				}
+			if hooks.OnChanged != nil {
+				hooks.OnChanged(prev)
 			}
 			RepreviewForm(st, acc)
 		}
-		if st.Access.App == "claude" {
-			beforeM := f.MainOneM
-			cb := ui.Checkbox(c, &f.MainOneM, "1M")
-			if cb.Changed() && f.MainOneM != beforeM {
-				PatchMainModel(f)
-				RepreviewForm(st, acc)
-			}
+		if hooks.Extra != nil {
+			hooks.Extra()
 		}
 	})
 }

@@ -16,8 +16,34 @@ import (
 func EditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, acc bridge.AccessConfigs, gateOK bool) {
 	accesskit.EditorCard(c, t, s, st, acc, gateOK, accesskit.EditorHooks{
 		ModelSection: func(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, labels []string, models []bridge.ModelView) {
-			accesskit.DefaultModelSection(c, t, st, acc, labels)
+			modelSection(c, t, st, acc, labels)
 			rolesSection(c, t, st, labels)
+		},
+	})
+}
+
+// modelSection 是 Claude 专属的主模型段落：切换主模型时先按旧模型的
+// SMALL_FAST 派生值重定位（否则旧值会覆盖新基线并在保存时冻结），1M 勾选
+// 写回 ANTHROPIC_MODEL 的 [1M] 后缀。
+func modelSection(c *ui.Context, t *ui.Theme, st *state.State, acc bridge.AccessConfigs, labels []string) {
+	f := &st.Access.Form
+	accesskit.DefaultModelSection(c, t, st, acc, labels, accesskit.ModelHooks{
+		OnChanged: func(prev string) {
+			if rebased, err := bridge.RebaseAccessDoc(st.Access.App, f.DocJSON,
+				map[string]string{"ANTHROPIC_SMALL_FAST_MODEL": prev}); err == nil {
+				f.DocJSON = rebased
+			}
+			if f.MainOneM {
+				accesskit.PatchMainModel(f) // 1M 声明跟随新模型名
+			}
+		},
+		Extra: func() {
+			beforeM := f.MainOneM
+			cb := ui.Checkbox(c, &f.MainOneM, "1M")
+			if cb.Changed() && f.MainOneM != beforeM {
+				accesskit.PatchMainModel(f)
+				accesskit.RepreviewForm(st, acc)
+			}
 		},
 	})
 }
