@@ -29,7 +29,7 @@ type Settings struct {
 	PassthroughUnregistered bool
 }
 
-func Default() Settings {
+func defaultSettings() Settings {
 	return Settings{
 		Port: 17890, RequestTimeoutSeconds: 120, ShutdownGraceSeconds: 15,
 		MaxBodyBytes: 10 << 20, MaxConcurrent: 32,
@@ -54,7 +54,7 @@ func (s Settings) Validate() error {
 
 // Load 从 get 读键；空串视为缺失用默认值。
 func Load(get func(key string) (string, error)) (Settings, error) {
-	s := Default()
+	s := defaultSettings()
 	readInt := func(key string, dst *int) error {
 		v, err := get(key)
 		if err != nil || v == "" {

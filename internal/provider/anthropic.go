@@ -158,7 +158,7 @@ func Probe(ctx context.Context, protocol, baseURL, apiKey string, allowPrivate b
 	}
 	res, err := ad.Do(ctx, DoRequest{BaseURL: baseURL, AllowPrivate: allowPrivate, APIKey: apiKey, RawBody: body})
 	if err != nil {
-		return ProbeResult{Stage: "connect", Error: MaskErr(err)}
+		return ProbeResult{Stage: "connect", Error: maskErr(err)}
 	}
 	defer res.Body.Close()
 	io.Copy(io.Discard, io.LimitReader(res.Body, 4<<10))
@@ -168,8 +168,8 @@ func Probe(ctx context.Context, protocol, baseURL, apiKey string, allowPrivate b
 	return ProbeResult{Stage: "auth", OK: true}
 }
 
-// MaskErr 去掉错误文本中可能出现的密钥片段。
-func MaskErr(err error) string {
+// maskErr 去掉错误文本中可能出现的密钥片段。
+func maskErr(err error) string {
 	s := err.Error()
 	if i := strings.Index(s, "sk-"); i >= 0 {
 		return s[:i] + "sk-***"

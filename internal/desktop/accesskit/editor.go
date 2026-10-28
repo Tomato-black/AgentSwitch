@@ -76,7 +76,7 @@ func EditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State
 					ui.Text(c, "网关未运行——保存后需启动网关才能「应用」").TextColor(t.TextMuted)
 				}
 				if uikit.PillButton(c, t, "保存").Clicked() {
-					SaveForm(st, acc)
+					saveForm(st, acc)
 				}
 				if uikit.SoftButton(c, t, s, "gray", "取消").Clicked() {
 					st.Access.Form = state.AccessForm{}
@@ -138,8 +138,8 @@ func RepreviewForm(st *state.State, acc bridge.AccessConfigs) {
 	f.Msg = ""
 }
 
-// SaveForm 校验并保存表单；文档原文送 bridge（parse+归一化错误内联）。
-func SaveForm(st *state.State, acc bridge.AccessConfigs) {
+// saveForm 校验并保存表单；文档原文送 bridge（parse+归一化错误内联）。
+func saveForm(st *state.State, acc bridge.AccessConfigs) {
 	f := &st.Access.Form
 	if strings.TrimSpace(f.Name) == "" {
 		f.Msg = "请填写配置名"

@@ -81,8 +81,8 @@ func desktopFormFromDoc(st *state.State, raw string) {
 	}
 }
 
-// desktopPreloadForm 打开 Desktop 编辑器：新建空表单；编辑回填配置。
-func PreloadForm(st *state.State, acc bridge.AccessConfigs) {
+// preloadForm 打开 Desktop 编辑器：新建空表单；编辑回填配置。
+func preloadForm(st *state.State, acc bridge.AccessConfigs) {
 	f := &st.Access.DesktopForm
 	if f.EditID == "" {
 		return
@@ -213,7 +213,7 @@ func ConfigRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State,
 		}
 		if uikit.SoftButton(c, t, s, "gray", "编辑").Clicked() {
 			st.Access.DesktopForm = state.DesktopForm{Open: true, EditID: v.ID}
-			PreloadForm(st, acc)
+			preloadForm(st, acc)
 		}
 		if uikit.SoftButton(c, t, s, "danger", "删除").Clicked() {
 			if err := acc.Remove(v.ID); err != nil {

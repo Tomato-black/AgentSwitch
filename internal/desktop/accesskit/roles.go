@@ -7,11 +7,11 @@ import (
 	"AgentSwitch/internal/modelid"
 )
 
-// ClaudeRole 是 Claude 模型映射一行（spec 2026-10-19 §3.2）：角色 → 文档
+// claudeRole 是 Claude 模型映射一行（spec 2026-10-19 §3.2）：角色 → 文档
 // env 键。NameKey 为空的角色无「显示名称」列（Subagent 不进 /model 菜单）。
-type ClaudeRole struct{ Label, EnvKey, NameKey string }
+type claudeRole struct{ Label, EnvKey, NameKey string }
 
-var claudeRoles = []ClaudeRole{
+var claudeRoles = []claudeRole{
 	{"Sonnet", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME"},
 	{"Opus", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"},
 	{"Fable", "ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"},
@@ -23,10 +23,10 @@ var claudeRoles = []ClaudeRole{
 const FollowModel = "（跟随主模型）"
 
 // ClaudeRoles 返回 5 角色固定顺序（与 cc-switch 对齐）。
-func ClaudeRoles() []ClaudeRole { return claudeRoles }
+func ClaudeRoles() []claudeRole { return claudeRoles }
 
-// RoleIndexByEnvKey 返回角色下标（测试与补丁用）。
-func RoleIndexByEnvKey(envKey string) int {
+// roleIndexByEnvKey 返回角色下标（测试与补丁用）。
+func roleIndexByEnvKey(envKey string) int {
 	for i, r := range claudeRoles {
 		if r.EnvKey == envKey {
 			return i

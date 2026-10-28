@@ -223,7 +223,7 @@ func reloadGlobal(st *state.State, acc bridge.AccessConfigs) {
 	st.Access.GlobMsg = ""
 }
 
-// accessPreloadForm 打开编辑器：预填名称/模型，加载 PreviewDoc 合成预览
+// preloadForm 打开编辑器：预填名称/模型，加载 PreviewDoc 合成预览
 // （新建以 "{}" 为底；预览失败回退原文并内联报错）。
 func preloadForm(st *state.State, acc bridge.AccessConfigs) {
 	f := &st.Access.Form

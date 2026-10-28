@@ -6,7 +6,7 @@ import (
 )
 
 func TestDefaultIsValid(t *testing.T) {
-	s := Default()
+	s := defaultSettings()
 	if err := s.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -19,7 +19,7 @@ func TestDefaultIsValid(t *testing.T) {
 }
 
 func TestValidateRejectsBadPort(t *testing.T) {
-	s := Default()
+	s := defaultSettings()
 	s.Port = 0
 	if err := s.Validate(); err == nil || !strings.Contains(err.Error(), "port") {
 		t.Fatalf("want port error, got %v", err)
@@ -39,10 +39,10 @@ func TestLoadUsesDefaultsAndOverrides(t *testing.T) {
 }
 
 // TestPassthroughDefaultFalse：routing.passthrough_unregistered 缺省 false
-// （Default() 同），Set "1" → true。
+// （defaultSettings() 同），Set "1" → true。
 func TestPassthroughDefaultFalse(t *testing.T) {
-	if Default().PassthroughUnregistered {
-		t.Fatal("Default() must be false")
+	if defaultSettings().PassthroughUnregistered {
+		t.Fatal("defaultSettings() must be false")
 	}
 	empty := func(string) (string, error) { return "", nil }
 	s, err := Load(empty)

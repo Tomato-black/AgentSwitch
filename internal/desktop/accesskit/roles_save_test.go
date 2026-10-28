@@ -43,7 +43,7 @@ func TestAccessSyncRolesAndPatch(t *testing.T) {
 	f := &state.AccessForm{}
 	f = &state.AccessForm{DocJSON: `{"env":{"ANTHROPIC_DEFAULT_HAIKU_MODEL":"fast[1M]"}}`}
 	SyncRolesFromDoc(f)
-	i := RoleIndexByEnvKey("ANTHROPIC_DEFAULT_HAIKU_MODEL")
+	i := roleIndexByEnvKey("ANTHROPIC_DEFAULT_HAIKU_MODEL")
 	if f.RoleModels[i] != "fast" || !f.RoleOneM[i] {
 		t.Fatalf("%v %v", f.RoleModels, f.RoleOneM)
 	}
@@ -107,7 +107,7 @@ func TestAccessSaveFormCodexUsesFirstModel(t *testing.T) {
 		DocJSON:     `{"models":["my-code","second"],"env":{}}`,
 	}
 	acc := bridge.AccessConfigs{A: a}
-	SaveForm(st, acc)
+	saveForm(st, acc)
 	if st.Access.Form.Msg != "" {
 		t.Fatalf("保存应成功: %q", st.Access.Form.Msg)
 	}
@@ -124,7 +124,7 @@ func TestAccessSaveFormCodexRejectsEmptyList(t *testing.T) {
 	st.Access.App = "codex"
 	st.Access.Form = state.AccessForm{Open: true, Name: "cfg"}
 	acc := bridge.AccessConfigs{A: a}
-	SaveForm(st, acc)
+	saveForm(st, acc)
 	if st.Access.Form.Msg != "请至少添加一个模型" {
 		t.Fatalf("空列表应报错: %q", st.Access.Form.Msg)
 	}
