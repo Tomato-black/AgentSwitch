@@ -34,11 +34,11 @@ func TestAuditLinesCarryActorAndResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cs.Update(c.ID, "main2", "https://api2.example.com", "", true, false); err != nil {
+	if err := cs.Update(c.ID, "main2", "https://api2.example.com", "anthropic", "", true, false); err != nil {
 		t.Fatal(err)
 	}
 	cs.SetEnabled(c.ID, false)
-	if err := cs.Update(c.ID, "main2", "https://api2.example.com", "sk-ant-5678", true, false); err != nil {
+	if err := cs.Update(c.ID, "main2", "https://api2.example.com", "anthropic", "sk-ant-5678", true, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := cs.SetSuggestions(c.ID, []string{"claude-opus", "claude-sonnet"}); err != nil {

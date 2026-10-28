@@ -111,7 +111,9 @@ func (s Channels) Create(presetID, name, baseURL, protocol, apiKey string, enabl
 }
 
 // Update 改渠道字段；apiKey 非空=覆盖单 Key，空=保持原 Key 不变。
-func (s Channels) Update(id, name, baseURL, apiKey string, enabled, allowPrivate bool) error {
+// protocol 可编辑（2026-10-28 修订，偏离 2026-10-23 spec §5「创建后不可变」），
+// 校验口径与 Create 一致。
+func (s Channels) Update(id, name, baseURL, protocol, apiKey string, enabled, allowPrivate bool) error {
 	c, err := s.A.Store().Channels().Get(id)
 	if err != nil {
 		return err
@@ -119,7 +121,10 @@ func (s Channels) Update(id, name, baseURL, apiKey string, enabled, allowPrivate
 	if err := validateChannelURL(baseURL, allowPrivate); err != nil {
 		return err
 	}
-	c.Name, c.BaseURL, c.Enabled, c.AllowPrivateUpstream = name, baseURL, enabled, allowPrivate
+	if protocol != "anthropic" && protocol != "openai" {
+		return fmt.Errorf("协议必须是 anthropic 或 openai")
+	}
+	c.Name, c.BaseURL, c.Protocol, c.Enabled, c.AllowPrivateUpstream = name, baseURL, protocol, enabled, allowPrivate
 	keySet := false
 	if apiKey != "" {
 		ref := credential.ChannelKey(id)
@@ -132,7 +137,7 @@ func (s Channels) Update(id, name, baseURL, apiKey string, enabled, allowPrivate
 	if _, err := s.A.Store().Channels().Save(c); err != nil {
 		return friendlySaveErr(err)
 	}
-	s.A.Log().Info("channel updated", "id", id, "actor", "ui", "result", "ok")
+	s.A.Log().Info("channel updated", "id", id, "protocol", protocol, "actor", "ui", "result", "ok")
 	if keySet {
 		s.A.Log().Info("channel key set", "id", id, "actor", "ui", "result", "ok")
 	}

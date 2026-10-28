@@ -45,7 +45,7 @@ func TestUpdateEmptyKeyKeepsOld(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cs.Update(c.ID, "main2", "https://api2.example.com", "", false, false); err != nil {
+	if err := cs.Update(c.ID, "main2", "https://api2.example.com", "anthropic", "", false, false); err != nil {
 		t.Fatal(err)
 	}
 	got, err := creds.Get(credential.ChannelKey(c.ID))
@@ -57,12 +57,37 @@ func TestUpdateEmptyKeyKeepsOld(t *testing.T) {
 		t.Fatalf("detail %+v %v", d, err)
 	}
 	// 非空 apiKey 覆盖旧 Key
-	if err := cs.Update(c.ID, "main2", "https://api2.example.com", "sk-new67890", false, false); err != nil {
+	if err := cs.Update(c.ID, "main2", "https://api2.example.com", "anthropic", "sk-new67890", false, false); err != nil {
 		t.Fatal(err)
 	}
 	got, err = creds.Get(credential.ChannelKey(c.ID))
 	if err != nil || string(got) != "sk-new67890" {
 		t.Fatalf("key must be replaced: %q %v", got, err)
+	}
+}
+
+// TestUpdateChangesProtocol：Update 接受协议参数并落库；非法协议报错且
+// 不改库（2026-10-28：协议自创建后可编辑，偏离 2026-10-23 spec §5「创建后
+// 不可变」）。
+func TestUpdateChangesProtocol(t *testing.T) {
+	cs, _ := channelsSvc(t)
+	c, err := cs.Create("", "proto", "https://api.example.com", "anthropic", "sk-proto-1", true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cs.Update(c.ID, "proto", "https://api.example.com", "openai", "", false, false); err != nil {
+		t.Fatal(err)
+	}
+	d, err := cs.Get(c.ID)
+	if err != nil || d.Protocol != "openai" {
+		t.Fatalf("协议应改为 openai: %+v %v", d, err)
+	}
+	if err := cs.Update(c.ID, "proto", "https://api.example.com", "gopher", "", false, false); err == nil {
+		t.Fatal("非法协议应报错")
+	}
+	d, _ = cs.Get(c.ID)
+	if d.Protocol != "openai" {
+		t.Fatalf("非法协议不得落库: %q", d.Protocol)
 	}
 }
 

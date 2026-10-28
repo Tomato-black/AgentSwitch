@@ -1,6 +1,6 @@
 // channels.go 是渠道页（logical-models spec §6.3 / Task 14）：卡片列表（单
-// Key 语义）+ 预设网格新建页 + 详情页（Key 更新留空不改、建议模型编辑、连通
-// 测试、删除引用警告）。纯助手 applyPreset / channelForm.validate /
+// Key 语义）+ 预设网格新建页 + 详情页（协议可编辑、Key 更新留空不改、建议
+// 模型编辑、连通测试、删除引用警告）。纯助手 applyPreset / channelForm.validate /
 // referencedBy 供测试直断言；渲染薄壳不测字符串细节。密钥池与 public/
 // upstream 模型映射 UI 已随渠道单 Key 重构退役。
 package desktop
@@ -188,6 +188,16 @@ func (u *uiState) openChannelDetail(id string) {
 	u.chSuggText = strings.Join(d.Suggestions, "\n")
 }
 
+// detailProtocolSwitched 是详情页协议切换联动：与新建页共用 switchProtocol
+// 的手改保护语义，唯一差别是详情页的建议模型承载在 chSuggText 而非
+// chForm.suggestions——联动前同步进来、联动后写回去，保证「未手改才替换」
+// 的判定基于用户实际看到的文本。presetID 查表（ById）由调用方完成。
+func (u *uiState) detailProtocolSwitched(p presets.ChannelPreset) {
+	u.chForm.suggestions = u.chSuggText
+	switchProtocol(&u.chForm, p, u.chForm.protocol)
+	u.chSuggText = u.chForm.suggestions
+}
+
 // resetChannelForm 复位新建表单：协议默认 openai、启用；预设字段清空待选。
 func (u *uiState) resetChannelForm() {
 	u.chForm = channelForm{protocol: "openai", enabled: true}
@@ -215,15 +225,15 @@ func (u *uiState) createChannel() {
 	u.openChannelDetail(v.ID)
 }
 
-// saveChannelDetail 落详情「保存」：校验 → Update（Key 框留空=不改）→
-// 建议模型全量替换。
+// saveChannelDetail 落详情「保存」：校验 → Update（Key 框留空=不改；协议
+// 可编辑，2026-10-28 修订）→ 建议模型全量替换。
 func (u *uiState) saveChannelDetail() {
 	if err := u.chForm.validate(); err != nil {
 		u.chTestMsg = err.Error()
 		return
 	}
 	if err := u.svc.Channels.Update(u.chForm.editID, u.chForm.name, u.chForm.baseURL,
-		u.chKeyInput, u.chForm.enabled, u.chForm.allowPrivate); err != nil {
+		u.chForm.protocol, u.chKeyInput, u.chForm.enabled, u.chForm.allowPrivate); err != nil {
 		u.chTestMsg = err.Error()
 		return
 	}
@@ -474,8 +484,8 @@ func (u *uiState) customTile(c *ui.Context, t *ui.Theme, s softPalette) {
 	}
 }
 
-// channelDetailView 是详情页：连接配置（Key 更新框留空=不改）+ 建议模型
-// 多行编辑 + 测试连通 + 删除（引用警告）。
+// channelDetailView 是详情页：连接配置（协议可编辑、Key 更新框留空=不改）+
+// 建议模型多行编辑 + 测试连通 + 删除（引用警告）。
 func (u *uiState) channelDetailView(c *ui.Context) {
 	t := c.Theme()
 	s := softs(t)
@@ -515,7 +525,14 @@ func (u *uiState) channelDetailView(c *ui.Context) {
 					})
 					ui.Row(c).Gap(12).Children(func() {
 						ui.Text(c, "协议:").Width(96).TextColor(t.TextMuted)
-						ui.Text(c, d.Protocol).Font(monoFont).TextColor(t.TextMuted)
+						// 协议可编辑（2026-10-28 修订，偏离 2026-10-23 spec §5
+						// 「创建后不可变」）：切换联动与新建页同款（手改保护见
+						// switchProtocol）；自定义渠道（presetID 查不到）只切协议。
+						if ui.Select(c, &u.chForm.protocol, []string{"openai", "anthropic"}).Changed() {
+							if p, ok := presets.ById(u.chForm.presetID); ok {
+								u.detailProtocolSwitched(p)
+							}
+						}
 					})
 					ui.Row(c).Gap(12).Children(func() {
 						ui.Text(c, "API Key:").Width(96).TextColor(t.TextMuted)

@@ -188,6 +188,66 @@ func TestSwitchProtocolRules(t *testing.T) {
 	}
 }
 
+// TestDetailProtocolSwitched：详情页切协议联动——baseURL 与建议文本框
+// （chSuggText）走 switchProtocol 的手改保护语义，联动结果写回 chSuggText。
+// 2026-10-28：协议自创建后可编辑（偏离 2026-10-23 spec §5「创建后不可变」），
+// 联动规则与新建页一致。
+func TestDetailProtocolSwitched(t *testing.T) {
+	dual := presets.ChannelPreset{
+		ID: "dual",
+		Protocols: map[string]presets.ProtocolEndpoint{
+			"openai":    {BaseURL: "https://o.example/v1", DefaultModels: []string{"m-o"}},
+			"anthropic": {BaseURL: "https://a.example", DefaultModels: []string{"m-a"}},
+		},
+	}
+	// ① 未手改：baseURL 与建议文本都换到目标协议预设值，chSuggText 同步写回。
+	u := &uiState{chForm: channelForm{presetID: "dual", protocol: "anthropic",
+		baseURL: "https://o.example/v1"}, chSuggText: "m-o"}
+	u.detailProtocolSwitched(dual)
+	if u.chForm.baseURL != "https://a.example" {
+		t.Fatalf("① baseURL 应联动: %q", u.chForm.baseURL)
+	}
+	if u.chSuggText != "m-a" {
+		t.Fatalf("① 建议文本应联动写回: %q", u.chSuggText)
+	}
+	// ② 建议文本手改：保留；baseURL 未手改：仍联动（两字段独立判定）。
+	u = &uiState{chForm: channelForm{presetID: "dual", protocol: "anthropic",
+		baseURL: "https://o.example/v1"}, chSuggText: "my-model"}
+	u.detailProtocolSwitched(dual)
+	if u.chSuggText != "my-model" {
+		t.Fatalf("② 手改建议文本应保留: %q", u.chSuggText)
+	}
+	if u.chForm.baseURL != "https://a.example" {
+		t.Fatalf("② baseURL 应联动: %q", u.chForm.baseURL)
+	}
+}
+
+// TestSaveChannelDetailPersistsProtocol：详情页改协议后保存，协议落库。
+func TestSaveChannelDetailPersistsProtocol(t *testing.T) {
+	u, _ := testUI(t)
+	v, err := u.svc.Channels.Create("qwen", "proto", "https://api.example.com/v1", "openai", "sk-proto-99", true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.page = "channels"
+	u.openChannelDetail(v.ID)
+	if u.chForm.protocol != "openai" {
+		t.Fatalf("前置条件：回显协议应为 openai, %q", u.chForm.protocol)
+	}
+	u.chForm.protocol = "anthropic" // 模拟下拉切换
+	u.saveChannelDetail()
+	d, err := u.svc.Channels.Get(v.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Protocol != "anthropic" {
+		t.Fatalf("保存后协议应为 anthropic, %q", d.Protocol)
+	}
+	if !strings.Contains(u.chTestMsg, "已保存") {
+		t.Fatalf("chTestMsg = %q", u.chTestMsg)
+	}
+}
+
 // --- 拉取模型（详情页 / 新建表单）---
 
 // TestChannelDetailFetchModelsOverwritesText：详情页点「拉取模型」把建议
