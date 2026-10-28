@@ -14,10 +14,11 @@ import (
 	"AgentSwitch/internal/storage"
 )
 
-// TestAccessTabTitles 覆盖接入页三个 Agent tab 标题快照。
+// TestAccessTabTitles 覆盖接入页四个 tab 标题快照（三个受管 Agent +
+// 连接指南——第三方系统照指南手工接入，AgentSwitch 不写其配置）。
 func TestAccessTabTitles(t *testing.T) {
-	if a, b, d := accessTabTitles(); a != "Claude Code" || b != "Codex" || d != "Claude Desktop" {
-		t.Fatal(a, b, d)
+	if a, b, d, g := accessTabTitles(); a != "Claude Code" || b != "Codex" || d != "Claude Desktop" || g != "连接指南" {
+		t.Fatal(a, b, d, g)
 	}
 }
 

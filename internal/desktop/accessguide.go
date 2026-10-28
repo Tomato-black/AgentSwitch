@@ -50,7 +50,7 @@ func gatewayGuideRows(port int, token string, models []string) []guideRow {
 	}
 }
 
-// guideCard 渲染「通用连接信息」卡片（接入页顶部、所有页签可见）：网关状态
+// guideCard 渲染「通用连接信息」卡片（接入页「连接指南」页签）：网关状态
 // 提示 + 连接信息行（值可复制）。用户照卡片内容到目标系统（如 Kun 的
 // Settings > Providers）自行填写——AgentSwitch 不写第三方系统的配置。
 func (u *uiState) guideCard(c *ui.Context, t *ui.Theme, s softPalette) {

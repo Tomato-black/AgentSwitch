@@ -48,9 +48,10 @@ type accessForm struct {
 	codexPreview    string
 }
 
-// accessTabTitles 返回三个 Agent tab 的标题（字符串快照锚点）。
-func accessTabTitles() (claude, codex, desktop string) {
-	return "Claude Code", "Codex", "Claude Desktop"
+// accessTabTitles 返回接入页四个 tab 的标题（字符串快照锚点）：三个受管
+// Agent + 连接指南（第三方系统照指南手工接入，AgentSwitch 不写其配置）。
+func accessTabTitles() (claude, codex, desktop, guide string) {
+	return "Claude Code", "Codex", "Claude Desktop", "连接指南"
 }
 
 // accessRowBadge 返回配置行「使用中」徽标文本（非 current 为空串）。
@@ -573,16 +574,13 @@ func (u *uiState) accessPage(c *ui.Context) {
 	if u.accessApp == "" {
 		u.accessApp = "claude"
 	}
-	claudeTitle, codexTitle, desktopTitle := accessTabTitles()
+	claudeTitle, codexTitle, desktopTitle, guideTitle := accessTabTitles()
 	gateOK, gateReason := u.accessGatewayGate()
 
 	// 内容列包 Scroll（同 channels/logicalmodels 的长页面）：编辑器（角色表 +
 	// 320 高 TextArea）会让页面超出视口，没有滚动容器时底部内容不可达。
 	ui.Scroll(c).Grow(1).Children(func() {
 		ui.Column(c).Gap(12).Children(func() {
-			// 通用连接信息卡（页顶、所有页签可见）：第三方系统（Kun 等）
-			// 的用户照此手工填写，AgentSwitch 不写其配置文件。
-			u.guideCard(c, t, s)
 			// Agent tab 行（切 tab 重置编辑态，避免表单跨 Agent 误存）
 			ui.Row(c).Gap(8).Children(func() {
 				if softButton(c, t, s, tabKind(u.accessApp == "claude"), claudeTitle).Clicked() {
@@ -604,7 +602,20 @@ func (u *uiState) accessPage(c *ui.Context) {
 					u.accessForm = accessForm{}
 					u.desktopForm = desktopForm{}
 				}
+				if softButton(c, t, s, tabKind(u.accessApp == "guide"), guideTitle).Clicked() {
+					u.accessApp = "guide"
+					u.accessMsg = ""
+					u.accessForm = accessForm{}
+					u.desktopForm = desktopForm{}
+				}
 			})
+			// 连接指南页签：只渲染通用连接信息卡（第三方系统如 Kun 照此
+			// 在目标系统里手工填写），跳过 Agent 专属的全局配置/实际配置/
+			// 编辑器（提前退出本闭包，下方卡片不再渲染）。
+			if u.accessApp == "guide" {
+				u.guideCard(c, t, s)
+				return
+			}
 			if u.accessGlob == nil {
 				u.accessReloadGlobal(acc)
 			}
