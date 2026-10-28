@@ -42,29 +42,11 @@ func keepTray(t *mygo.Tray) { appTray = t }
 // 下列过渡字段在 T4–T12 迁移中逐页迁出（页面搬走后删除）。
 type uiState struct {
 	*state.State
-	status       app.StateInfo
-	token        string
-	logPath      string       // 日志文件路径（a.LogPath()；概览恒显的"日志:"提示）
-	showToken    bool         // 令牌明文显示开关
-	confirmRegen bool         // 重新生成令牌的 AlertDialog open 位（选定后框架自关）
-	table        ui.ListState // 最近请求表状态
-	// 模型聚合页（Task 8 重写：搜索 + 每行开关）：
-	modelList  ui.ListState // 聚合表状态；Selected 经 modelSel 指向当前行
-	modelSel   int          // 聚合表当前行（-1=无）
-	modelQuery string       // 页头搜索框查询（filterModelRows 消费）
 }
 
-func newUIState(svc state.Services, a *app.App) *uiState {
-	si := a.State()
-	st, _ := a.CurrentSettings()
-	u := &uiState{State: state.New(svc), status: si, token: st.GatewayToken,
-		logPath:  a.LogPath(),
-		modelSel: -1}
+func newUIState(svc state.Services) *uiState {
+	u := &uiState{State: state.New(svc)}
 	u.Schedule = afterEvent
-	// 表格行选择：Selected 必须非 nil 点击才选行（mygo ui.ListState.Selected
-	// 注释：*Selected 是所选行，-1 为无），这里指向状态字段（-1=无），
-	// "载入所选/停用·启用/测试"才落得到所选行。
-	u.modelList.Selected = &u.modelSel
 	return u
 }
 
@@ -119,7 +101,7 @@ func Run(a *app.App) error {
 
 	// 单实例锁已在入口（cmd/agentswitch/main.go）取——那里的抢锁失败在
 	// app.Open 之前返回，不泄漏库句柄、不留并发迁移窗口；此处不得再取锁。
-	u := newUIState(svc, a)
+	u := newUIState(svc)
 	// win 经 atomic 读写：WhenReady/托盘重开（主线程）写，OnState/OnRecord
 	// 回调（网关 goroutine）读——消除裸指针的数据竞争。
 	var win atomic.Pointer[mygo.Window]
@@ -157,11 +139,6 @@ func Run(a *app.App) error {
 			keepTray(tray)
 		}
 		openWindow(u, &win)
-		a.OnState(func(si app.StateInfo) {
-			if w := win.Load(); w != nil {
-				w.Update(func() { u.status = si })
-			}
-		})
 		a.OnRecord(func(rec telemetry.RequestRecord) {
 			if w := win.Load(); w != nil {
 				w.Update(func() {

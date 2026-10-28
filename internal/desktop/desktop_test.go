@@ -28,7 +28,7 @@ func testUI(t *testing.T) (*uiState, *app.App) {
 		Channels: bridge.Channels{A: a},
 		Logical:  &bridge.LogicalModels{A: a},
 	}
-	return newUIState(svc, a), a
+	return newUIState(svc), a
 }
 
 // TestShellShowsGatewayState 覆盖底条状态位：fresh app 停机态译为「已停止」
