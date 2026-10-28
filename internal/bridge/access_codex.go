@@ -11,6 +11,29 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
+// projectCodex 把合成 env、绑定的默认模型与接入文档投影为 Codex 的
+// config.toml 与模型目录字节（不落盘，供 Apply 写入与 UI 预览共用）。
+// 投影顺序（spec 2026-10-27 §4.3、§5）：
+//   - 先读取并解析现有 <home>/.codex/config.toml：解析失败在模型列表/目录
+//     生成之前中止，失败路径不产生半状态；文件不存在视为空表；未知用户
+//     键/表语义保留（TOML 注释允许丢失）。
+//   - 模型列表取文档显式 models；缺省回退「绑定模型 + 全部启用模型」并按名
+//     排序（resolveCodexModels），每项必须存在且启用——目录只为可用模型
+//     生成条目。目录条目取这些模型的元数据（codexCatalogModels），自动审批
+//     覆盖取 codex.auto_review_model（空则不写，Codex 回落主模型）。
+//   - 受管键：model=models[0]、model_provider="agentswitch"、
+//     model_catalog_json=agentswitch-model-catalog.json（桌面版模型选择器
+//     只认该文件，不读网关 /v1/models）、disable_response_storage=true、
+//     web_search="disabled"、model_context_window/models[0] 的
+//     ContextWindow 与 model_auto_compact_token_limit=窗口的 90%（窗口未
+//     声明即 0 时两个键都不写也不删，保留用户设置）、
+//     model_providers.agentswitch 子表
+//     {name: "agentswitch"（Codex 0.143+ 必填且非空）,
+//     base_url: env["OPENAI_BASE_URL"], wire_api: "responses"
+//     （Codex 0.143+ 仅支持 Responses 线路）, requires_openai_auth: false,
+//     experimental_bearer_token: env["OPENAI_API_KEY"]}（同键替换，子表内
+//     非受管键保留）。
+//
 // auth.json 不读也不写：它是官方 ChatGPT 登录文件，接入配置只把第三方 Key
 // 写进 config.toml 的 provider 表（Codex 0.149 起自定义 provider 不再从
 // auth.json 继承凭据；桌面版从 Dock 启动也不继承 shell env，故不能用

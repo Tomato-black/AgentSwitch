@@ -10,10 +10,10 @@ import (
 // 系→act（软橙）、openai 系→ok（软绿），未知名走 fnv 轮转，但同一输入
 // 必须恒同输出——tile 底色不允许逐帧漂移。
 func TestTileSoftDeterministic(t *testing.T) {
-	if TileSoft("anthropic-official") != "act" || TileSoft("openai-compatible") != "ok" {
+	if tileSoft("anthropic-official") != "act" || tileSoft("openai-compatible") != "ok" {
 		t.Fatal("preset 映射")
 	}
-	if TileSoft("GLM") != TileSoft("GLM") {
+	if tileSoft("GLM") != tileSoft("GLM") {
 		t.Fatal("must be deterministic")
 	}
 }

@@ -10,7 +10,7 @@ var sensitiveHeaders = []string{"Authorization", "X-Api-Key", "Cookie", "Set-Coo
 // MaskToken 对非空值打码并以 "***" 结尾：首词是 scheme 形态（纯字母数字且不超过 16 个字符，
 // 如 Bearer、Basic）时保留 "scheme + 空格 + 余下部分的前 4 个字符"；否则只保留前 4 个字符。
 // 两种情况都丢弃其余全部内容（含后续空格之后的任何字符）。
-func MaskToken(v string) string {
+func maskToken(v string) string {
 	if v == "" {
 		return ""
 	}
@@ -37,11 +37,11 @@ func isScheme(s string) bool {
 }
 
 // RedactHeaders 返回拷贝，敏感头的值被掩码；输入不被修改。
-func RedactHeaders(h http.Header) http.Header {
+func redactHeaders(h http.Header) http.Header {
 	out := h.Clone()
 	for _, k := range sensitiveHeaders {
 		if v := out.Get(k); v != "" {
-			out.Set(k, MaskToken(v))
+			out.Set(k, maskToken(v))
 		}
 	}
 	return out

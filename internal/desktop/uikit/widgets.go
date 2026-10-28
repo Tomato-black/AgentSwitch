@@ -94,7 +94,7 @@ var tileRots = [3]tileRot{
 // act（软橙），含 openai/gpt → ok（软绿）；其余 fnv32a(name)%3 轮转
 // rot0/rot1/rot2 三组固定色。匹配大小写不敏感（用户起的渠道名大小写
 // 任意），同输入恒同输出（tile 底色不许逐帧漂移）。
-func TileSoft(name string) string {
+func tileSoft(name string) string {
 	n := strings.ToLower(name)
 	switch {
 	case strings.Contains(n, "anthropic") || strings.Contains(n, "claude"):
@@ -112,7 +112,7 @@ func TileSoft(name string) string {
 // 渠道名不碎字）；字号随 size 缩放（40px tile ≈ 14）。
 func Tile(c *ui.Context, t *ui.Theme, s SoftPalette, name string, size float32) {
 	var bg, fg ui.Color
-	switch kind := TileSoft(name); {
+	switch kind := tileSoft(name); {
 	case kind == "act":
 		bg, fg = s.Act, s.ActText
 	case kind == "ok":

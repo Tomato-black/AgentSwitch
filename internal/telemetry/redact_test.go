@@ -7,27 +7,27 @@ import (
 )
 
 func TestMaskToken(t *testing.T) {
-	got := MaskToken("Bearer sk-ant-abcdefghijklmnop")
+	got := maskToken("Bearer sk-ant-abcdefghijklmnop")
 	if strings.Contains(got, "efghijklmnop") {
 		t.Fatalf("secret leaked: %q", got)
 	}
 	if !strings.HasPrefix(got, "Bearer sk-a") || !strings.HasSuffix(got, "***") {
 		t.Fatalf("unexpected mask: %q", got)
 	}
-	if MaskToken("") != "" {
+	if maskToken("") != "" {
 		t.Fatal("empty stays empty")
 	}
 }
 
 func TestMaskTokenNonSchemeValues(t *testing.T) {
-	got := MaskToken("session=topsecret; theme=dark")
+	got := maskToken("session=topsecret; theme=dark")
 	if strings.Contains(got, "topsecret") || strings.Contains(got, "theme") {
 		t.Fatalf("cookie value leaked: %q", got)
 	}
 	if !strings.HasSuffix(got, "***") {
 		t.Fatalf("missing mask: %q", got)
 	}
-	sc := MaskToken("session=topsecret; Path=/; HttpOnly")
+	sc := maskToken("session=topsecret; Path=/; HttpOnly")
 	if strings.Contains(sc, "topsecret") || !strings.HasSuffix(sc, "***") {
 		t.Fatalf("set-cookie value leaked: %q", sc)
 	}
@@ -38,7 +38,7 @@ func TestRedactHeaders(t *testing.T) {
 	h.Set("Authorization", "Bearer secret-token-value")
 	h.Set("X-Api-Key", "sk-ant-topsecret")
 	h.Set("Content-Type", "application/json")
-	out := RedactHeaders(h)
+	out := redactHeaders(h)
 	if strings.Contains(out.Get("Authorization"), "secret-token-value") ||
 		strings.Contains(out.Get("X-Api-Key"), "topsecret") {
 		t.Fatalf("leak: %v", out)
