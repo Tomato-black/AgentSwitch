@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"AgentSwitch/internal/app"
@@ -194,48 +195,111 @@ func (s Channels) FetchModels(id string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := provider.ValidateBaseURL(c.BaseURL, c.AllowPrivateUpstream); err != nil {
-		return nil, fmt.Errorf("Base URL 校验失败: %w", err)
-	}
 	key, err := s.secret(c)
 	if err != nil {
 		return nil, fmt.Errorf("渠道无可用密钥，无法从上游获取模型: %w", err)
 	}
-	req, err := http.NewRequestWithContext(context15(), http.MethodGet,
-		strings.TrimRight(c.BaseURL, "/")+"/v1/models", nil)
-	if err != nil {
-		return nil, err
+	return fetchModelsHTTP(c.BaseURL, c.Protocol, key, c.AllowPrivateUpstream)
+}
+
+// FetchModelsFromDraft 用未保存渠道的表单值直接拉模型（新建表单「拉取模型」
+// 用；渠道尚未入库，无 Key 可读）。协议与 Key 在此校验——Create/Update 侧
+// 对 Key 只在 Create 时必填，草稿拉取则必须显式提供。
+func (s Channels) FetchModelsFromDraft(baseURL, protocol, apiKey string, allowPrivate bool) ([]string, error) {
+	if protocol != "anthropic" && protocol != "openai" {
+		return nil, fmt.Errorf("协议必须是 anthropic 或 openai")
 	}
-	if c.Protocol == "openai" {
-		req.Header.Set("Authorization", "Bearer "+key)
-	} else {
-		req.Header.Set("X-Api-Key", key)
-		req.Header.Set("Anthropic-Version", "2023-06-01")
+	if strings.TrimSpace(apiKey) == "" {
+		return nil, fmt.Errorf("需要填写 API Key 后才能拉取模型")
 	}
-	resp, err := fetchModelsClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("上游请求失败: %w", err)
+	return fetchModelsHTTP(baseURL, protocol, apiKey, allowPrivate)
+}
+
+// 分页上限：页数与总条数都封顶，防止上游无限 has_more 把 UI 卡死
+// （fetchModelsHTTP 单次调用阻塞 UI 线程，与「测试连通」同一姿态）。
+const (
+	fetchModelsMaxPages = 10
+	fetchModelsMaxTotal = 500
+)
+
+// fetchModelsHTTP 是 GET {baseURL}/v1/models 的分页核心。响应形如
+// {"data":[{"id":...}], "has_more"?:bool, "next_cursor"?:string}：
+//   - has_more=true 且有 next_cursor → 下一页带 cursor=<next_cursor>；
+//   - has_more=true 且无 next_cursor → 下一页带 after_id=<最后一条 id>
+//     （Anthropic 官方 /v1/models 的续页参数）；
+//   - 任一页非 200 即中止，返回已收集的部分 + 错误。
+//
+// 跨页按 id 去重保序；单页超过 fetchModelsMaxTotal 条或页数达到
+// fetchModelsMaxPages 即停。上游 URL 逐页重新校验（ValidateBaseURL），
+// 不跟随 3xx。
+func fetchModelsHTTP(baseURL, protocol, apiKey string, allowPrivate bool) ([]string, error) {
+	if err := provider.ValidateBaseURL(baseURL, allowPrivate); err != nil {
+		return nil, fmt.Errorf("Base URL 校验失败: %w", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
-		return nil, fmt.Errorf("上游重定向被拒绝: %d", resp.StatusCode)
+	base := strings.TrimRight(baseURL, "/") + "/v1/models"
+	key := strings.TrimSpace(apiKey)
+	seen := map[string]bool{}
+	var out []string
+	cursor := ""
+	for page := 0; page < fetchModelsMaxPages; page++ {
+		req, err := http.NewRequestWithContext(context15(), http.MethodGet,
+			base+cursor, nil)
+		if err != nil {
+			return out, err
+		}
+		if protocol == "openai" {
+			req.Header.Set("Authorization", "Bearer "+key)
+		} else {
+			req.Header.Set("X-Api-Key", key)
+			req.Header.Set("Anthropic-Version", "2023-06-01")
+		}
+		resp, err := fetchModelsClient.Do(req)
+		if err != nil {
+			return out, fmt.Errorf("上游请求失败: %w", err)
+		}
+		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+			resp.Body.Close()
+			return out, fmt.Errorf("上游重定向被拒绝: %d", resp.StatusCode)
+		}
+		if resp.StatusCode != 200 {
+			resp.Body.Close()
+			return out, fmt.Errorf("上游状态 %d", resp.StatusCode)
+		}
+		var body struct {
+			Data []struct {
+				ID string `json:"id"`
+			} `json:"data"`
+			HasMore    bool   `json:"has_more"`
+			NextCursor string `json:"next_cursor"`
+		}
+		err = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body)
+		resp.Body.Close()
+		if err != nil {
+			return out, fmt.Errorf("响应解析失败: %w", err)
+		}
+		for _, d := range body.Data {
+			if d.ID == "" || seen[d.ID] {
+				continue
+			}
+			seen[d.ID] = true
+			out = append(out, d.ID)
+		}
+		if !body.HasMore || len(body.Data) == 0 || len(out) >= fetchModelsMaxTotal {
+			break
+		}
+		// 无 cursor 时用最后一条 id；空 id 说明上游无法续页，停。
+		next := body.NextCursor
+		if next == "" {
+			next = body.Data[len(body.Data)-1].ID
+			if next == "" {
+				break
+			}
+			cursor = "?after_id=" + url.QueryEscape(next)
+		} else {
+			cursor = "?cursor=" + url.QueryEscape(next)
+		}
 	}
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("上游状态 %d", resp.StatusCode)
-	}
-	var out struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
-		return nil, fmt.Errorf("响应解析失败: %w", err)
-	}
-	ids := make([]string, 0, len(out.Data))
-	for _, d := range out.Data {
-		ids = append(ids, d.ID)
-	}
-	return ids, nil
+	return out, nil
 }
 
 // SetSuggestions 全量替换渠道的模型建议列表（空白/空串/重复项剔除）。

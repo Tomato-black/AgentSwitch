@@ -184,3 +184,208 @@ func TestChannelsTestAndFetchModels(t *testing.T) {
 		t.Fatalf("test without key must fail: %+v", res)
 	}
 }
+
+// TestFetchModelsFollowsCursorPagination：上游返回 has_more + next_cursor 时
+// 按 cursor 续页；跨页按 id 去重且保序（重复的 m-b 只保留首个出现位）。
+func TestFetchModelsFollowsCursorPagination(t *testing.T) {
+	var queries []string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		queries = append(queries, r.URL.RawQuery)
+		if r.URL.RawQuery == "" {
+			w.Write([]byte(`{"data":[{"id":"m-a"},{"id":"m-b"}],"has_more":true,"next_cursor":"abc"}`))
+			return
+		}
+		if r.URL.Query().Get("cursor") != "abc" {
+			t.Errorf("cursor query = %q", r.URL.RawQuery)
+		}
+		w.Write([]byte(`{"data":[{"id":"m-b"},{"id":"m-c"}],"has_more":false}`))
+	}))
+	defer up.Close()
+	cs, _ := channelsSvc(t)
+	c, err := cs.Create("", "p", up.URL, "openai", "sk-page-1", true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids, err := cs.FetchModels(c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"m-a", "m-b", "m-c"}
+	if len(ids) != len(want) || ids[0] != want[0] || ids[1] != want[1] || ids[2] != want[2] {
+		t.Fatalf("ids = %v, want %v", ids, want)
+	}
+	if len(queries) != 2 {
+		t.Fatalf("requests = %d, want 2: %v", len(queries), queries)
+	}
+}
+
+// TestFetchModelsFallsBackToAfterID：无 next_cursor 但 has_more=true 时用
+// Anthropic 风格 after_id=<最后一条 id> 续页。
+func TestFetchModelsFallsBackToAfterID(t *testing.T) {
+	var queries []string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		queries = append(queries, r.URL.RawQuery)
+		if r.URL.RawQuery == "" {
+			w.Write([]byte(`{"data":[{"id":"m-a"},{"id":"m-b"}],"has_more":true}`))
+			return
+		}
+		if r.URL.Query().Get("after_id") != "m-b" {
+			t.Errorf("after_id query = %q", r.URL.RawQuery)
+		}
+		w.Write([]byte(`{"data":[{"id":"m-c"}],"has_more":false}`))
+	}))
+	defer up.Close()
+	cs, _ := channelsSvc(t)
+	c, err := cs.Create("", "a", up.URL, "anthropic", "sk-after-1", true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids, err := cs.FetchModels(c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 3 || ids[2] != "m-c" {
+		t.Fatalf("ids = %v", ids)
+	}
+	if len(queries) != 2 {
+		t.Fatalf("requests = %d", len(queries))
+	}
+}
+
+// TestFetchModelsTotalCap：单页返回 500 条且 has_more=true 时停止续页
+// （达到 fetchModelsMaxTotal）。
+func TestFetchModelsTotalCap(t *testing.T) {
+	var requests int
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		items := make([]string, 0, 500)
+		for i := 0; i < 500; i++ {
+			if i > 0 {
+				items = append(items, ",")
+			}
+			items = append(items, `{"id":"m-`)
+			items = append(items, string(rune('a'+i%26)))
+			items = append(items, ``)
+			items = append(items, string(rune('a'+i/26)))
+			items = append(items, `"}`)
+		}
+		w.Write([]byte(`{"data":[` + strings.Join(items, "") + `],"has_more":true,"next_cursor":"next"}`))
+	}))
+	defer up.Close()
+	cs, _ := channelsSvc(t)
+	c, err := cs.Create("", "cap", up.URL, "openai", "sk-cap", true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids, err := cs.FetchModels(c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 500 {
+		t.Fatalf("ids = %d, want 500", len(ids))
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1 (总条数上限后不再续页)", requests)
+	}
+}
+
+// TestFetchModelsPageCapStops：上游无限 has_more 时最多 fetchModelsMaxPages 页。
+func TestFetchModelsPageCapStops(t *testing.T) {
+	var requests int
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Write([]byte(`{"data":[{"id":"m-` + string(rune('a'+requests)) + `"}],"has_more":true,"next_cursor":"n"}`))
+	}))
+	defer up.Close()
+	cs, _ := channelsSvc(t)
+	c, err := cs.Create("", "loop", up.URL, "openai", "sk-loop", true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids, err := cs.FetchModels(c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != fetchModelsMaxPages {
+		t.Fatalf("ids = %d, want %d", len(ids), fetchModelsMaxPages)
+	}
+	if requests != fetchModelsMaxPages {
+		t.Fatalf("requests = %d, want %d", requests, fetchModelsMaxPages)
+	}
+}
+
+// TestFetchModelsPartialOnError：第一页成功、第二页非 200 → 返回已收集的
+// 部分结果 + 错误。
+func TestFetchModelsPartialOnError(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.RawQuery == "" {
+			w.Write([]byte(`{"data":[{"id":"m-a"},{"id":"m-b"}],"has_more":true,"next_cursor":"n"}`))
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer up.Close()
+	cs, _ := channelsSvc(t)
+	c, err := cs.Create("", "partial", up.URL, "openai", "sk-partial", true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids, err := cs.FetchModels(c.ID)
+	if err == nil {
+		t.Fatal("第二页 500 应报错")
+	}
+	if len(ids) != 2 || ids[0] != "m-a" || ids[1] != "m-b" {
+		t.Fatalf("ids = %v, want [m-a m-b]", ids)
+	}
+	if !strings.Contains(err.Error(), "上游状态") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// TestFetchModelsFromDraftValidates：协议非法、缺 Key、非法 Base URL 依次拒绝。
+func TestFetchModelsFromDraftValidates(t *testing.T) {
+	cs, _ := channelsSvc(t)
+	if _, err := cs.FetchModelsFromDraft("https://api.example.com", "bogus", "sk-1", false); err == nil {
+		t.Fatal("非法协议应报错")
+	}
+	if _, err := cs.FetchModelsFromDraft("https://api.example.com", "openai", "", false); err == nil {
+		t.Fatal("缺 Key 应报错")
+	}
+	if _, err := cs.FetchModelsFromDraft("ftp://api.example.com", "openai", "sk-1", false); err == nil {
+		t.Fatal("非法 scheme 应报错")
+	}
+	if _, err := cs.FetchModelsFromDraft("http://127.0.0.1:9", "openai", "sk-1", false); err == nil {
+		t.Fatal("私网上游未放行时应报错")
+	}
+}
+
+// TestFetchModelsFromDraftSendsProtocolHeaders：openai 用 Bearer，
+// anthropic 用 X-Api-Key + Anthropic-Version。
+func TestFetchModelsFromDraftSendsProtocolHeaders(t *testing.T) {
+	var gotBearer, gotAnthropic bool
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.Header.Get("Authorization"), "Bearer sk-draft-") {
+			gotBearer = true
+		}
+		if r.Header.Get("X-Api-Key") == "sk-draft-anthropic" && r.Header.Get("Anthropic-Version") == "2023-06-01" {
+			gotAnthropic = true
+		}
+		w.Write([]byte(`{"data":[{"id":"m-1"}]}`))
+	}))
+	defer up.Close()
+	cs, _ := channelsSvc(t)
+	ids, err := cs.FetchModelsFromDraft(up.URL, "openai", "sk-draft-openai", true)
+	if err != nil || len(ids) != 1 || ids[0] != "m-1" {
+		t.Fatalf("draft openai: %v %v", ids, err)
+	}
+	if !gotBearer {
+		t.Fatal("openai draft 应发 Authorization: Bearer")
+	}
+	ids, err = cs.FetchModelsFromDraft(up.URL, "anthropic", "sk-draft-anthropic", true)
+	if err != nil || len(ids) != 1 {
+		t.Fatalf("draft anthropic: %v %v", ids, err)
+	}
+	if !gotAnthropic {
+		t.Fatal("anthropic draft 应发 X-Api-Key + Anthropic-Version")
+	}
+}
