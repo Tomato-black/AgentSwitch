@@ -193,3 +193,14 @@ func save(st *state.State) {
 	}
 	st.Page = "logical"
 }
+
+// hasDanglingTarget 报告目标链是否含已失效目标（渠道被删后 ChannelName
+// 解析为空）：列表据此打「目标失效」警示，避免运行期静默跳过。
+func hasDanglingTarget(m bridge.ModelView) bool {
+	for _, tg := range m.Targets {
+		if tg.ChannelID != "" && tg.ChannelName == "" {
+			return true
+		}
+	}
+	return false
+}

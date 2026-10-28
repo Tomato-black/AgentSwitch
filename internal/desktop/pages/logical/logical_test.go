@@ -245,3 +245,49 @@ func TestLogicalSaveReturnsToList(t *testing.T) {
 		t.Fatalf("targets not renumbered: %+v", m.Targets)
 	}
 }
+
+// TestHasDanglingTarget 覆盖失效目标检测：渠道被删后 ChannelName 解析为空
+// 才算失效；正常目标与空渠道 id 不算。
+func TestHasDanglingTarget(t *testing.T) {
+	if hasDanglingTarget(bridge.ModelView{Targets: []bridge.TargetView{
+		{ChannelID: "c1", ChannelName: "渠道A"},
+	}}) {
+		t.Fatal("正常目标不应标记失效")
+	}
+	if !hasDanglingTarget(bridge.ModelView{Targets: []bridge.TargetView{
+		{ChannelID: "c1", ChannelName: "渠道A"},
+		{ChannelID: "gone", ChannelName: ""},
+	}}) {
+		t.Fatal("渠道已删的目标应标记失效")
+	}
+	if hasDanglingTarget(bridge.ModelView{Targets: []bridge.TargetView{{ChannelID: "", ChannelName: ""}}}) {
+		t.Fatal("空渠道 id 属于未填完的行，不算失效")
+	}
+}
+
+// TestDeleteShowsAccessRefs 覆盖删除确认的引用提示：绑定该逻辑模型的
+// 接入配置应列在弹窗文案中。
+func TestDeleteShowsAccessRefs(t *testing.T) {
+	st, a := uitest.New(t)
+	ch, err := st.Svc.Channels.Create("", "渠道A", "https://api.example.com", "openai", "sk-1", true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lm, err := st.Svc.Logical.Create("my-code", "", bridge.ModelMeta{}, []bridge.TargetSpec{{ChannelID: ch.ID, ModelName: "m1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	acc := bridge.AccessConfigs{A: a}
+	if _, err := acc.Create("claude", "工作配置", lm.ID, "{}"); err != nil {
+		t.Fatal(err)
+	}
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 800)
+	if err := tt.Click("删除"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"删除逻辑模型", "仍被接入配置引用", "工作配置", "Claude Code"} {
+		if !tt.HasText(want) {
+			t.Fatalf("missing %q in %v", want, tt.Texts())
+		}
+	}
+}

@@ -153,10 +153,11 @@ type ChannelForm struct {
 
 // LogicalState 是逻辑模型页状态。
 type LogicalState struct {
-	EditModelID string // 编辑页锚定逻辑模型 id（空=新建）
-	Edit        LMForm // 新建/编辑表单状态（名称/描述/目标链/信息位）
-	DeleteArm   bool   // 删除 AlertDialog open 位
-	DeleteID    string // 删除武装对象——确认仅对匹配 id 生效
+	EditModelID string   // 编辑页锚定逻辑模型 id（空=新建）
+	Edit        LMForm   // 新建/编辑表单状态（名称/描述/目标链/信息位）
+	DeleteArm   bool     // 删除 AlertDialog open 位
+	DeleteID    string   // 删除武装对象——确认仅对匹配 id 生效
+	DeleteRefs  []string // 引用该模型的接入配置摘要（武装时计算，弹窗展示）
 }
 
 // LMForm 是逻辑模型新建/编辑表单状态：Targets 即目标链行（Priority 落库

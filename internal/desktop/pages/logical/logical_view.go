@@ -5,6 +5,7 @@ package logical
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/egoist/mygo/ui"
 
@@ -43,12 +44,16 @@ func listView(c *ui.Context, st *state.State) {
 				} else {
 					uikit.SoftBadge(c, t, s, "gray", "停用")
 				}
+				if hasDanglingTarget(m) {
+					uikit.SoftBadge(c, t, s, "warn", "目标失效")
+				}
 				if uikit.SoftButton(c, t, s, "gray", "编辑").Clicked() {
 					openEdit(st, m.ID)
 				}
 				if uikit.SoftButton(c, t, s, "danger", "删除").Clicked() {
 					st.Logical.DeleteArm = true
 					st.Logical.DeleteID = m.ID
+					st.Logical.DeleteRefs = accessRefNames(st, m.ID)
 				}
 				toggleLabel := "停用"
 				if !m.Enabled {
@@ -83,14 +88,20 @@ func deleteConfirm(c *ui.Context, st *state.State, name string) {
 	if name != "" {
 		msg = fmt.Sprintf("确定删除逻辑模型「%s」？", name)
 	}
+	if len(st.Logical.DeleteRefs) > 0 {
+		msg += "\n仍被接入配置引用：" + strings.Join(st.Logical.DeleteRefs, "、") +
+			"。删除后这些配置需改绑或重建。"
+	}
 	switch ui.AlertDialog(c, &st.Logical.DeleteArm, "删除逻辑模型", msg, "取消", "删除") {
 	case 1:
 		if st.Svc.Logical != nil {
 			st.Svc.Logical.Remove(st.Logical.DeleteID)
 		}
 		st.Logical.DeleteID = ""
+		st.Logical.DeleteRefs = nil
 	case 0, ui.AlertDismissed:
 		st.Logical.DeleteID = ""
+		st.Logical.DeleteRefs = nil
 	}
 }
 
@@ -284,4 +295,32 @@ func lmLevelSelect(c *ui.Context, t *ui.Theme, level *string, levels []string) {
 			item.Children(func() { ui.Text(c, text).SingleLine() })
 		}
 	})
+}
+
+// accessRefNames 列出绑定到该逻辑模型的接入配置（名称 + Agent 标签），
+// 供删除确认提示引用面。
+func accessRefNames(st *state.State, modelID string) []string {
+	acc := bridge.AccessConfigs{A: st.Svc.Gateway.A}
+	var out []string
+	for _, app := range []string{"claude", "codex", "claude_desktop"} {
+		for _, v := range acc.List(app) {
+			if v.LogicalModelID == modelID {
+				out = append(out, v.Name+"（"+appLabel(app)+"）")
+			}
+		}
+	}
+	return out
+}
+
+// appLabel 把接入 appType 译成 UI 显示名。
+func appLabel(app string) string {
+	switch app {
+	case "claude":
+		return "Claude Code"
+	case "codex":
+		return "Codex"
+	case "claude_desktop":
+		return "Claude Desktop"
+	}
+	return app
 }
