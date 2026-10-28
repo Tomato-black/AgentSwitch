@@ -124,27 +124,19 @@ func (s AccessConfigs) backupLive(appType string) error {
 		mode os.FileMode
 	}
 	var srcs []srcFile
-	paths := make([]string, 0, len(liveBackupFiles(appType))+1)
-	for _, rel := range liveBackupFiles(appType) {
-		paths = append(paths, filepath.Join(home, rel))
-	}
-	if appType == "claude_desktop" {
-		// Desktop 的 4 个文件在 config 目录（绝对路径），不随 home 拼接。
-		paths = append(paths, desktopPathsFor(home).all()...)
-	}
-	for _, path := range paths {
-		b, err := os.ReadFile(path)
+	for _, slot := range s.liveSlots(home, appType) {
+		b, err := os.ReadFile(slot.path)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				continue
 			}
 			return err
 		}
-		fi, err := os.Stat(path)
+		fi, err := os.Stat(slot.path)
 		if err != nil {
 			return err
 		}
-		srcs = append(srcs, srcFile{name: filepath.Base(path), data: b, mode: fi.Mode().Perm()})
+		srcs = append(srcs, srcFile{name: slot.name, data: b, mode: fi.Mode().Perm()})
 	}
 	if len(srcs) == 0 {
 		return nil
@@ -153,18 +145,28 @@ func (s AccessConfigs) backupLive(appType string) error {
 	if err := os.MkdirAll(bdir, 0o755); err != nil {
 		return err
 	}
-	ts := strconv.FormatInt(time.Now().UnixMilli(), 10)
-	for _, src := range srcs {
-		dst := filepath.Join(bdir, ts+"-"+src.name)
-		// 同毫秒撞名去重：目标已存在则加 -1/-2 递增后缀，绝不覆盖丢份。
-		for i := 1; ; i++ {
-			if _, err := os.Stat(dst); errors.Is(err, fs.ErrNotExist) {
+	// 整批唯一时间戳：同毫秒再次备份时递增到无冲突，保证「一次备份 =
+	// 一个 ts 组」——恢复按 ts 取最新一整套，不会把两次快照混在一起。
+	ts := time.Now().UnixMilli()
+	for {
+		clash := false
+		for _, src := range srcs {
+			_, err := os.Stat(filepath.Join(bdir, strconv.FormatInt(ts, 10)+"-"+src.name))
+			if err == nil {
+				clash = true
 				break
-			} else if err != nil {
+			}
+			if !errors.Is(err, fs.ErrNotExist) {
 				return err
 			}
-			dst = filepath.Join(bdir, fmt.Sprintf("%s-%d-%s", ts, i, src.name))
 		}
+		if !clash {
+			break
+		}
+		ts++
+	}
+	for _, src := range srcs {
+		dst := filepath.Join(bdir, strconv.FormatInt(ts, 10)+"-"+src.name)
 		// 备份含令牌：强制 0600（源文件若是 0644 也收紧——评审 Minor#7）。
 		if err := os.WriteFile(dst, src.data, 0o600); err != nil {
 			return err
@@ -365,4 +367,133 @@ func shellDQ(v string) string {
 // shellSQ 转义字符串用于外层单引号 shell 片段内（单引号换成反斜杠转义序列）。
 func shellSQ(v string) string {
 	return strings.ReplaceAll(v, `'`, `'\''`)
+}
+
+// liveSlot 是 Agent live 文件的一个受管槽位：槽位名用于备份文件名，
+// 路径为实际写入位置（Desktop 的四个文件需要槽位名区分同名配置）。
+type liveSlot struct {
+	name string
+	path string
+}
+
+// liveSlots 返回 appType 的 live 文件槽位（home 下相对/绝对路径）。
+func (s AccessConfigs) liveSlots(home, appType string) []liveSlot {
+	switch appType {
+	case "claude":
+		return []liveSlot{{"settings.json", filepath.Join(home, ".claude", "settings.json")}}
+	case "codex":
+		return []liveSlot{{"config.toml", filepath.Join(home, ".codex", "config.toml")}}
+	case "claude_desktop":
+		p := desktopPathsFor(home)
+		return []liveSlot{
+			{"claude-config.json", p.normalConfig},
+			{"claude-3p-config.json", p.threepConfig},
+			{"profile.json", p.profile},
+			{"meta.json", p.meta},
+		}
+	}
+	return nil
+}
+
+// RestoreLatestBackup 把该 appType 最近一份备份集写回 live 文件——「应用」
+// 的撤销逃生口。恢复前先对当前 live 再做一次备份（恢复本身可再次恢复）。
+// 无任何备份时报「没有可恢复的备份」。备份内容含令牌，不写日志。
+func (s AccessConfigs) RestoreLatestBackup(appType string) error {
+	if err := validateAccessAppType(appType); err != nil {
+		return err
+	}
+	home := s.Home
+	if home == "" {
+		var err error
+		if home, err = os.UserHomeDir(); err != nil {
+			return err
+		}
+	}
+	bdir := filepath.Join(home, ".agentswitch", "backups", appType)
+	ents, err := os.ReadDir(bdir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("没有可恢复的备份")
+		}
+		return err
+	}
+	type backupFile struct {
+		ts   int64
+		slot string
+		name string
+	}
+	var files []backupFile
+	var latest int64 = -1
+	for _, e := range ents {
+		if e.IsDir() {
+			continue
+		}
+		ts, slot, ok := parseBackupName(e.Name())
+		if !ok {
+			continue
+		}
+		files = append(files, backupFile{ts: ts, slot: slot, name: e.Name()})
+		if ts > latest {
+			latest = ts
+		}
+	}
+	if latest < 0 {
+		return fmt.Errorf("没有可恢复的备份")
+	}
+	paths := map[string]string{}
+	for _, slot := range s.liveSlots(home, appType) {
+		paths[slot.name] = slot.path
+	}
+	// 先快照当前 live：让恢复动作本身可撤销。
+	if err := s.backupLive(appType); err != nil {
+		return err
+	}
+	restored := false
+	for _, f := range files {
+		if f.ts != latest {
+			continue
+		}
+		dst, ok := paths[f.slot]
+		if !ok {
+			continue // 未知槽位（旧命名备份）跳过
+		}
+		data, err := os.ReadFile(filepath.Join(bdir, f.name))
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return err
+		}
+		if err := atomicWriteFile0600(dst, data); err != nil {
+			return err
+		}
+		restored = true
+	}
+	if !restored {
+		return fmt.Errorf("没有可恢复的备份")
+	}
+	return nil
+}
+
+// parseBackupName 解析备份文件名「<unixms>[-<n>]-<slot>」：返回时间戳与
+// 槽位名（-<n> 是同毫秒去重后缀）。
+func parseBackupName(name string) (int64, string, bool) {
+	i := strings.IndexByte(name, '-')
+	if i <= 0 {
+		return 0, "", false
+	}
+	ts, err := strconv.ParseInt(name[:i], 10, 64)
+	if err != nil {
+		return 0, "", false
+	}
+	rest := name[i+1:]
+	if j := strings.IndexByte(rest, '-'); j > 0 {
+		if _, err := strconv.Atoi(rest[:j]); err == nil {
+			rest = rest[j+1:]
+		}
+	}
+	if rest == "" {
+		return 0, "", false
+	}
+	return ts, rest, true
 }

@@ -141,7 +141,13 @@ func Page(c *ui.Context, st *state.State) {
 			// 实际配置列表卡
 			uikit.Card(c, t, func() {
 				ui.Column(c).Gap(10).Children(func() {
-					ui.Text(c, "实际配置").Bold()
+					ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, "实际配置").Bold()
+						ui.Box(c).Grow(1)
+						if uikit.SoftButton(c, t, s, "gray", "还原最近备份").Clicked() {
+							st.Access.RestoreArm = true
+						}
+					})
 					if st.Access.App == "codex" {
 						ui.Text(c, "Codex CLI / 桌面版 / IDE 插件共用 ~/.codex/config.toml；应用后需完全退出 Codex 再重新打开").TextColor(t.TextMuted)
 						ui.Text(c, "桌面版模型选择器只显示 AgentSwitch 逻辑模型；已有对话的供应商不会迁移，请新建对话").TextColor(t.TextMuted)
@@ -200,6 +206,8 @@ func Page(c *ui.Context, st *state.State) {
 
 			// 删除二次确认（行内「删除」只武装，弹窗确认才执行）
 			deleteConfirm(c, st, acc)
+			// 还原备份确认（覆盖 live 文件前先备份当前状态，可再次恢复）
+			restoreConfirm(c, st, acc)
 		})
 	})
 }
@@ -406,5 +414,24 @@ func switchConfirm(c *ui.Context, st *state.State, acc bridge.AccessConfigs) {
 		switchTab(st, acc, target)
 	case 0, ui.AlertDismissed:
 		st.Access.SwitchTo = ""
+	}
+}
+
+// restoreConfirm 是「还原最近备份」的二次确认：把该 Agent 最近一份备份集
+// 写回 live 文件（撤销「应用」）。恢复前 bridge 会先快照当前 live，
+// 因此恢复本身也可再次恢复。
+func restoreConfirm(c *ui.Context, st *state.State, acc bridge.AccessConfigs) {
+	if !st.Access.RestoreArm {
+		return
+	}
+	msg := "将用「" + accesskit.TabTitle(st.Access.App) + "」最近一次备份覆盖当前 Agent 配置文件（覆盖前会先备份当前状态，可再次还原）。「使用中」标记保持不变，如需重新接管请再点「应用」。"
+	switch ui.AlertDialog(c, &st.Access.RestoreArm, "还原最近备份", msg, "取消", "还原") {
+	case 1:
+		if err := acc.RestoreLatestBackup(st.Access.App); err != nil {
+			st.Access.Msg = "还原失败：" + err.Error()
+		} else {
+			st.Access.Msg = "已还原最近备份——Agent 配置文件已回滚；如需重新接管请再点「应用」"
+		}
+	case 0, ui.AlertDismissed:
 	}
 }

@@ -51,6 +51,7 @@ type AccessState struct {
 	DeleteID    string // 删除武装对象——确认仅对匹配 id 生效
 	SwitchArm   bool   // 页签切换确认 AlertDialog open 位（有未保存编辑时）
 	SwitchTo    string // 待切换的 Agent 页签
+	RestoreArm  bool   // 还原最近备份确认 AlertDialog open 位
 }
 
 // AccessForm 是接入配置新建/编辑表单状态（Open 非空即编辑）。DocJSON 是唯一

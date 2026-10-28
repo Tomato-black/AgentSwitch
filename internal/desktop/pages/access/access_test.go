@@ -240,3 +240,33 @@ func TestTabSwitchDirtyGuard(t *testing.T) {
 		t.Fatalf("干净状态应直接切换: %q", st.Access.App)
 	}
 }
+
+// TestRestoreBackupConfirm：点「还原最近备份」弹确认；取消收起；无备份时
+// 确认后给出中文失败提示（HOME 指向临时目录，不触碰真实用户文件）。
+func TestRestoreBackupConfirm(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	st, _ := uitest.New(t)
+	st.Access.App = "claude"
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 800)
+	if err := tt.Click("还原最近备份"); err != nil {
+		t.Fatal(err)
+	}
+	if !tt.HasText("覆盖当前 Agent 配置文件") {
+		t.Fatalf("确认弹窗未出现: %v", tt.Texts())
+	}
+	if err := tt.Click("取消"); err != nil {
+		t.Fatal(err)
+	}
+	if st.Access.RestoreArm {
+		t.Fatal("取消应收起弹窗")
+	}
+	if err := tt.Click("还原最近备份"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("还原"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(st.Access.Msg, "还原失败") {
+		t.Fatalf("无备份应报错: %q", st.Access.Msg)
+	}
+}
