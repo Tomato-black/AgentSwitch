@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"AgentSwitch/internal/modelid"
 )
 
 // baseAccessEnv 返回网关派生基础键（claude 含 SMALL_FAST 默认值）。
@@ -51,18 +53,10 @@ func lockedAccessEnv(appType string, st Status, modelName string) map[string]str
 	return nil
 }
 
-// accessSplitOneM 剥离值尾部 "[1M]"（大小写不敏感，返回基名与是否带标记）。
-func accessSplitOneM(v string) (string, bool) {
-	if len(v) >= 4 && strings.EqualFold(v[len(v)-4:], "[1M]") {
-		return v[:len(v)-4], true
-	}
-	return v, false
-}
-
 // mainModelOneM 判断文档 env 的主模型是否为「当前绑定模型名[1M]」的合法
 // 1M 声明（半锁定：模型名不可改，仅允许追加 [1M] 后缀）。
 func mainModelOneM(modelName string, docEnv map[string]string) bool {
-	base, oneM := accessSplitOneM(docEnv["ANTHROPIC_MODEL"])
+	base, oneM := modelid.SplitOneM(docEnv["ANTHROPIC_MODEL"])
 	return oneM && base == modelName
 }
 
@@ -90,7 +84,7 @@ func composeAccessEnv(appType string, st Status, modelName string, global, docEn
 		env[k] = v
 	}
 	if appType == "claude" && mainModelOneM(modelName, docEnv) { // 5. 半锁定主模型的 1M 声明
-		env["ANTHROPIC_MODEL"] = modelName + "[1M]"
+		env["ANTHROPIC_MODEL"] = modelid.AppendOneM(modelName, true)
 	}
 	return env, nil
 }
@@ -119,7 +113,7 @@ func normalizeAccessEnv(appType string, st Status, modelName string, global, doc
 			// 半锁定主模型：仅保留「绑定模型名[1M]」的能力声明（规范为
 			// [1M]）；纯名视为未定制、基名不匹配视为篡改，均剔除。
 			if appType == "claude" && k == "ANTHROPIC_MODEL" && mainModelOneM(modelName, docEnv) {
-				out[k] = modelName + "[1M]"
+				out[k] = modelid.AppendOneM(modelName, true)
 			}
 			continue
 		}

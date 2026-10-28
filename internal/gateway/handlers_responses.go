@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"AgentSwitch/internal/modelid"
 	"AgentSwitch/internal/protocol"
 	"AgentSwitch/internal/provider"
 	"AgentSwitch/internal/router"
@@ -59,7 +60,7 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		writeErrOpenAI(w, 400, protocol.ErrTypeInvalidRequest, err.Error())
 		return
 	}
-	req.Model = stripOneM(req.Model)
+	req.Model, _ = modelid.SplitOneM(req.Model)
 	rec.Model, rec.Streaming = req.Model, req.Stream
 
 	cands, err := s.deps.Candidates(req.Model)

@@ -182,11 +182,3 @@ func DocEnvStrings(raw string) (map[string]string, error) {
 	}
 	return out, nil
 }
-
-// ParseOneM 剥离值尾部 "[1M]"（大小写不敏感）——1M 勾选状态回显。
-func ParseOneM(v string) (string, bool) {
-	if len(v) >= 4 && strings.EqualFold(v[len(v)-4:], "[1M]") {
-		return v[:len(v)-4], true
-	}
-	return v, false
-}

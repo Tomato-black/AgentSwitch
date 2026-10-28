@@ -111,20 +111,6 @@ func TestAccessDocEnvStrings(t *testing.T) {
 	}
 }
 
-func TestAccessParseOneM(t *testing.T) {
-	cases := map[string][2]any{
-		"my-code[1M]": {"my-code", true},
-		"my-code[1m]": {"my-code", true},
-		"my-code":     {"my-code", false},
-	}
-	for in, want := range cases {
-		name, oneM := ParseOneM(in)
-		if name != want[0] || oneM != want[1] {
-			t.Fatalf("ParseOneM(%q)=%v,%v want %v", in, name, oneM, want)
-		}
-	}
-}
-
 // TestAccessDocSetModelsRoundTrip：Codex 文档 models 键写为有序字符串数组；
 // 空列表删除键（保存/应用时回退绑定模型 + 启用模型）；其他键原样保留。
 func TestAccessDocSetModelsRoundTrip(t *testing.T) {

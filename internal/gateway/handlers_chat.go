@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"AgentSwitch/internal/modelid"
 	"AgentSwitch/internal/protocol"
 	"AgentSwitch/internal/provider"
 	"AgentSwitch/internal/router"
@@ -58,7 +59,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeErrOpenAI(w, 400, protocol.ErrTypeInvalidRequest, "invalid body: model and valid JSON required")
 		return
 	}
-	oar.Model = stripOneM(oar.Model)
+	oar.Model, _ = modelid.SplitOneM(oar.Model)
 	rec.Model, rec.Streaming = oar.Model, oar.Stream
 
 	cands, err := s.deps.Candidates(oar.Model)

@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"AgentSwitch/internal/modelid"
 	"AgentSwitch/internal/provider"
 	"context"
 	"io"
@@ -53,7 +54,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, protocol.ErrTypeInvalidRequest, "invalid body: model and valid JSON required")
 		return
 	}
-	cr.Model = stripOneM(cr.Model)
+	cr.Model, _ = modelid.SplitOneM(cr.Model)
 	rec.Model, rec.Streaming = cr.Model, cr.Stream
 
 	cands, err := s.deps.Candidates(cr.Model)

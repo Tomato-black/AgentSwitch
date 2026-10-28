@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"AgentSwitch/internal/desktop/state"
+	"AgentSwitch/internal/modelid"
 )
 
 // ClaudeRole 是 Claude 模型映射一行（spec 2026-10-19 §3.2）：角色 → 文档
@@ -41,14 +42,14 @@ func SyncRolesFromDoc(f *state.AccessForm) {
 	if err != nil {
 		return
 	}
-	_, f.MainOneM = ParseOneM(env["ANTHROPIC_MODEL"])
+	_, f.MainOneM = modelid.SplitOneM(env["ANTHROPIC_MODEL"])
 	for len(f.RoleModels) < len(claudeRoles) {
 		f.RoleModels = append(f.RoleModels, FollowModel)
 		f.RoleNames = append(f.RoleNames, "")
 		f.RoleOneM = append(f.RoleOneM, false)
 	}
 	for i, r := range claudeRoles {
-		name, oneM := ParseOneM(env[r.EnvKey])
+		name, oneM := modelid.SplitOneM(env[r.EnvKey])
 		if name == "" {
 			f.RoleModels[i] = FollowModel
 		} else {
@@ -69,8 +70,8 @@ func PatchRole(f *state.AccessForm, i int) {
 	if val == FollowModel {
 		val = ""
 	}
-	if val != "" && f.RoleOneM[i] {
-		val += "[1M]"
+	if val != "" {
+		val = modelid.AppendOneM(val, f.RoleOneM[i])
 	}
 	if raw, err := DocSetEnv(f.DocJSON, r.EnvKey, val); err == nil {
 		f.DocJSON = raw
@@ -89,9 +90,7 @@ func PatchMainModel(f *state.AccessForm) {
 	if val == "" {
 		return
 	}
-	if f.MainOneM {
-		val += "[1M]"
-	}
+	val = modelid.AppendOneM(val, f.MainOneM)
 	if raw, err := DocSetEnv(f.DocJSON, "ANTHROPIC_MODEL", val); err == nil {
 		f.DocJSON = raw
 	}

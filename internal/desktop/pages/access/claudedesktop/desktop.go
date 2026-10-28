@@ -14,6 +14,7 @@ import (
 	"AgentSwitch/internal/desktop/accesskit"
 	"AgentSwitch/internal/desktop/state"
 	"AgentSwitch/internal/desktop/uikit"
+	"AgentSwitch/internal/modelid"
 )
 
 // Claude Desktop 接入页签（2026-10-22）：与 Claude Code/Codex 不同，Desktop
@@ -233,10 +234,7 @@ func desktopRolesSummary(docJSON string) string {
 	}
 	parts := make([]string, 0, len(routes))
 	for _, r := range routes {
-		s := r.Role + "→" + r.Model
-		if r.OneM {
-			s += "[1M]"
-		}
+		s := modelid.AppendOneM(r.Role+"→"+r.Model, r.OneM)
 		parts = append(parts, s)
 	}
 	return strings.Join(parts, " · ")

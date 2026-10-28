@@ -6,6 +6,7 @@ import (
 	"AgentSwitch/internal/bridge"
 	"AgentSwitch/internal/desktop/state"
 	"AgentSwitch/internal/desktop/uitest"
+	"AgentSwitch/internal/modelid"
 	"AgentSwitch/internal/storage"
 )
 
@@ -71,7 +72,7 @@ func TestAccessRoleRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	name, oneM := ParseOneM(env["ANTHROPIC_DEFAULT_SONNET_MODEL"])
+	name, oneM := modelid.SplitOneM(env["ANTHROPIC_DEFAULT_SONNET_MODEL"])
 	if name != "fast" || !oneM || env["ANTHROPIC_DEFAULT_SONNET_MODEL_NAME"] != "极速" {
 		t.Fatal(raw)
 	}
@@ -80,7 +81,7 @@ func TestAccessRoleRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	name2, oneM2 := ParseOneM(env2["CLAUDE_CODE_SUBAGENT_MODEL"])
+	name2, oneM2 := modelid.SplitOneM(env2["CLAUDE_CODE_SUBAGENT_MODEL"])
 	if name2 != "" || oneM2 {
 		t.Fatal("空值应回落跟随主模型")
 	}
