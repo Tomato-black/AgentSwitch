@@ -1,10 +1,8 @@
+// handlers_common.go 是各入站共用的编排件：鉴权门（并发/体积限额）、
+// 就绪与模型列表端点、流拷贝（空闲超时/回调）、诊断日志与工具函数。
 package gateway
 
 import (
-	"AgentSwitch/internal/protocol"
-	"AgentSwitch/internal/provider"
-	"bytes"
-	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
@@ -14,149 +12,15 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
-	"unicode/utf8"
 
+	"AgentSwitch/internal/protocol"
+	"AgentSwitch/internal/provider"
 	"AgentSwitch/internal/router"
 	"AgentSwitch/internal/telemetry"
 )
 
-// upstreamErrorLogMaxBytes 限制诊断日志里上游错误体的长度。400 类错误的真实原因
-// 只在响应体里（param 分类不足以定位），但错误体可能回显请求内容——按 docx §8/§10
-// 只记截断片段，绝不记完整请求体。
-const upstreamErrorLogMaxBytes = 512
-
-// failoverOutcome 报告目标链转移循环的结局（docx §6.3 可解释记录）。
-type failoverOutcome struct {
-	Committed bool // 已向客户端写出响应（2xx 或不可转移错误）
-	Attempted bool // 至少一个目标真正进入 run
-	Switches  int  // 切换/跳过次数（telemetry FailoverCount）
-	CoolSkips int  // 发送前二次校验被冷却跳过的次数
-}
-
 // responseHeaderWhitelist：回传给客户端的上游响应头。
 var responseHeaderWhitelist = []string{"Content-Type", "Retry-After", "Anthropic-Request-Id"}
-
-func writeErr(w http.ResponseWriter, status int, errType, msg string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	w.Write(protocol.ErrorEnvelope(errType, msg))
-}
-
-// writeErrOpenAI 同 writeErr，但错误体为 OpenAI error 形状（chat.completions
-// 入站）——错误 envelope 形状随入站协议而异。
-func writeErrOpenAI(w http.ResponseWriter, status int, errType, msg string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	w.Write(protocol.OpenAIErrorBody(errType, msg))
-}
-
-// allCooling 报告 Resolve 滤掉的目标是否全部仅因冷却。
-func allCooling(filtered []router.FilteredCandidate) bool {
-	for _, f := range filtered {
-		if !strings.HasPrefix(f.Reason, "cooling:") {
-			return false
-		}
-	}
-	return true
-}
-
-// coolingExhaustedMsg 构造 503 终局正文：含 all targets cooling 与滤因清单
-// （docx §6.3 可解释记录）。
-func coolingExhaustedMsg(filtered []router.FilteredCandidate) string {
-	if len(filtered) == 0 {
-		return "all targets cooling"
-	}
-	reasons := make([]string, 0, len(filtered))
-	for _, f := range filtered {
-		reasons = append(reasons, f.Candidate.ChannelName+":"+f.Reason)
-	}
-	return "all targets cooling (filtered: " + strings.Join(reasons, "; ") + ")"
-}
-
-// writeUpstreamError 透传白名单头 + 原样/包装的错误体（原 handleMessages 内
-// 内联逻辑提取；upstreamErrorBody 语义不变）。
-func writeUpstreamError(w http.ResponseWriter, status int, snippet []byte, header http.Header) {
-	for _, h := range responseHeaderWhitelist {
-		if v := header.Get(h); v != "" {
-			w.Header().Set(h, v)
-		}
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	w.Write(upstreamErrorBody(snippet, status))
-}
-
-// writeUpstreamErrorOpenAI 同 writeUpstreamError，但错误体为 OpenAI error 形状
-// （chat.completions 入站）。
-func writeUpstreamErrorOpenAI(w http.ResponseWriter, status int, snippet []byte, header http.Header) {
-	for _, h := range responseHeaderWhitelist {
-		if v := header.Get(h); v != "" {
-			w.Header().Set(h, v)
-		}
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	w.Write(upstreamErrorBodyOpenAI(snippet, status))
-}
-
-// upstreamErrorBodyOpenAI 保证回传给 OpenAI 客户端的错误体是 OpenAI error 形状：
-// 已是 OpenAI 形状（{"error":{...}} 且非 Anthropic envelope）原样透传；Anthropic
-// envelope（anthropic 渠道上游）提取 error.type/message 转换后回传；其余尽力提
-// 取 message 包装一层。状态码始终原样透传。
-func upstreamErrorBodyOpenAI(snippet []byte, status int) []byte {
-	var probe struct {
-		Type  string          `json:"type"`
-		Error json.RawMessage `json:"error"`
-	}
-	if err := json.Unmarshal(snippet, &probe); err == nil && len(probe.Error) > 0 {
-		if probe.Type == "error" {
-			// Anthropic envelope（含嵌套 error.type/message）→ 转 OpenAI 形状。
-			var eo struct {
-				Error struct {
-					Type    string `json:"type"`
-					Message string `json:"message"`
-				} `json:"error"`
-			}
-			if json.Unmarshal(snippet, &eo) == nil && eo.Error.Message != "" {
-				et := eo.Error.Type
-				if et == "" {
-					et = upstreamErrType(status)
-				}
-				return protocol.OpenAIErrorBody(et, eo.Error.Message)
-			}
-		}
-		return snippet // 已是 OpenAI error 形状
-	}
-	var eo struct {
-		Error struct {
-			Message string `json:"message"`
-		} `json:"error"`
-		Message string `json:"message"`
-	}
-	msg := ""
-	if err := json.Unmarshal(snippet, &eo); err == nil {
-		msg = eo.Error.Message
-		if msg == "" {
-			msg = eo.Message
-		}
-	}
-	if msg == "" {
-		msg = http.StatusText(status)
-	}
-	return protocol.OpenAIErrorBody(upstreamErrType(status), msg)
-}
-
-// truncateForLog 截断错误体到 upstreamErrorLogMaxBytes 并回退到合法 UTF-8 边界。
-func truncateForLog(b []byte) string {
-	b = bytes.TrimSpace(b)
-	if len(b) > upstreamErrorLogMaxBytes {
-		b = b[:upstreamErrorLogMaxBytes]
-	}
-	for len(b) > 0 && !utf8.Valid(b) {
-		b = b[:len(b)-1]
-	}
-	return string(b)
-}
 
 // copyStream 逐块转发并 flush；idle>0 时监控客户端可见输出的空闲间隔，
 // 超时关闭上游并写出 onIdle。返回是否因空闲超时结束。src 由本函数拥有并在
@@ -221,51 +85,6 @@ func copyStream(w http.ResponseWriter, src io.ReadCloser, idle time.Duration, on
 	}
 }
 
-// upstreamErrorBody 保证回传给客户端的上游错误体是 Anthropic envelope 形状：
-// 已是 {"type":"error",...} 时原样透传（保留上游 error.type/message），
-// 否则尽力提取 message 后包装一层；状态码本身始终原样透传。
-func upstreamErrorBody(snippet []byte, status int) []byte {
-	var probe struct {
-		Type string `json:"type"`
-	}
-	if err := json.Unmarshal(snippet, &probe); err == nil && probe.Type == "error" {
-		return snippet
-	}
-	var eo struct {
-		Error struct {
-			Message string `json:"message"`
-		} `json:"error"`
-		Message string `json:"message"`
-	}
-	msg := ""
-	if err := json.Unmarshal(snippet, &eo); err == nil {
-		msg = eo.Error.Message
-		if msg == "" {
-			msg = eo.Message
-		}
-	}
-	if msg == "" {
-		msg = http.StatusText(status)
-	}
-	return protocol.ErrorEnvelope(upstreamErrType(status), msg)
-}
-
-// upstreamErrType 把上游状态码映射为 Anthropic envelope 的 error.type。
-func upstreamErrType(status int) string {
-	switch {
-	case status == http.StatusBadRequest:
-		return protocol.ErrTypeInvalidRequest
-	case status == http.StatusUnauthorized || status == http.StatusForbidden:
-		return protocol.ErrTypeAuth
-	case status == http.StatusNotFound:
-		return protocol.ErrTypeNotFound
-	case status == http.StatusTooManyRequests:
-		return "rate_limit_error"
-	default:
-		return protocol.ErrTypeAPI
-	}
-}
-
 func subtleConstantTimeCompare(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
@@ -275,36 +94,6 @@ func telemetryID() string {
 	b := make([]byte, 8)
 	rand.Read(b)
 	return hex.EncodeToString(b)
-}
-
-// 终局 502/503 由调用方据 outcome 写出（错误 envelope 形状随入站协议而异）。
-func (s *Server) failover(ctx context.Context, decision router.Decision,
-	run func(c router.Candidate) (bool, error)) (failoverOutcome, error) {
-	var out failoverOutcome
-	for _, c := range decision.Ordered {
-		if ctx.Err() != nil { // 客户端已走：不再发任何上游请求（docx §6.3 取消不转移）
-			return out, ctx.Err()
-		}
-		// 发送前二次校验（docx §7；TryAcquire 锁内原子，不写状态）
-		if s.deps.Cooldowns != nil {
-			if _, ok := s.deps.Cooldowns.TryAcquire(c.ChannelID, time.Now()); !ok {
-				out.CoolSkips++
-				out.Switches++
-				continue
-			}
-		}
-		out.Attempted = true
-		committed, err := run(c)
-		if err != nil {
-			return out, err
-		}
-		if committed {
-			out.Committed = true
-			return out, nil
-		}
-		out.Switches++
-	}
-	return out, nil
 }
 
 // gate 是 /v1/messages 与 /v1/chat/completions 共用的请求检查（简报 6B「同一套」）：
