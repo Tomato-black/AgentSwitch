@@ -216,11 +216,8 @@ func ConfigRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State,
 			preloadForm(st, acc)
 		}
 		if uikit.SoftButton(c, t, s, "danger", "删除").Clicked() {
-			if err := acc.Remove(v.ID); err != nil {
-				st.Access.Msg = "删除失败：" + err.Error()
-			} else {
-				st.Access.Msg = "已删除「" + v.Name + "」——Desktop 配置文件保留最后状态"
-			}
+			st.Access.DeleteArm = true
+			st.Access.DeleteID = v.ID
 		}
 	})
 }

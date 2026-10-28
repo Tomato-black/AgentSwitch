@@ -44,6 +44,8 @@ type AccessState struct {
 	GuideMsg    string
 	Form        AccessForm
 	DesktopForm DesktopForm
+	DeleteArm   bool   // 删除接入配置 AlertDialog open 位
+	DeleteID    string // 删除武装对象——确认仅对匹配 id 生效
 }
 
 // AccessForm 是接入配置新建/编辑表单状态（Open 非空即编辑）。DocJSON 是唯一

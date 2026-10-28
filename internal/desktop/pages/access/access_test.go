@@ -148,3 +148,50 @@ func TestAccessGlobalSaveRefreshesCodexPreview(t *testing.T) {
 			st.Access.Form.CodexPreview, st.Access.Form.Msg)
 	}
 }
+
+// TestAccessDeleteRequiresConfirm 覆盖删除二次确认：行内「删除」只武装，
+// 弹窗「取消」保留配置，「确认删除」才执行并给出结果提示。
+func TestAccessDeleteRequiresConfirm(t *testing.T) {
+	st, a := uitest.New(t)
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	acc := bridge.AccessConfigs{A: a}
+	if _, err := acc.Create("claude", "cfg", "lm1", "{}"); err != nil {
+		t.Fatal(err)
+	}
+	st.Access.App = "claude"
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 800)
+	if err := tt.Click("删除"); err != nil {
+		t.Fatal(err)
+	}
+	if !tt.HasText("删除接入配置") {
+		t.Fatalf("确认弹窗未出现: %v", tt.Texts())
+	}
+	if got := acc.List("claude"); len(got) != 1 {
+		t.Fatalf("武装不应删除: %+v", got)
+	}
+	// 取消：保留并收起。
+	if err := tt.Click("取消"); err != nil {
+		t.Fatal(err)
+	}
+	if got := acc.List("claude"); len(got) != 1 {
+		t.Fatalf("取消后应保留: %+v", got)
+	}
+	// 再次武装并确认删除。
+	if err := tt.Click("删除"); err != nil {
+		t.Fatal(err)
+	}
+	if !tt.HasText("删除接入配置") {
+		t.Fatalf("弹窗未重现: %v", tt.Texts())
+	}
+	if err := tt.Click("确认删除"); err != nil {
+		t.Fatal(err)
+	}
+	if got := acc.List("claude"); len(got) != 0 {
+		t.Fatalf("确认后应删除: %+v", got)
+	}
+	if !strings.Contains(st.Access.Msg, "已删除") {
+		t.Fatalf("结果提示缺失: %q", st.Access.Msg)
+	}
+}

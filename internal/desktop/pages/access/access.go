@@ -207,6 +207,9 @@ func Page(c *ui.Context, st *state.State) {
 					claude.EditorCard(c, t, s, st, acc, gateOK)
 				}
 			}
+
+			// 删除二次确认（行内「删除」只武装，弹窗确认才执行）
+			deleteConfirm(c, st, acc)
 		})
 	})
 }
@@ -331,11 +334,40 @@ func configRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State,
 			}
 		}
 		if uikit.SoftButton(c, t, s, "danger", "删除").Clicked() {
-			if err := acc.Remove(v.ID); err != nil {
-				st.Access.Msg = "删除失败：" + err.Error()
-			} else {
-				st.Access.Msg = "已删除「" + v.Name + "」——Agent 配置文件保留最后状态"
-			}
+			st.Access.DeleteArm = true
+			st.Access.DeleteID = v.ID
 		}
 	})
+}
+
+// deleteConfirm 是接入配置的删除二次确认：与渠道/逻辑模型页一致的两段式
+// 交互（行内「删除」武装，弹窗确认才执行）；删除不动 Agent live 文件。
+func deleteConfirm(c *ui.Context, st *state.State, acc bridge.AccessConfigs) {
+	if !st.Access.DeleteArm {
+		return
+	}
+	name := ""
+	for _, v := range acc.List(st.Access.App) {
+		if v.ID == st.Access.DeleteID {
+			name = v.Name
+			break
+		}
+	}
+	if name == "" { // 对象已不存在：静默收起
+		st.Access.DeleteArm = false
+		st.Access.DeleteID = ""
+		return
+	}
+	msg := "确定删除接入配置「" + name + "」？Agent 配置文件保留最后写入的状态。"
+	switch ui.AlertDialog(c, &st.Access.DeleteArm, "删除接入配置", msg, "取消", "确认删除") {
+	case 1:
+		if err := acc.Remove(st.Access.DeleteID); err != nil {
+			st.Access.Msg = "删除失败：" + err.Error()
+		} else {
+			st.Access.Msg = "已删除「" + name + "」——Agent 配置文件保留最后状态"
+		}
+		st.Access.DeleteID = ""
+	case 0, ui.AlertDismissed:
+		st.Access.DeleteID = ""
+	}
 }
