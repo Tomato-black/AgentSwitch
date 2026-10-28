@@ -39,7 +39,7 @@ func TestSettingsFormMapsPort(t *testing.T) {
 // 保存按钮都在场；不再出现 TODO 占位。
 func TestSettingsPageRenders(t *testing.T) {
 	u, _ := testUI(t)
-	u.page = "settings"
+	u.Page = "settings"
 	tt := ui.NewTester(u.view, 900, 600)
 	for _, want := range []string{"端口", "请求超时", "透传", "预留", "版本", "保存设置"} {
 		if !tt.HasText(want) {

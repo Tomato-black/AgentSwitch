@@ -39,7 +39,7 @@ func formToSettings(portInput, timeoutInput string, passthrough bool) (config.Se
 func (u *uiState) settingsPage(c *ui.Context) {
 	t := c.Theme()
 	s := uikit.Softs(t)
-	gs := u.svc.Gateway.Status()
+	gs := u.Svc.Gateway.Status()
 	if u.portInput == "" || u.timeoutInput == "" {
 		p, to, _ := settingsToForm(config.Settings{
 			Port: gs.Port, RequestTimeoutSeconds: gs.TimeoutSeconds,
@@ -74,7 +74,7 @@ func (u *uiState) settingsPage(c *ui.Context) {
 						st, err := formToSettings(u.portInput, u.timeoutInput, u.passthroughOn)
 						if err != nil {
 							u.settingsMsg = err.Error()
-						} else if restart, err := u.svc.Gateway.SaveSettings(st.Port, st.RequestTimeoutSeconds); err != nil {
+						} else if restart, err := u.Svc.Gateway.SaveSettings(st.Port, st.RequestTimeoutSeconds); err != nil {
 							u.settingsMsg = err.Error()
 						} else {
 							if restart {

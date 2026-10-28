@@ -15,6 +15,7 @@ import (
 
 	"AgentSwitch/internal/app"
 	"AgentSwitch/internal/bridge"
+	"AgentSwitch/internal/desktop/state"
 	"AgentSwitch/internal/desktop/uikit"
 	"AgentSwitch/internal/telemetry"
 )
@@ -37,30 +38,19 @@ var appTray *mygo.Tray
 // keepTray 记录托盘强引用（见 appTray）。
 func keepTray(t *mygo.Tray) { appTray = t }
 
-type Services struct {
-	Gateway  bridge.Gateway
-	Channels bridge.Channels
-	Logical  *bridge.LogicalModels
-}
-
+// uiState 是根包的 UI 状态适配器：嵌入共享 state（壳层 + 各页状态），
+// 下列过渡字段在 T4–T12 迁移中逐页迁出（页面搬走后删除）。
 type uiState struct {
-	svc            Services
-	status         app.StateInfo
-	recent         []telemetry.RequestRecord
-	token          string
-	logPath        string       // 日志文件路径（a.LogPath()；概览恒显的"日志:"提示）
-	page           string       // 当前页；"logical" 默认（自绘侧栏选中 id，经 normalizedPage 归一）
-	showToken      bool         // 令牌明文显示开关
-	portInput      string       // 设置卡端口输入（为空时回显 Status.Port）
-	timeoutInput   string       // 设置卡超时输入（为空时回显 Status.TimeoutSeconds）
-	settingsMsg    string       // 设置保存结果提示
-	confirmRegen   bool         // 重新生成令牌的 AlertDialog open 位（选定后框架自关）
-	table          ui.ListState // 最近请求表状态
-	closeNotice    bool         // 首关驻留模态 open 位
-	closeConfirmed bool         // 用户已确认驻留；之后的关窗直接隐藏
-	quitting       bool         // 退出流程中：放行窗口关闭（OnBeforeQuit 置位）
-	hideWindow     func()       // 隐藏当前主窗（openWindow 注入；测试可为 nil）
-	schedule       func(func()) // 把窗口操作推迟出 GTK 事件回调（默认 afterEvent）
+	*state.State
+	status       app.StateInfo
+	token        string
+	logPath      string       // 日志文件路径（a.LogPath()；概览恒显的"日志:"提示）
+	showToken    bool         // 令牌明文显示开关
+	portInput    string       // 设置卡端口输入（为空时回显 Status.Port）
+	timeoutInput string       // 设置卡超时输入（为空时回显 Status.TimeoutSeconds）
+	settingsMsg  string       // 设置保存结果提示
+	confirmRegen bool         // 重新生成令牌的 AlertDialog open 位（选定后框架自关）
+	table        ui.ListState // 最近请求表状态
 	// 模型聚合页（Task 8 重写：搜索 + 每行开关）：
 	modelList  ui.ListState // 聚合表状态；Selected 经 modelSel 指向当前行
 	modelSel   int          // 聚合表当前行（-1=无）
@@ -93,15 +83,14 @@ type uiState struct {
 
 // channelForm 是渠道页表单（新建/详情编辑），定义与纯助手在 channels.go。
 
-func newUIState(svc Services, a *app.App) *uiState {
+func newUIState(svc state.Services, a *app.App) *uiState {
 	si := a.State()
 	st, _ := a.CurrentSettings()
-	u := &uiState{svc: svc, status: si, recent: a.Recent(), token: st.GatewayToken,
+	u := &uiState{State: state.New(svc), status: si, token: st.GatewayToken,
 		logPath:  a.LogPath(),
-		page:     "logical",
 		chForm:   channelForm{protocol: "openai", enabled: true},
-		modelSel: -1,
-		schedule: afterEvent}
+		modelSel: -1}
+	u.Schedule = afterEvent
 	// 表格行选择：Selected 必须非 nil 点击才选行（mygo ui.ListState.Selected
 	// 注释：*Selected 是所选行，-1 为无），这里指向状态字段（-1=无），
 	// "载入所选/停用·启用/测试"才落得到所选行。
@@ -115,7 +104,7 @@ func newUIState(svc Services, a *app.App) *uiState {
 // view 是窗口根：按系统外观选品牌主题，左列自绘侧栏（品牌行 + 导航 +
 // 底条网关状态）、右内容列（首关横条 + 当前页）。SetTheme 必须在任何
 // 子件构建前调用（api_gen.go：SetTheme makes the frame use t）。导航点击
-// 直接 u.page = id（四个 id 与 pageView 分发一致），点选即切页，无需
+// 直接 u.Page = id（四个 id 与 pageView 分发一致），点选即切页，无需
 // Changed 处理。
 // 侧栏弃用 ui.Sidebar：其选中项硬编码 Accent 底（sidebar.go:188），与
 // cc-switch 的中性灰选中冲突（spec §3.4），自绘列底色用 sidebarColor。
@@ -149,7 +138,7 @@ func (u *uiState) view(c *ui.Context) {
 }
 
 func Run(a *app.App) error {
-	svc := Services{
+	svc := state.Services{
 		Gateway:  bridge.Gateway{A: a},
 		Channels: bridge.Channels{A: a, Creds: a.Creds()},
 		Logical:  &bridge.LogicalModels{A: a},
@@ -206,9 +195,9 @@ func Run(a *app.App) error {
 		a.OnRecord(func(rec telemetry.RequestRecord) {
 			if w := win.Load(); w != nil {
 				w.Update(func() {
-					u.recent = append([]telemetry.RequestRecord{rec}, u.recent...)
-					if len(u.recent) > 100 {
-						u.recent = u.recent[:100]
+					u.Recent = append([]telemetry.RequestRecord{rec}, u.Recent...)
+					if len(u.Recent) > 100 {
+						u.Recent = u.Recent[:100]
 					}
 				})
 			}
@@ -233,8 +222,8 @@ func Run(a *app.App) error {
 		// 中止退出。若不在第一行放行，托盘 RoleQuit/Ctrl+Q 在"窗口开着且
 		// 未确认过教育提示"（最常见态）下：清理已做、退出被拦、UI 停在
 		// 已关闭 DB 的尸体上。
-		u.quitting = true
-		u.closeConfirmed = true
+		u.Quitting = true
+		u.CloseConfirmed = true
 		ctx, cancel := context.WithTimeout(context.Background(),
 			time.Duration(graceSeconds(a))*time.Second)
 		defer cancel()
@@ -270,9 +259,9 @@ func openWindow(u *uiState, win *atomic.Pointer[mygo.Window]) *mygo.Window {
 	// 的 .car 决定。失败只影响观感，不阻断窗口。
 	_ = w.SetIcon(appIcon)
 	win.Store(w)
-	u.hideWindow = w.Hide
+	u.HideWindow = w.Hide
 	w.OnClose(func(e *mygo.CloseEvent) {
-		if u.quitting {
+		if u.Quitting {
 			return
 		}
 		e.PreventDefault()

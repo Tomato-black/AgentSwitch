@@ -138,10 +138,10 @@ func referencedBy(models []bridge.ModelView, channelID string) []string {
 // channelRefNames 是 referencedBy 的桌面侧取数（Services.Logical 接线，
 // 未挂时返回空）。
 func channelRefNames(u *uiState, channelID string) []string {
-	if u.svc.Logical == nil {
+	if u.Svc.Logical == nil {
 		return nil
 	}
-	return referencedBy(u.svc.Logical.List(), channelID)
+	return referencedBy(u.Svc.Logical.List(), channelID)
 }
 
 // channelStats 统计遥测环里该渠道名的近况：ok=2xx、fail=Status==0||>=400，
@@ -176,7 +176,7 @@ func (u *uiState) openChannelDetail(id string) {
 	u.chKeyInput = ""
 	u.chSuggText = ""
 	u.chForm = channelForm{editID: id}
-	d, err := u.svc.Channels.Get(id)
+	d, err := u.Svc.Channels.Get(id)
 	if err != nil {
 		u.chForm.msg = "渠道不存在或已删除"
 		return
@@ -214,14 +214,14 @@ func (u *uiState) createChannel() {
 		u.chForm.msg = err.Error()
 		return
 	}
-	v, err := u.svc.Channels.Create(u.chForm.presetID, u.chForm.name, u.chForm.baseURL,
+	v, err := u.Svc.Channels.Create(u.chForm.presetID, u.chForm.name, u.chForm.baseURL,
 		u.chForm.protocol, u.chForm.apiKey, true, u.chForm.allowPrivate)
 	if err != nil {
 		u.chForm.msg = err.Error()
 		return
 	}
 	if sugg := parseSuggestions(u.chForm.suggestions); len(sugg) > 0 {
-		_ = u.svc.Channels.SetSuggestions(v.ID, sugg)
+		_ = u.Svc.Channels.SetSuggestions(v.ID, sugg)
 	}
 	u.openChannelDetail(v.ID)
 }
@@ -233,12 +233,12 @@ func (u *uiState) saveChannelDetail() {
 		u.chTestMsg = err.Error()
 		return
 	}
-	if err := u.svc.Channels.Update(u.chForm.editID, u.chForm.name, u.chForm.baseURL,
+	if err := u.Svc.Channels.Update(u.chForm.editID, u.chForm.name, u.chForm.baseURL,
 		u.chForm.protocol, u.chKeyInput, u.chForm.enabled, u.chForm.allowPrivate); err != nil {
 		u.chTestMsg = err.Error()
 		return
 	}
-	if err := u.svc.Channels.SetSuggestions(u.chForm.editID, parseSuggestions(u.chSuggText)); err != nil {
+	if err := u.Svc.Channels.SetSuggestions(u.chForm.editID, parseSuggestions(u.chSuggText)); err != nil {
 		u.chTestMsg = err.Error()
 		return
 	}
@@ -248,7 +248,7 @@ func (u *uiState) saveChannelDetail() {
 
 // testChannelDetail 落「测试连通」：结果进 chTestMsg 信息位。
 func (u *uiState) testChannelDetail() {
-	res := u.svc.Channels.Test(u.chDetailID)
+	res := u.Svc.Channels.Test(u.chDetailID)
 	if res.OK {
 		u.chTestMsg = "连通正常 (" + res.Stage + ")"
 		return
@@ -274,7 +274,7 @@ func applyFetchedModels(dst *string, msg *string, ids []string, err error, suffi
 // fetchChannelModels 落「拉取模型」（详情页）：用已保存渠道的 Base URL/协议/
 // Key 拉上游模型列表，覆盖建议文本框；结果经 applyFetchedModels 统一处理。
 func (u *uiState) fetchChannelModels() {
-	ids, err := u.svc.Channels.FetchModels(u.chDetailID)
+	ids, err := u.Svc.Channels.FetchModels(u.chDetailID)
 	applyFetchedModels(&u.chSuggText, &u.chTestMsg, ids, err, "保存后生效")
 }
 
@@ -282,7 +282,7 @@ func (u *uiState) fetchChannelModels() {
 // 尚未入库，没有可读的 Key，只能走草稿拉取。
 func (u *uiState) fetchChannelModelsDraft() {
 	f := &u.chForm
-	ids, err := u.svc.Channels.FetchModelsFromDraft(f.baseURL, f.protocol, f.apiKey, f.allowPrivate)
+	ids, err := u.Svc.Channels.FetchModelsFromDraft(f.baseURL, f.protocol, f.apiKey, f.allowPrivate)
 	applyFetchedModels(&f.suggestions, &f.msg, ids, err, "创建后生效")
 }
 
@@ -291,7 +291,7 @@ func (u *uiState) fetchChannelModelsDraft() {
 func (u *uiState) channelsView(c *ui.Context) {
 	t := c.Theme()
 	s := uikit.Softs(t)
-	chans := u.svc.Channels.List()
+	chans := u.Svc.Channels.List()
 	ui.Column(c).Gap(12).Children(func() {
 		ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "渠道").Bold().FontSize(t.FontSize + 2)
@@ -323,7 +323,7 @@ func (u *uiState) channelsView(c *ui.Context) {
 // channelCard 是一枚渠道卡：tile + 名称/徽章行（启用、HasKey）+ 协议·
 // base_url + 建议模型数与近况 meta。卡体 ButtonBase 点击进详情。
 func (u *uiState) channelCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, ch bridge.ChannelView) {
-	okN, failN := channelStats(u.recent, ch.Name)
+	okN, failN := channelStats(u.Recent, ch.Name)
 	uikit.Card(c, t, func() {
 		b := ui.ButtonBase(c).Grow(1).Gap(12).Children(func() {
 			uikit.Tile(c, t, s, ch.Name, 40)
@@ -490,7 +490,7 @@ func (u *uiState) customTile(c *ui.Context, t *ui.Theme, s uikit.SoftPalette) {
 func (u *uiState) channelDetailView(c *ui.Context) {
 	t := c.Theme()
 	s := uikit.Softs(t)
-	d, err := u.svc.Channels.Get(u.chDetailID)
+	d, err := u.Svc.Channels.Get(u.chDetailID)
 	if err != nil {
 		ui.Column(c).Gap(12).Children(func() {
 			ui.Text(c, "渠道不存在或已删除").TextColor(t.Danger)
@@ -591,7 +591,7 @@ func (u *uiState) channelDeleteConfirm(c *ui.Context, d bridge.ChannelDetail) {
 		msg = fmt.Sprintf("%s\n仍被逻辑模型引用：%s。删除后这些目标将失效。", d.Name, strings.Join(refs, "、"))
 	}
 	if i := ui.AlertDialog(c, &u.chDeleteArm, "删除渠道", msg, "取消", "确认删除"); i == 1 {
-		u.svc.Channels.Remove(u.chDeleteID)
+		u.Svc.Channels.Remove(u.chDeleteID)
 		u.chDeleteID = ""
 		u.chView = ""
 		u.chTestMsg = "已删除 " + d.Name

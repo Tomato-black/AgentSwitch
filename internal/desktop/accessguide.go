@@ -56,10 +56,10 @@ func gatewayGuideRows(port int, token string, models []string) []guideRow {
 // 提示 + 连接信息行（值可复制）。用户照卡片内容到目标系统（如 Kun 的
 // Settings > Providers）自行填写——AgentSwitch 不写第三方系统的配置。
 func (u *uiState) guideCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette) {
-	st := u.svc.Gateway.Status()
+	st := u.Svc.Gateway.Status()
 	running := st.State == "running" || st.State == "degraded"
 	var models []string
-	for _, m := range u.svc.Logical.List() {
+	for _, m := range u.Svc.Logical.List() {
 		if m.Enabled {
 			models = append(models, m.Name)
 		}

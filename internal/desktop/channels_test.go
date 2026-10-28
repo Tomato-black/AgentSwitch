@@ -11,6 +11,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"AgentSwitch/internal/bridge"
+	"AgentSwitch/internal/desktop/state"
 	"AgentSwitch/internal/presets"
 	"AgentSwitch/internal/telemetry"
 )
@@ -201,7 +202,7 @@ func TestDetailProtocolSwitched(t *testing.T) {
 		},
 	}
 	// ① 未手改：baseURL 与建议文本都换到目标协议预设值，chSuggText 同步写回。
-	u := &uiState{chForm: channelForm{presetID: "dual", protocol: "anthropic",
+	u := &uiState{State: &state.State{}, chForm: channelForm{presetID: "dual", protocol: "anthropic",
 		baseURL: "https://o.example/v1"}, chSuggText: "m-o"}
 	u.detailProtocolSwitched(dual)
 	if u.chForm.baseURL != "https://a.example" {
@@ -211,7 +212,7 @@ func TestDetailProtocolSwitched(t *testing.T) {
 		t.Fatalf("① 建议文本应联动写回: %q", u.chSuggText)
 	}
 	// ② 建议文本手改：保留；baseURL 未手改：仍联动（两字段独立判定）。
-	u = &uiState{chForm: channelForm{presetID: "dual", protocol: "anthropic",
+	u = &uiState{State: &state.State{}, chForm: channelForm{presetID: "dual", protocol: "anthropic",
 		baseURL: "https://o.example/v1"}, chSuggText: "my-model"}
 	u.detailProtocolSwitched(dual)
 	if u.chSuggText != "my-model" {
@@ -225,18 +226,18 @@ func TestDetailProtocolSwitched(t *testing.T) {
 // TestSaveChannelDetailPersistsProtocol：详情页改协议后保存，协议落库。
 func TestSaveChannelDetailPersistsProtocol(t *testing.T) {
 	u, _ := testUI(t)
-	v, err := u.svc.Channels.Create("qwen", "proto", "https://api.example.com/v1", "openai", "sk-proto-99", true, false)
+	v, err := u.Svc.Channels.Create("qwen", "proto", "https://api.example.com/v1", "openai", "sk-proto-99", true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	u.page = "channels"
+	u.Page = "channels"
 	u.openChannelDetail(v.ID)
 	if u.chForm.protocol != "openai" {
 		t.Fatalf("前置条件：回显协议应为 openai, %q", u.chForm.protocol)
 	}
 	u.chForm.protocol = "anthropic" // 模拟下拉切换
 	u.saveChannelDetail()
-	d, err := u.svc.Channels.Get(v.ID)
+	d, err := u.Svc.Channels.Get(v.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,11 +259,11 @@ func TestChannelDetailFetchModelsOverwritesText(t *testing.T) {
 	}))
 	defer up.Close()
 	u, _ := testUI(t)
-	v, err := u.svc.Channels.Create("", "fetch", up.URL, "openai", "sk-drag-12345", true, true)
+	v, err := u.Svc.Channels.Create("", "fetch", up.URL, "openai", "sk-drag-12345", true, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	u.page = "channels"
+	u.Page = "channels"
 	u.chView = "detail"
 	u.openChannelDetail(v.ID)
 	if u.chSuggText != "" {
@@ -284,11 +285,11 @@ func TestChannelDetailFetchModelsOverwritesText(t *testing.T) {
 // 报错，且不覆盖已有文本。
 func TestChannelDetailFetchModelsErrorKeepsText(t *testing.T) {
 	u, _ := testUI(t)
-	v, err := u.svc.Channels.Create("", "nokey", "https://api.example.com", "openai", "", true, false)
+	v, err := u.Svc.Channels.Create("", "nokey", "https://api.example.com", "openai", "", true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	u.page = "channels"
+	u.Page = "channels"
 	u.chView = "detail"
 	u.openChannelDetail(v.ID)
 	u.chSuggText = "keep-me"
@@ -312,7 +313,7 @@ func TestChannelNewFetchModelsDraft(t *testing.T) {
 	}))
 	defer up.Close()
 	u, _ := testUI(t)
-	u.page = "channels"
+	u.Page = "channels"
 	u.chView = "new"
 	u.chForm = channelForm{
 		protocol:    "openai",
@@ -336,7 +337,7 @@ func TestChannelNewFetchModelsDraft(t *testing.T) {
 // 报错且不覆盖建议文本。
 func TestChannelNewFetchModelsDraftRequiresKey(t *testing.T) {
 	u, _ := testUI(t)
-	u.page = "channels"
+	u.Page = "channels"
 	u.chView = "new"
 	u.chForm = channelForm{
 		protocol:    "openai",

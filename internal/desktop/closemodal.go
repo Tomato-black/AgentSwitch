@@ -12,11 +12,11 @@ import (
 )
 
 // closeModal 渲染首关驻留模态。DialogBase 自带 Esc/点遮罩关闭，会把
-// u.closeNotice 置 false（等同取消）。
+// u.CloseNotice 置 false（等同取消）。
 func (u *uiState) closeModal(c *ui.Context) {
 	t := c.Theme()
 	s := uikit.Softs(t)
-	ui.DialogBase(c, &u.closeNotice, func(backdrop, panel ui.Element) {
+	ui.DialogBase(c, &u.CloseNotice, func(backdrop, panel ui.Element) {
 		backdrop.Background(ui.RGBA(0, 0, 0, 0.45))
 		panel.Width(420).Radius(14).Background(t.Surface).Border(1, t.Border).
 			Padding(t.Space(6)).Children(func() {
@@ -40,7 +40,7 @@ func (u *uiState) closeModal(c *ui.Context) {
 				ui.Row(c).Gap(t.Space(2)).AlignItems(ui.Center).Children(func() {
 					ui.Box(c).Grow(1)
 					if uikit.SoftButton(c, t, s, "gray", "取消").Clicked() {
-						u.closeNotice = false
+						u.CloseNotice = false
 					}
 					if uikit.PillButton(c, t, "最小化到托盘").Clicked() {
 						u.minimizeToTray()
@@ -56,10 +56,10 @@ func (u *uiState) closeModal(c *ui.Context) {
 // 同步 Hide 会让 MyGo 的 GPU Presenter 在已失效的 GL 表面上提交帧，实测
 // `epoxy_get_proc_address: Couldn't find current GLX or EGL context` → SIGABRT。
 func (u *uiState) minimizeToTray() {
-	u.closeNotice = false
-	u.closeConfirmed = true
-	if u.hideWindow != nil {
-		u.schedule(u.hideWindow)
+	u.CloseNotice = false
+	u.CloseConfirmed = true
+	if u.HideWindow != nil {
+		u.Schedule(u.HideWindow)
 	}
 }
 
@@ -75,10 +75,10 @@ func afterEvent(fn func()) {
 // 之后的每次关窗直接隐藏。redraw 用于让首关模态立刻上屏。隐藏同样要
 // 推迟出关窗事件（OnClose 在 GTK delete-event 派发中执行）。
 func (u *uiState) requestClose(hide, redraw func()) {
-	if u.closeConfirmed {
-		u.schedule(hide)
+	if u.CloseConfirmed {
+		u.Schedule(hide)
 		return
 	}
-	u.closeNotice = true
+	u.CloseNotice = true
 	redraw()
 }

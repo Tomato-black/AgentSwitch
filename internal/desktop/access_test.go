@@ -11,6 +11,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"AgentSwitch/internal/bridge"
+	"AgentSwitch/internal/desktop/state"
 	"AgentSwitch/internal/storage"
 )
 
@@ -57,7 +58,7 @@ func TestAccessModelIDByLabel(t *testing.T) {
 // 空态引导与网关未运行提示在场；旧片段页元素（当前逻辑模型选择器）不再出现。
 func TestAccessPageRenders(t *testing.T) {
 	u, _ := testUI(t)
-	u.page = "access"
+	u.Page = "access"
 	tt := ui.NewTester(u.view, 900, 600)
 	for _, want := range []string{"Claude Code", "Codex", "全局配置", "实际配置", "还没有配置", "网关未运行"} {
 		if !tt.HasText(want) {
@@ -73,7 +74,7 @@ func TestAccessPageRenders(t *testing.T) {
 // 桌面版 / IDE 插件共用同一份 ~/.codex/config.toml，应用后需完全退出重启。
 func TestAccessCodexPageMentionsDesktop(t *testing.T) {
 	u, _ := testUI(t)
-	u.page = "access"
+	u.Page = "access"
 	u.accessApp = "codex"
 	tt := ui.NewTester(u.view, 900, 600)
 	for _, want := range []string{"桌面版", "~/.codex/config.toml", "完全退出", "模型选择器", "新建对话"} {
@@ -87,7 +88,7 @@ func TestAccessCodexPageMentionsDesktop(t *testing.T) {
 // 页面必须可纵向滚动到底部的保存按钮（此前缺 Scroll 容器，底部内容不可达）。
 func TestAccessPageScrollsWhenEditorOpen(t *testing.T) {
 	u, _ := testUI(t)
-	u.page = "access"
+	u.Page = "access"
 	u.accessForm = accessForm{open: true}
 	tt := ui.NewTester(u.view, 900, 600)
 	before, ok := tt.Find("保存")
@@ -230,7 +231,7 @@ func TestAccessPreloadFormRendersGatewayToken(t *testing.T) {
 	u.accessApp = "claude"
 	u.accessForm = accessForm{open: true}
 	u.accessPreloadForm(u.accessSvc())
-	token := u.svc.Gateway.Status().Token
+	token := u.Svc.Gateway.Status().Token
 	if token == "" {
 		t.Fatal("前提不成立：网关令牌应已生成")
 	}
@@ -288,7 +289,7 @@ func TestAccessRoleRoundTrip(t *testing.T) {
 // 主模型 1M（2026-10-21）：文档 env 的 ANTHROPIC_MODEL 带 [1M] 时回填勾选；
 // 勾选/取消把「逻辑模型名[1M]」/纯名写回文档（保存归一化再剔除纯名）。
 func TestAccessMainModelOneMPatchAndSync(t *testing.T) {
-	u := &uiState{}
+	u := &uiState{State: &state.State{}}
 	u.accessApp = "claude"
 	u.accessForm = accessForm{modelLabel: "my-code", docJSON: `{"env":{"ANTHROPIC_MODEL":"my-code[1M]"}}`}
 	u.accessSyncRolesFromDoc()
@@ -316,7 +317,7 @@ func TestAccessMainModelOneMPatchAndSync(t *testing.T) {
 }
 
 func TestAccessSyncRolesAndPatch(t *testing.T) {
-	u := &uiState{}
+	u := &uiState{State: &state.State{}}
 	u.accessApp = "claude"
 	u.accessForm = accessForm{docJSON: `{"env":{"ANTHROPIC_DEFAULT_HAIKU_MODEL":"fast[1M]"}}`}
 	u.accessSyncRolesFromDoc()
@@ -421,7 +422,7 @@ func TestAccessDocSetCodexRoundTrip(t *testing.T) {
 // TestAccessSyncCodexFallback：文档无 models 时回落为「绑定模型 + 启用模型」
 // （去重、忽略停用项），并回填 codex 高级设置为空。
 func TestAccessSyncCodexFallback(t *testing.T) {
-	u := &uiState{}
+	u := &uiState{State: &state.State{}}
 	u.accessForm = accessForm{docJSON: `{"env":{}}`, modelLabel: "my-code"}
 	u.accessSyncCodexFromDoc([]bridge.ModelView{
 		{Name: "my-code", Enabled: true}, {Name: "test", Enabled: true}, {Name: "off"},
@@ -439,7 +440,7 @@ func TestAccessSyncCodexFallback(t *testing.T) {
 // TestAccessSyncCodexFromDocExplicit：文档显式 models/codex 优先；解析失败
 // 保留上一合法状态。
 func TestAccessSyncCodexFromDocExplicit(t *testing.T) {
-	u := &uiState{}
+	u := &uiState{State: &state.State{}}
 	u.accessForm = accessForm{
 		modelLabel: "bound",
 		docJSON: `{"models":["a","b"],"codex":{"subagent_model":"b",` +
@@ -464,7 +465,7 @@ func TestAccessSyncCodexFromDocExplicit(t *testing.T) {
 
 // TestAccessPatchCodexModels：列表写回文档，且默认模型跟随首行。
 func TestAccessPatchCodexModels(t *testing.T) {
-	u := &uiState{}
+	u := &uiState{State: &state.State{}}
 	u.accessForm = accessForm{docJSON: `{"env":{}}`, codexModels: []string{"b", "a"}}
 	u.accessPatchCodexModels()
 	doc := map[string]any{}
@@ -504,7 +505,7 @@ func TestAccessPatchCodexModels(t *testing.T) {
 
 // TestAccessPatchCodexSettings：高级设置写回 codex 对象；清空后删除键。
 func TestAccessPatchCodexSettings(t *testing.T) {
-	u := &uiState{}
+	u := &uiState{State: &state.State{}}
 	u.accessForm = accessForm{
 		docJSON:        `{"models":["m"]}`,
 		subagentModel:  "m",
@@ -598,7 +599,7 @@ func TestAccessCodexModelMetaLines(t *testing.T) {
 func TestAccessCodexEditorShowsModelList(t *testing.T) {
 	u, a := testUI(t)
 	a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true})
-	u.page = "access"
+	u.Page = "access"
 	u.accessApp = "codex"
 	u.accessForm = accessForm{open: true, modelLabel: "my-code", docJSON: `{"env":{}}`}
 	tt := ui.NewTester(u.view, 1000, 900)
@@ -635,7 +636,7 @@ func TestAccessCodexEditorAddModelClick(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	u.page = "access"
+	u.Page = "access"
 	u.accessApp = "codex"
 	u.accessForm = accessForm{
 		open: true, modelLabel: "my-code", codexModels: []string{"my-code"},
@@ -663,7 +664,7 @@ func TestAccessCodexEditorAddModelClick(t *testing.T) {
 func TestAccessCodexEditorShowsAdvancedSettings(t *testing.T) {
 	u, a := testUI(t)
 	a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true})
-	u.page = "access"
+	u.Page = "access"
 	u.accessApp = "codex"
 	u.accessForm = accessForm{open: true, modelLabel: "my-code", docJSON: `{"env":{}}`}
 	tt := ui.NewTester(u.view, 1000, 900)
@@ -683,7 +684,7 @@ func TestAccessCodexEditorShowsModelMetaPreview(t *testing.T) {
 		ContextWindow: 1000000, ReasoningLevels: []string{"low", "high"},
 		DefaultReasoningLevel: "high", Enabled: true,
 	})
-	u.page = "access"
+	u.Page = "access"
 	u.accessApp = "codex"
 	u.accessForm = accessForm{open: true, modelLabel: "my-code", docJSON: `{"env":{}}`}
 	tt := ui.NewTester(u.view, 1000, 900)
@@ -738,7 +739,7 @@ func TestAccessCodexAdvancedMappingRoundTrip(t *testing.T) {
 func TestAccessCodexModelListSingleRowHidesDelete(t *testing.T) {
 	u, a := testUI(t)
 	a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true})
-	u.page = "access"
+	u.Page = "access"
 	u.accessApp = "codex"
 	u.accessForm = accessForm{open: true, modelLabel: "my-code", docJSON: `{"env":{}}`}
 	tt := ui.NewTester(u.view, 1000, 900)
@@ -772,7 +773,7 @@ func TestAccessCodexPreviewRendersManagedKeys(t *testing.T) {
 	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	u.page = "access"
+	u.Page = "access"
 	u.accessApp = "codex"
 	u.accessForm = accessForm{
 		open: true, modelLabel: "my-code", codexModels: []string{"my-code"},
@@ -819,7 +820,7 @@ func TestAccessGlobalSaveRefreshesCodexPreview(t *testing.T) {
 	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	u.page = "access"
+	u.Page = "access"
 	u.accessApp = "codex"
 	u.accessGlob = [][2]string{{"HTTPS_PROXY", "http://p:1"}}
 	u.accessForm = accessForm{
@@ -855,7 +856,7 @@ func TestAccessSaveFormCodexUsesFirstModel(t *testing.T) {
 		codexModels: []string{"my-code", "second"},
 		docJSON:     `{"models":["my-code","second"],"env":{}}`,
 	}
-	u.accessSaveForm(u.accessSvc(), u.svc.Logical.List())
+	u.accessSaveForm(u.accessSvc(), u.Svc.Logical.List())
 	if u.accessForm.msg != "" {
 		t.Fatalf("保存应成功: %q", u.accessForm.msg)
 	}
@@ -871,7 +872,7 @@ func TestAccessSaveFormCodexRejectsEmptyList(t *testing.T) {
 	u, _ := testUI(t)
 	u.accessApp = "codex"
 	u.accessForm = accessForm{open: true, name: "cfg"}
-	u.accessSaveForm(u.accessSvc(), u.svc.Logical.List())
+	u.accessSaveForm(u.accessSvc(), u.Svc.Logical.List())
 	if u.accessForm.msg != "请至少添加一个模型" {
 		t.Fatalf("空列表应报错: %q", u.accessForm.msg)
 	}
@@ -888,7 +889,7 @@ func TestDesktopFormDocRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	u := &uiState{}
+	u := &uiState{State: &state.State{}}
 	u.desktopFormFromDoc(raw)
 	if u.desktopForm.models[0] != "my-code" || !u.desktopForm.oneM[0] {
 		t.Fatalf("sonnet 回填: %+v", u.desktopForm)

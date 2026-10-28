@@ -554,7 +554,7 @@ func accessGlobalRows(env map[string]string) [][2]string {
 // accessGatewayGate 返回网关是否可用（应用/启动类操作的前提）与原因。
 // 网关运行状态取实际服务状态（Status().State），不是按钮状态（架构不变量）。
 func (u *uiState) accessGatewayGate() (bool, string) {
-	st := u.svc.Gateway.Status()
+	st := u.Svc.Gateway.Status()
 	if st.State != "running" && st.State != "degraded" {
 		return false, "网关未运行——请先在侧栏底条启动网关"
 	}
@@ -563,7 +563,7 @@ func (u *uiState) accessGatewayGate() (bool, string) {
 
 // accessSvc 返回本页的接入配置桥接（每帧构造，与既有页面惯例一致）。
 func (u *uiState) accessSvc() bridge.AccessConfigs {
-	return bridge.AccessConfigs{A: u.svc.Gateway.A}
+	return bridge.AccessConfigs{A: u.Svc.Gateway.A}
 }
 
 // accessPage 是接入页（shell.go pageView 分发；签名即接线契约）。
@@ -761,8 +761,8 @@ func (u *uiState) accessReloadGlobal(acc bridge.AccessConfigs) {
 func (u *uiState) accessPreloadForm(acc bridge.AccessConfigs) {
 	f := &u.accessForm
 	var models []bridge.ModelView
-	if u.svc.Logical != nil {
-		models = u.svc.Logical.List()
+	if u.Svc.Logical != nil {
+		models = u.Svc.Logical.List()
 	}
 	if f.modelLabel == "" {
 		if labels := accessModelLabels(models); len(labels) > 0 {
@@ -805,8 +805,8 @@ func (u *uiState) accessRefreshCodexPreview(acc bridge.AccessConfigs) {
 		label = f.codexModels[0]
 	}
 	var models []bridge.ModelView
-	if u.svc.Logical != nil {
-		models = u.svc.Logical.List()
+	if u.Svc.Logical != nil {
+		models = u.Svc.Logical.List()
 	}
 	modelID := accessModelIDByLabel(models, label)
 	if modelID == "" {
@@ -827,8 +827,8 @@ func (u *uiState) accessRefreshCodexPreview(acc bridge.AccessConfigs) {
 // accessRepreviewForm 用当前表单模型重新合成预览（基线变化后调用）；失败内联报错。
 func (u *uiState) accessRepreviewForm(acc bridge.AccessConfigs) {
 	var models []bridge.ModelView
-	if u.svc.Logical != nil {
-		models = u.svc.Logical.List()
+	if u.Svc.Logical != nil {
+		models = u.Svc.Logical.List()
 	}
 	modelID := accessModelIDByLabel(models, u.accessForm.modelLabel)
 	preview, err := acc.PreviewDoc(u.accessApp, modelID, u.accessForm.docJSON)
@@ -922,8 +922,8 @@ func (u *uiState) accessEditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalet
 			})
 
 			var models []bridge.ModelView
-			if u.svc.Logical != nil {
-				models = u.svc.Logical.List()
+			if u.Svc.Logical != nil {
+				models = u.Svc.Logical.List()
 			}
 			labels := accessModelLabels(models)
 			if u.accessApp == "codex" {
@@ -1003,7 +1003,7 @@ func (u *uiState) accessEditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalet
 				}
 			}
 
-			st := u.svc.Gateway.Status()
+			st := u.Svc.Gateway.Status()
 			ui.Text(c, fmt.Sprintf("网关地址 http://127.0.0.1:%d · 令牌自动生成并填入下方 JSON（保存时自动剔除，不落库）", st.Port)).TextColor(t.TextMuted)
 
 			ui.Text(c, "配置 JSON（最终写入 Agent 的完整文档；网关地址/令牌自动锁定，模型名仅可追加 1M 声明）").TextColor(t.TextMuted)

@@ -139,11 +139,11 @@ func TestLmFormMetaDefaultsToFirstLevel(t *testing.T) {
 // 窗口、等级列表与默认等级），保存时原样写回。
 func TestLogicalEditBackfillsMeta(t *testing.T) {
 	u, _ := testUI(t)
-	ch, err := u.svc.Channels.Create("", "渠道A", "https://api.example.com", "openai", "sk-1", true, false)
+	ch, err := u.Svc.Channels.Create("", "渠道A", "https://api.example.com", "openai", "sk-1", true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := u.svc.Logical.Create("my-code", "", bridge.ModelMeta{
+	m, err := u.Svc.Logical.Create("my-code", "", bridge.ModelMeta{
 		DisplayName: "My Code", ContextWindow: 1000000,
 		ReasoningLevels: []string{"low", "high"}, DefaultReasoningLevel: "high",
 	}, []bridge.TargetSpec{{ChannelID: ch.ID, ModelName: "m1", Priority: 0}})
@@ -161,7 +161,7 @@ func TestLogicalEditBackfillsMeta(t *testing.T) {
 // 编辑页并把中文错误放进表单信息位。
 func TestLogicalSaveRejectsBadMeta(t *testing.T) {
 	u, _ := testUI(t)
-	ch, err := u.svc.Channels.Create("", "渠道A", "https://api.example.com", "openai", "sk-1", true, false)
+	ch, err := u.Svc.Channels.Create("", "渠道A", "https://api.example.com", "openai", "sk-1", true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,10 +170,10 @@ func TestLogicalSaveRejectsBadMeta(t *testing.T) {
 	u.lmEdit.contextWindow = "abc"
 	u.lmEdit.targets = []bridge.TargetSpec{{ChannelID: ch.ID, ModelName: "m1"}}
 	u.saveLogicalModel()
-	if u.page != "logical-edit" || !strings.Contains(u.lmEdit.msg, "上下文窗口") {
-		t.Fatalf("page=%q msg=%q", u.page, u.lmEdit.msg)
+	if u.Page != "logical-edit" || !strings.Contains(u.lmEdit.msg, "上下文窗口") {
+		t.Fatalf("page=%q msg=%q", u.Page, u.lmEdit.msg)
 	}
-	if got := u.svc.Logical.List(); len(got) != 0 {
+	if got := u.Svc.Logical.List(); len(got) != 0 {
 		t.Fatalf("must not persist on bad meta: %+v", got)
 	}
 }
@@ -201,16 +201,16 @@ func TestLogicalEditViewRenders(t *testing.T) {
 	if !tt.HasText("需要填写模型名称") {
 		t.Fatalf("validation msg missing: %v", tt.Texts())
 	}
-	if u.page != "logical-edit" {
-		t.Fatalf("page = %q, must stay on edit on validation failure", u.page)
+	if u.Page != "logical-edit" {
+		t.Fatalf("page = %q, must stay on edit on validation failure", u.Page)
 	}
 }
 
 // TestLogicalSaveReturnsToList 覆盖保存成功回列表（简报「保存成功后
-// u.page=logical」）：目标链按下标重排 Priority 后落库。
+// u.Page=logical」）：目标链按下标重排 Priority 后落库。
 func TestLogicalSaveReturnsToList(t *testing.T) {
 	u, _ := testUI(t)
-	ch, err := u.svc.Channels.Create("", "渠道A", "https://api.example.com", "openai", "sk-1", true, false)
+	ch, err := u.Svc.Channels.Create("", "渠道A", "https://api.example.com", "openai", "sk-1", true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,10 +224,10 @@ func TestLogicalSaveReturnsToList(t *testing.T) {
 		{ChannelID: ch.ID, ModelName: "m1", Priority: 9},
 	}
 	u.saveLogicalModel()
-	if u.page != "logical" {
-		t.Fatalf("page = %q, want logical (msg=%q)", u.page, u.lmEdit.msg)
+	if u.Page != "logical" {
+		t.Fatalf("page = %q, want logical (msg=%q)", u.Page, u.lmEdit.msg)
 	}
-	m, err := u.svc.Logical.Get(u.svc.Logical.List()[0].ID)
+	m, err := u.Svc.Logical.Get(u.Svc.Logical.List()[0].ID)
 	if err != nil {
 		t.Fatal(err)
 	}

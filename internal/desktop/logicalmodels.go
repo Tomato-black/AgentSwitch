@@ -140,7 +140,7 @@ func formatTargetChain(m bridge.ModelView) string {
 
 // logicalModelsView 是逻辑模型列表页主体：页头新建钮 + 卡片行列表（名称/
 // 启用徽章/目标链摘要 + 编辑/删除/启用停用），空态引导「先建渠道，再把渠道
-// 挂进逻辑模型」。数据每帧自 u.svc.Logical.List() 取（进程内直调）。
+// 挂进逻辑模型」。数据每帧自 u.Svc.Logical.List() 取（进程内直调）。
 func logicalModelsView(c *ui.Context, u *uiState) {
 	t := c.Theme()
 	s := uikit.Softs(t)
@@ -151,8 +151,8 @@ func logicalModelsView(c *ui.Context, u *uiState) {
 		}
 	})
 	var models []bridge.ModelView
-	if u.svc.Logical != nil {
-		models = u.svc.Logical.List()
+	if u.Svc.Logical != nil {
+		models = u.Svc.Logical.List()
 	}
 	if len(models) == 0 {
 		uikit.Card(c, t, func() {
@@ -179,8 +179,8 @@ func logicalModelsView(c *ui.Context, u *uiState) {
 				if !m.Enabled {
 					toggleLabel = "启用"
 				}
-				if uikit.SoftButton(c, t, s, "act", toggleLabel).Clicked() && u.svc.Logical != nil {
-					u.svc.Logical.SetEnabled(m.ID, !m.Enabled)
+				if uikit.SoftButton(c, t, s, "act", toggleLabel).Clicked() && u.Svc.Logical != nil {
+					u.Svc.Logical.SetEnabled(m.ID, !m.Enabled)
 				}
 			})
 			ui.Text(c, formatTargetChain(m)).TextColor(t.TextMuted)
@@ -210,8 +210,8 @@ func logicalDeleteConfirm(c *ui.Context, u *uiState, name string) {
 	}
 	switch ui.AlertDialog(c, &u.lmDeleteArm, "删除逻辑模型", msg, "取消", "删除") {
 	case 1:
-		if u.svc.Logical != nil {
-			u.svc.Logical.Remove(u.lmDeleteID)
+		if u.Svc.Logical != nil {
+			u.Svc.Logical.Remove(u.lmDeleteID)
 		}
 		u.lmDeleteID = ""
 	case 0, ui.AlertDismissed:
@@ -223,7 +223,7 @@ func logicalDeleteConfirm(c *ui.Context, u *uiState, name string) {
 func (u *uiState) openLogicalNew() {
 	u.editModelID = ""
 	u.lmEdit = lmForm{}
-	u.page = "logical-edit"
+	u.Page = "logical-edit"
 }
 
 // openLogicalEdit 进编辑页并回显表单：名称/描述/目标链取自 Logical.Get，
@@ -232,11 +232,11 @@ func (u *uiState) openLogicalEdit(id string) {
 	u.editModelID = id
 	u.lmEdit = lmForm{}
 	if id == "" {
-		u.page = "logical-edit"
+		u.Page = "logical-edit"
 		return
 	}
-	if u.svc.Logical != nil {
-		if m, err := u.svc.Logical.Get(id); err != nil {
+	if u.Svc.Logical != nil {
+		if m, err := u.Svc.Logical.Get(id); err != nil {
 			u.lmEdit.msg = "逻辑模型不存在或已删除"
 		} else {
 			u.lmEdit.name = m.Name
@@ -254,7 +254,7 @@ func (u *uiState) openLogicalEdit(id string) {
 			}
 		}
 	}
-	u.page = "logical-edit"
+	u.Page = "logical-edit"
 }
 
 // saveLogicalModel 落「保存」：校验 → Priority 按下标重排 → 新建走 Create、
@@ -265,7 +265,7 @@ func (u *uiState) saveLogicalModel() {
 		u.lmEdit.msg = err.Error()
 		return
 	}
-	if u.svc.Logical == nil {
+	if u.Svc.Logical == nil {
 		u.lmEdit.msg = "逻辑模型服务未就绪"
 		return
 	}
@@ -280,21 +280,21 @@ func (u *uiState) saveLogicalModel() {
 	}
 	name := strings.TrimSpace(u.lmEdit.name)
 	if u.editModelID == "" {
-		if _, err := u.svc.Logical.Create(name, u.lmEdit.description, meta, targets); err != nil {
+		if _, err := u.Svc.Logical.Create(name, u.lmEdit.description, meta, targets); err != nil {
 			u.lmEdit.msg = err.Error()
 			return
 		}
 	} else {
 		enabled := true
-		if m, err := u.svc.Logical.Get(u.editModelID); err == nil {
+		if m, err := u.Svc.Logical.Get(u.editModelID); err == nil {
 			enabled = m.Enabled
 		}
-		if err := u.svc.Logical.Update(u.editModelID, name, u.lmEdit.description, meta, enabled, targets); err != nil {
+		if err := u.Svc.Logical.Update(u.editModelID, name, u.lmEdit.description, meta, enabled, targets); err != nil {
 			u.lmEdit.msg = err.Error()
 			return
 		}
 	}
-	u.page = "logical"
+	u.Page = "logical"
 }
 
 // logicalModelEditView 是新建/编辑页（spec §6.2 / Task 13）：名称/描述 +
@@ -304,7 +304,7 @@ func (u *uiState) saveLogicalModel() {
 func (u *uiState) logicalModelEditView(c *ui.Context) {
 	t := c.Theme()
 	s := uikit.Softs(t)
-	chans := u.svc.Channels.List()
+	chans := u.Svc.Channels.List()
 	title := "新建逻辑模型"
 	if u.editModelID != "" {
 		title = "编辑逻辑模型"
@@ -313,7 +313,7 @@ func (u *uiState) logicalModelEditView(c *ui.Context) {
 		ui.Column(c).Gap(12).Children(func() {
 			ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 				if ui.Button(c, "返回列表").Clicked() {
-					u.page = "logical"
+					u.Page = "logical"
 				}
 				ui.Text(c, title).Bold().FontSize(t.FontSize + 2)
 			})
@@ -404,7 +404,7 @@ func (u *uiState) lmTargetRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, i
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, fmt.Sprintf("%d.", i+1)).Width(20).TextColor(t.TextMuted)
 		lmChannelSelect(c, t, &tg.ChannelID, chans)
-		sugg := u.svc.Channels.Suggestions(tg.ChannelID)
+		sugg := u.Svc.Channels.Suggestions(tg.ChannelID)
 		if len(sugg) > 0 {
 			opts := sugg
 			if tg.ModelName != "" && !slices.Contains(opts, tg.ModelName) {

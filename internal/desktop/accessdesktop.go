@@ -117,8 +117,8 @@ func (u *uiState) desktopEditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPale
 			})
 
 			var models []bridge.ModelView
-			if u.svc.Logical != nil {
-				models = u.svc.Logical.List()
+			if u.Svc.Logical != nil {
+				models = u.Svc.Logical.List()
 			}
 			labels := accessModelLabels(models)
 			ui.Text(c, "角色映射（未设置 = 该角色不启用；1M 为 1M 上下文声明）").TextColor(t.TextMuted)
@@ -135,7 +135,7 @@ func (u *uiState) desktopEditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPale
 					}
 				})
 			}
-			st := u.svc.Gateway.Status()
+			st := u.Svc.Gateway.Status()
 			ui.Text(c, fmt.Sprintf("「应用」写入 Desktop 配置（网关 http://127.0.0.1:%d）；改后需重启 Claude Desktop 生效", st.Port)).TextColor(t.TextMuted)
 
 			if u.desktopForm.msg != "" {

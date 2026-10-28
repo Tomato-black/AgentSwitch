@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/egoist/mygo/ui"
+
+	"AgentSwitch/internal/desktop/state"
 )
 
 // TestNavItemSet 覆盖侧栏导航项集合：恰为四页 ID 且有序（logical →
@@ -60,11 +62,11 @@ func TestShellFullHeightLayout(t *testing.T) {
 // TestPageDefaultLogical 覆盖零值归一：uiState{} 的 page 零值是 ""，
 // 渲染/导航处归一为 "logical"（默认页 = 逻辑模型列表，spec §6.1）。
 func TestPageDefaultLogical(t *testing.T) {
-	u := &uiState{}
+	u := &uiState{State: &state.State{}}
 	if got := u.normalizedPage(); got != "logical" {
 		t.Fatalf("normalizedPage() = %q, want logical", got)
 	}
-	u.page = "channels"
+	u.Page = "channels"
 	if got := u.normalizedPage(); got != "channels" {
 		t.Fatalf("normalizedPage() = %q, want channels", got)
 	}

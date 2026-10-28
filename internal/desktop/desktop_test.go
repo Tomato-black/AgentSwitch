@@ -8,6 +8,7 @@ import (
 
 	"AgentSwitch/internal/app"
 	"AgentSwitch/internal/bridge"
+	"AgentSwitch/internal/desktop/state"
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 )
@@ -21,7 +22,7 @@ func testUI(t *testing.T) (*uiState, *app.App) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { a.Close() })
-	svc := Services{
+	svc := state.Services{
 		Gateway: bridge.Gateway{A: a},
 		// 凭据走 app 的加密存储（库内 AES-256-GCM），Channels.Creds 留空走 a.Creds() 兜底。
 		Channels: bridge.Channels{A: a},
@@ -40,11 +41,11 @@ func TestShellShowsGatewayState(t *testing.T) {
 	}
 }
 
-// TestUnknownPageFallsBackToLogical 覆盖分发默认分支：未识别的 u.page
+// TestUnknownPageFallsBackToLogical 覆盖分发默认分支：未识别的 u.Page
 // 落回逻辑模型页（与 normalizedPage 的零值归一同向）。
 func TestUnknownPageFallsBackToLogical(t *testing.T) {
 	u, _ := testUI(t)
-	u.page = "bogus"
+	u.Page = "bogus"
 	tt := ui.NewTester(u.view, 800, 600)
 	if !tt.HasText("新建逻辑模型") {
 		t.Fatalf("unknown page must fall back to logical: %v", tt.Texts())
@@ -55,9 +56,9 @@ func TestUnknownPageFallsBackToLogical(t *testing.T) {
 // 停在任意页点 X 都能看到「网关继续运行 / 最小化到托盘」。
 func TestCloseNoticeShowsModalOnAnyPage(t *testing.T) {
 	u, _ := testUI(t)
-	u.closeNotice = true
+	u.CloseNotice = true
 	for _, page := range []string{"logical", "channels", "access", "settings"} {
-		u.page = page
+		u.Page = page
 		tt := ui.NewTester(u.view, 900, 700)
 		if !tt.HasText("网关继续运行") || !tt.HasText("最小化到托盘") {
 			t.Fatalf("modal missing on %s: %v", page, tt.Texts())
@@ -71,10 +72,10 @@ func TestCloseNoticeShowsModalOnAnyPage(t *testing.T) {
 func TestCloseNoticeConfirmHidesWindow(t *testing.T) {
 	u, _ := testUI(t)
 	hidden := false
-	u.hideWindow = func() { hidden = true }
+	u.HideWindow = func() { hidden = true }
 	var scheduled func()
-	u.schedule = func(fn func()) { scheduled = fn }
-	u.closeNotice = true
+	u.Schedule = func(fn func()) { scheduled = fn }
+	u.CloseNotice = true
 	tt := ui.NewTester(u.view, 900, 700)
 	if err := tt.Click("最小化到托盘"); err != nil {
 		t.Fatal(err)
@@ -89,10 +90,10 @@ func TestCloseNoticeConfirmHidesWindow(t *testing.T) {
 	if !hidden {
 		t.Fatal("confirm must hide the window once scheduled")
 	}
-	if !u.closeConfirmed {
+	if !u.CloseConfirmed {
 		t.Fatal("confirm not recorded")
 	}
-	if u.closeNotice {
+	if u.CloseNotice {
 		t.Fatal("modal must close after confirm")
 	}
 }
@@ -114,8 +115,8 @@ func TestAfterEventRuns(t *testing.T) {
 func TestCloseNoticeCancelKeepsWindow(t *testing.T) {
 	u, _ := testUI(t)
 	hidden := false
-	u.hideWindow = func() { hidden = true }
-	u.closeNotice = true
+	u.HideWindow = func() { hidden = true }
+	u.CloseNotice = true
 	tt := ui.NewTester(u.view, 900, 700)
 	if err := tt.Click("取消"); err != nil {
 		t.Fatal(err)
@@ -123,10 +124,10 @@ func TestCloseNoticeCancelKeepsWindow(t *testing.T) {
 	if hidden {
 		t.Fatal("cancel must not hide the window")
 	}
-	if u.closeConfirmed {
+	if u.CloseConfirmed {
 		t.Fatal("cancel must not record confirmation")
 	}
-	if u.closeNotice {
+	if u.CloseNotice {
 		t.Fatal("modal must close on cancel")
 	}
 }
@@ -138,13 +139,13 @@ func TestRequestCloseEducatesOnceThenHides(t *testing.T) {
 	u, _ := testUI(t)
 	hidden, redraw := 0, 0
 	var scheduled func()
-	u.schedule = func(fn func()) { scheduled = fn }
+	u.Schedule = func(fn func()) { scheduled = fn }
 	u.requestClose(func() { hidden++ }, func() { redraw++ })
-	if !u.closeNotice || hidden != 0 || redraw != 1 {
-		t.Fatalf("first close: notice=%v hidden=%d redraw=%d", u.closeNotice, hidden, redraw)
+	if !u.CloseNotice || hidden != 0 || redraw != 1 {
+		t.Fatalf("first close: notice=%v hidden=%d redraw=%d", u.CloseNotice, hidden, redraw)
 	}
-	u.closeConfirmed = true
-	u.closeNotice = false
+	u.CloseConfirmed = true
+	u.CloseNotice = false
 	u.requestClose(func() { hidden++ }, func() { redraw++ })
 	if hidden != 0 {
 		t.Fatalf("acknowledged close must not hide inside the close event, hidden=%d", hidden)
@@ -156,7 +157,7 @@ func TestRequestCloseEducatesOnceThenHides(t *testing.T) {
 	if hidden != 1 {
 		t.Fatalf("scheduled hide did not run, hidden=%d", hidden)
 	}
-	if u.closeNotice {
+	if u.CloseNotice {
 		t.Fatal("acknowledged close must not reopen the notice")
 	}
 }
@@ -174,8 +175,8 @@ func TestNavigationSwitchesPage(t *testing.T) {
 	if err := tt.Click("渠道"); err != nil {
 		t.Fatal(err)
 	}
-	if u.page != "channels" {
-		t.Fatalf("page = %q, want channels", u.page)
+	if u.Page != "channels" {
+		t.Fatalf("page = %q, want channels", u.Page)
 	}
 	if tt.HasText("新建逻辑模型") {
 		t.Fatalf("logical leaked into channels page: %v", tt.Texts())
@@ -183,8 +184,8 @@ func TestNavigationSwitchesPage(t *testing.T) {
 	if err := tt.Click("逻辑模型"); err != nil {
 		t.Fatal(err)
 	}
-	if u.page != "logical" {
-		t.Fatalf("page = %q, want logical", u.page)
+	if u.Page != "logical" {
+		t.Fatalf("page = %q, want logical", u.Page)
 	}
 	if !tt.HasText("新建逻辑模型") {
 		t.Fatalf("logical view missing: %v", tt.Texts())
