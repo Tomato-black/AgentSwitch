@@ -234,9 +234,9 @@ func testDetail(st *state.State) {
 	st.Channels.TestMsg = res.Stage + " 失败: " + res.Error
 }
 
-// applyFetchedModels 把拉取结果写进指定文本框（覆盖）并给信息位；空列表
-// 与错误都不覆盖（用户已填内容优先保留）。
-func applyFetchedModels(dst *string, msg *string, ids []string, err error, suffix string) {
+// applyFetchedModels 处理拉取结果：错误/空列表进信息位；目标文本为空则
+// 直接填入；已有内容则武装「追加/替换」确认，不静默覆盖。
+func applyFetchedModels(st *state.State, target string, dst *string, msg *string, ids []string, err error, suffix string) {
 	if err != nil {
 		*msg = "拉取模型失败: " + err.Error()
 		return
@@ -245,21 +245,51 @@ func applyFetchedModels(dst *string, msg *string, ids []string, err error, suffi
 		*msg = "上游未返回模型"
 		return
 	}
-	*dst = strings.Join(ids, "\n")
-	*msg = fmt.Sprintf("已从上游拉取 %d 个模型（%s）", len(ids), suffix)
+	if strings.TrimSpace(*dst) == "" {
+		*dst = strings.Join(ids, "\n")
+		*msg = fmt.Sprintf("已从上游拉取 %d 个模型（%s）", len(ids), suffix)
+		return
+	}
+	st.Channels.FetchArm = true
+	st.Channels.FetchIDs = ids
+	st.Channels.FetchTarget = target
+	*msg = fmt.Sprintf("上游返回 %d 个模型——请选择替换或追加", len(ids))
 }
 
-// fetchChannelModels 落「拉取模型」（详情页）：用已保存渠道的 Base URL/协议/
-// Key 拉上游模型列表，覆盖建议文本框；结果经 applyFetchedModels 统一处理。
+// fetchModels 落「拉取模型」（详情页）：用已保存渠道的 Base URL/协议/Key
+// 拉上游模型列表；已有建议文本时先确认追加/替换。
 func fetchModels(st *state.State) {
 	ids, err := st.Svc.Channels.FetchModels(st.Channels.DetailID)
-	applyFetchedModels(&st.Channels.SuggText, &st.Channels.TestMsg, ids, err, "保存后生效")
+	applyFetchedModels(st, "detail", &st.Channels.SuggText, &st.Channels.TestMsg, ids, err, "保存后生效")
 }
 
-// fetchChannelModelsDraft 同上，但用新建表单的 baseURL/protocol/key——渠道
-// 尚未入库，没有可读的 Key，只能走草稿拉取。
+// fetchModelsDraft 同上，但用新建表单的 baseURL/protocol/key——渠道尚未
+// 入库，没有可读的 Key，只能走草稿拉取。
 func fetchModelsDraft(st *state.State) {
 	f := &st.Channels.Form
 	ids, err := st.Svc.Channels.FetchModelsFromDraft(f.BaseURL, f.Protocol, f.APIKey, f.AllowPrivate)
-	applyFetchedModels(&f.Suggestions, &f.Msg, ids, err, "创建后生效")
+	applyFetchedModels(st, "new", &f.Suggestions, &f.Msg, ids, err, "创建后生效")
+}
+
+// appendModelIDs 把新模型追加到既有文本（按行去重，保持原顺序）。
+func appendModelIDs(existing string, ids []string) string {
+	seen := map[string]bool{}
+	var out []string
+	for _, line := range strings.Split(existing, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || seen[line] {
+			continue
+		}
+		seen[line] = true
+		out = append(out, line)
+	}
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return strings.Join(out, "\n")
 }

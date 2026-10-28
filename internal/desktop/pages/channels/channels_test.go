@@ -328,6 +328,16 @@ func TestChannelNewFetchModelsDraft(t *testing.T) {
 	if err := tt.Click("拉取模型"); err != nil {
 		t.Fatalf("拉取模型按钮不可点: %v", err)
 	}
+	// 已有建议文本：先确认，选择「替换」后才覆盖。
+	if !tt.HasText("请选择替换或追加") && !tt.HasText("整体替换") {
+		t.Fatalf("缺少覆盖确认: %v", tt.Texts())
+	}
+	if st.Channels.Form.Suggestions != "stale-old-model" {
+		t.Fatalf("确认前不应覆盖: %q", st.Channels.Form.Suggestions)
+	}
+	if err := tt.Click("替换"); err != nil {
+		t.Fatal(err)
+	}
 	if st.Channels.Form.Suggestions != "d-1\nd-2\nd-3" {
 		t.Fatalf("suggestions = %q", st.Channels.Form.Suggestions)
 	}
@@ -356,5 +366,38 @@ func TestChannelNewFetchModelsDraftRequiresKey(t *testing.T) {
 	}
 	if !strings.Contains(st.Channels.Form.Msg, "Key") {
 		t.Fatalf("chForm.msg = %q", st.Channels.Form.Msg)
+	}
+}
+
+// TestChannelDetailFetchAppend：已有建议文本时选择「追加」，按行去重追加。
+func TestChannelDetailFetchAppend(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":[{"id":"m-a"},{"id":"keep"}]}`))
+	}))
+	defer up.Close()
+	st, _ := uitest.New(t)
+	v, err := st.Svc.Channels.Create("", "fetch", up.URL, "openai", "sk-drag-append", true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Channels.View = "detail"
+	openDetail(st, v.ID)
+	st.Channels.SuggText = "keep"
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 900, 700)
+	if err := tt.Click("拉取模型"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("追加"); err != nil {
+		t.Fatal(err)
+	}
+	got := st.Channels.SuggText
+	if !strings.Contains(got, "keep") || !strings.Contains(got, "m-a") {
+		t.Fatalf("append = %q", got)
+	}
+	if strings.Count(got, "keep") != 1 {
+		t.Fatalf("append must dedupe: %q", got)
+	}
+	if !strings.Contains(st.Channels.TestMsg, "追加") {
+		t.Fatalf("msg = %q", st.Channels.TestMsg)
 	}
 }

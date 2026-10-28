@@ -136,6 +136,11 @@ type ChannelState struct {
 	TestMsg   string // 连通测试/操作结果信息位
 	DeleteArm bool   // 删除渠道 AlertDialog open 位
 	DeleteID  string // 删除武装对象——弹窗仅对匹配 id 触发
+
+	// 拉取模型的「追加/替换」确认：已有建议文本时先询问，空文本直接填入。
+	FetchArm    bool
+	FetchIDs    []string
+	FetchTarget string // "detail" | "new"
 }
 
 // ChannelForm 是渠道新建/详情编辑的表单状态：APIKey 留空 = 不改密钥
