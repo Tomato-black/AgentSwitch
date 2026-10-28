@@ -42,7 +42,7 @@ func TestAccessRepreviewForm(t *testing.T) {
 		t.Fatal(err)
 	}
 	st.Access.Form.DocJSON = rebased
-	accesskit.RepreviewForm(st, accessSvc(st))
+	accesskit.RepreviewForm(st, configs(st))
 	if st.Access.Form.Msg != "" {
 		t.Fatalf("成功应清空 Msg: %q", st.Access.Form.Msg)
 	}
@@ -59,7 +59,7 @@ func TestAccessRepreviewForm(t *testing.T) {
 	}
 	// 未知模型名 → PreviewDoc 报错 → 内联提示
 	st.Access.Form.ModelLabel = "missing"
-	accesskit.RepreviewForm(st, accessSvc(st))
+	accesskit.RepreviewForm(st, configs(st))
 	if !strings.HasPrefix(st.Access.Form.Msg, "预览失败：") {
 		t.Fatalf("失败应内联报错: %q", st.Access.Form.Msg)
 	}
@@ -74,7 +74,7 @@ func TestAccessPreloadFormRendersGatewayToken(t *testing.T) {
 	}
 	st.Access.App = "claude"
 	st.Access.Form = state.AccessForm{Open: true}
-	preloadForm(st, accessSvc(st))
+	preloadForm(st, configs(st))
 	token := st.Svc.Gateway.Status().Token
 	if token == "" {
 		t.Fatal("前提不成立：网关令牌应已生成")

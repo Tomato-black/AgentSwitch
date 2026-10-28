@@ -1,5 +1,5 @@
-// Package desktop 是 MyGo 桌面壳：窗口、托盘、关窗拦截、退出钩子与状态桥接。
-// UI 页面（概览/渠道/模型）挂在本包视图上。
+// Package desktop 是 MyGo 桌面壳（组合根）：窗口、托盘、关窗拦截、退出钩子
+// 与状态桥接；UI 页面在 pages/* 子包，本包负责组合与分发。
 package desktop
 
 import (
@@ -50,7 +50,7 @@ func newUIState(svc state.Services) *uiState {
 	return u
 }
 
-// navItems、navItem、gatewayStatusBar、pageView 与各页占位视图在 shell.go
+// navItems、navItem、gatewayStatusBar 与 pageView 分发在 shell.go
 // （cc-switch 式侧栏壳 + 底条网关状态）。
 
 // view 是窗口根：按系统外观选品牌主题，左列自绘侧栏（品牌行 + 导航 +

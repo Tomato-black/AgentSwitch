@@ -23,13 +23,13 @@ import (
 	"AgentSwitch/internal/desktop/uikit"
 )
 
-// accessGatewayGate 返回网关是否可用（应用/启动类操作的前提）与原因。
-func accessGatewayGate(st *state.State) (bool, string) {
+// gatewayGate 返回网关是否可用（应用/启动类操作的前提）与原因。
+func gatewayGate(st *state.State) (bool, string) {
 	return accesskit.GatewayGate(st.Svc.Gateway)
 }
 
-// accessSvc 返回本页的接入配置桥接（每帧构造，与既有页面惯例一致）。
-func accessSvc(st *state.State) bridge.AccessConfigs {
+// configs 返回本页的接入配置桥接（每帧构造，与既有页面惯例一致）。
+func configs(st *state.State) bridge.AccessConfigs {
 	return bridge.AccessConfigs{A: st.Svc.Gateway.A}
 }
 
@@ -38,12 +38,12 @@ func accessSvc(st *state.State) bridge.AccessConfigs {
 func Page(c *ui.Context, st *state.State) {
 	t := c.Theme()
 	s := uikit.Softs(t)
-	acc := accessSvc(st)
+	acc := configs(st)
 	if st.Access.App == "" {
 		st.Access.App = "claude"
 	}
 	claudeTitle, codexTitle, desktopTitle, guideTitle := accesskit.TabTitles()
-	gateOK, gateReason := accessGatewayGate(st)
+	gateOK, gateReason := gatewayGate(st)
 
 	// 内容列包 Scroll（同 channels/logicalmodels 的长页面）：编辑器（角色表 +
 	// 320 高 TextArea）会让页面超出视口，没有滚动容器时底部内容不可达。

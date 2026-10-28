@@ -1,8 +1,7 @@
-// shell.go 是 cc-switch 式桌面壳：侧栏导航（逻辑模型/渠道/接入/设置）与
-// 侧栏底条网关状态（LED + 状态词 + 启停钮）。spec：docs/superpowers/specs/
+// shell.go 是 cc-switch 式桌面壳：侧栏导航（逻辑模型/渠道/接入/设置）、
+// 侧栏底条网关状态（LED + 状态词 + 启停钮）与页面分发。页面内容在
+// pages/* 子包，本文件只做壳。spec：docs/superpowers/specs/
 // 2026-10-17-logical-models-ccswitch-ui-design.md §6.1。
-// 页面内容（逻辑模型列表/渠道/接入/设置）由后续 Task 填充——本文件只做壳，
-// pageView 分发到各页占位视图（占位必须在 Task 12–16 清空）。
 package desktop
 
 import (
@@ -100,8 +99,6 @@ func gatewayStatusBar(c *ui.Context, u *uiState) {
 }
 
 // pageView 按归一化后的 u.Page 分发页面；未识别的 page 落到逻辑模型。
-// 本 Task 各页是占位视图（ui.Text TODO），Task 12–15 填充真实内容、
-// Task 16 清空占位痕迹。
 func (u *uiState) pageView(c *ui.Context) {
 	switch u.normalizedPage() {
 	case "channels":
@@ -114,6 +111,3 @@ func (u *uiState) pageView(c *ui.Context) {
 		logical.Page(c, u.State)
 	}
 }
-
-// 以下四个 *Page 是页面占位视图（Task 11）：Task 12 填逻辑模型列表、
-// Task 14 填渠道页、Task 15 填接入页与设置页。签名即接线契约，不得改名。

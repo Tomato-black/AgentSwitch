@@ -380,6 +380,3 @@ func Prepare(st *state.State, acc bridge.AccessConfigs) {
 	syncFromDoc(st, models)
 	RefreshPreview(st, acc)
 }
-
-// ResetForm 清空 Codex 表单（切换页签时由宿主调用）。
-func ResetForm(st *state.State) { st.Access.Form = state.AccessForm{} }

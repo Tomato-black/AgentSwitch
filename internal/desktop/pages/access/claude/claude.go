@@ -22,9 +22,6 @@ func EditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State
 	})
 }
 
-// ResetForm 清空 Claude Code 表单（切换页签时由宿主调用）。
-func ResetForm(st *state.State) { st.Access.Form = state.AccessForm{} }
-
 // rolesSection 是「模型映射」段落：显示名称只影响 /model 菜单；每行
 // 模型下拉（含「跟随主模型」）+ 显示名输入 + 1M 勾选，变化即写回文档。
 func rolesSection(c *ui.Context, t *ui.Theme, st *state.State, labels []string) {

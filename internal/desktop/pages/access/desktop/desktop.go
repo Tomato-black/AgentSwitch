@@ -238,6 +238,3 @@ func desktopRolesSummary(docJSON string) string {
 	}
 	return strings.Join(parts, " · ")
 }
-
-// ResetForm 清空 Desktop 表单（切换页签时由宿主调用）。
-func ResetForm(st *state.State) { st.Access.DesktopForm = state.DesktopForm{} }
