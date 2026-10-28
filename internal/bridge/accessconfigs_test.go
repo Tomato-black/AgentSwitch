@@ -808,43 +808,6 @@ func TestWritePersistAndLaunchCommand(t *testing.T) {
 	}
 }
 
-func TestGatewayRegenerateTokenRefreshesDerivedFiles(t *testing.T) {
-	a := tempApp(t)
-	// 钩子在 Gateway 内构造 AccessConfigs（Home=""），经 os.UserHomeDir 解析；
-	// t.Setenv 让两边解析到同一临时目录，避免触碰真实用户目录。
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	acc := AccessConfigs{A: a, Home: home}
-	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "m", Enabled: true}); err != nil {
-		t.Fatal(err)
-	}
-	v, _ := acc.Create("claude", "工作", "lm1", "")
-	if err := acc.Apply(v.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := acc.LaunchCommand(v.ID); err != nil { // 持久文件由 LaunchCommand 生成
-		t.Fatal(err)
-	}
-	oldTok, _ := a.Store().Settings().Get("auth.gateway_token")
-	p := filepath.Join(acc.Home, ".agentswitch", "access", "claude", v.ID+".json")
-	b, _ := os.ReadFile(p)
-	if !strings.Contains(string(b), oldTok) {
-		t.Fatal("前置：旧令牌应在持久文件中")
-	}
-	if _, err := (Gateway{A: a}).RegenerateToken(); err != nil {
-		t.Fatal(err)
-	}
-	b2, _ := os.ReadFile(p)
-	newTok, _ := a.Store().Settings().Get("auth.gateway_token")
-	if !strings.Contains(string(b2), newTok) || strings.Contains(string(b2), oldTok) {
-		t.Fatal("持久文件未刷新令牌")
-	}
-	live, _ := os.ReadFile(filepath.Join(acc.Home, ".claude", "settings.json"))
-	if !strings.Contains(string(live), newTok) {
-		t.Fatal("live 文件未刷新令牌")
-	}
-}
-
 func TestOpenTerminalAssemblesScript(t *testing.T) {
 	a := tempApp(t)
 	acc := AccessConfigs{A: a, Home: t.TempDir()}

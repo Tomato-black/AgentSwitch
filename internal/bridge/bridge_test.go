@@ -45,9 +45,6 @@ func TestAuditLinesCarryActorAndResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	g := Gateway{A: a}
-	if _, err := g.RegenerateToken(); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := g.SaveSettings(17891, 60); err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +54,7 @@ func TestAuditLinesCarryActorAndResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]bool{
-		"token regenerated": false, "settings saved": false,
+		"settings saved":  false,
 		"channel created": false, "channel updated": false, "channel enabled": false,
 		"channel key set": false, "channel suggestions set": false,
 		"channel removed": false,
@@ -96,10 +93,6 @@ func TestGatewayStatusShape(t *testing.T) {
 	// Task 13：Status 回显当前配置（供 UI 设置面板与概览片段）
 	if st.Port != 17890 || st.TimeoutSeconds != 120 {
 		t.Fatalf("settings echo: port=%d timeout=%d", st.Port, st.TimeoutSeconds)
-	}
-	tok, err := g.RegenerateToken()
-	if err != nil || tok == st.Token {
-		t.Fatalf("%q %v", tok, err)
 	}
 	_ = storage.NewID
 }

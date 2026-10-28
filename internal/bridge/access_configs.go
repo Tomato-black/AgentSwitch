@@ -248,12 +248,12 @@ type persistFiles struct {
 //	claude → claude --settings "<json>" %*
 //	codex  → set "KEY=VALUE"（字典序）+ codex -m "<model>" %*
 //
-// RegenerateDerived 令牌/端口变更后的联动重写（spec「令牌/端口联动」）：
+// RegenerateDerived 端口变更后的联动重写（spec「派生文件联动」）：
 // 遍历两个 appType 的全部配置重写持久文件；对 Current(appType) 命中的
 // 配置额外重写 live 文件。任一配置失败只记 Error 日志并继续其余
 // （err 可能含路径，不回显 env/令牌值）；无任何配置时零写入、零日志
-// （既有 Gateway 测试不触碰用户目录的前提）。由 Gateway.RegenerateToken
-// 与 SaveSettings（端口变更）成功后调用。
+// （既有 Gateway 测试不触碰用户目录的前提）。在 SaveSettings（端口变更）
+// 成功后调用；本地网关令牌不轮换（2026-10-28 决策）。
 func (s AccessConfigs) RegenerateDerived() {
 	for _, appType := range []string{"claude", "codex"} {
 		cfgs, err := s.A.Store().AccessConfigs().ListByApp(appType)

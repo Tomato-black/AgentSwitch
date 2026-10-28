@@ -53,16 +53,6 @@ func (g Gateway) Status() Status {
 
 func (g Gateway) Start() error { return g.A.StartGateway() }
 func (g Gateway) Stop() error  { return g.A.StopGateway(context15()) }
-func (g Gateway) RegenerateToken() (string, error) {
-	tok, err := g.A.RegenerateToken()
-	if err != nil {
-		return "", err
-	}
-	g.A.Log().Info("token regenerated", "actor", "ui", "result", "ok") // 审计只记事件，绝不记令牌值
-	AccessConfigs{A: g.A}.RegenerateDerived()                          // 令牌变了，刷新接入派生文件（无配置时零写入）
-	return tok, nil
-}
-
 func (g Gateway) SaveSettings(port, timeoutSeconds int) (bool, error) {
 	restart, err := g.A.SaveSettings(port, timeoutSeconds)
 	if err != nil {

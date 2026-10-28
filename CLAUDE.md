@@ -18,7 +18,7 @@ AgentSwitch：面向本地 AI Agent 的**模型 API 网关**——为 Claude Cod
 
 **权威设计文档（2026-10-23 更新）**：原仓库根目录的 v2.0 docx 设计稿已随开源准备移出仓库（历史版本仍在 git log 中；正文中「docx §x」的旧引用指该稿）。现行权威设计是 `docs/superpowers/specs/` 下按日期命名的各 spec（功能实现前先查对应 spec；代码与 spec 冲突时，以 spec 为准并指出来）。
 
-**开源卫生（2026-10-23）**：`.idea/`、`.claude/`、`.superpowers/`、`*.iml` 已停止跟踪并加入 `.gitignore`（个人工作区不入库）；CLAUDE.md 中的网关令牌样例已占位符化——真实令牌只存 SQLite `auth.gateway_token`，泄露后于设置页「重新生成令牌」作废旧值。
+**开源卫生（2026-10-23）**：`.idea/`、`.claude/`、`.superpowers/`、`*.iml` 已停止跟踪并加入 `.gitignore`（个人工作区不入库）；CLAUDE.md 中的网关令牌样例已占位符化——真实令牌只存 SQLite `auth.gateway_token`；本地网关令牌**不提供轮换**（2026-10-28 决策，网关仅监听 127.0.0.1），如需更换需删除该设置键并重启、再重新「应用」全部接入配置。
 
 **Claude Desktop 接入（2026-10-22）**：接入页第三种 Agent 类型 `claude_desktop`——配置为角色映射（sonnet/opus/haiku/fable → 逻辑模型，无 env 层）；「应用」把网关 profile（`inferenceProvider=gateway`、`inferenceGatewayBaseUrl/ApiKey`、`inferenceGatewayAuthScheme=bearer`、`inferenceModels`）patch 合并进 `~/.config/Claude/claude_desktop_config.json`（MCP 等键原样保留、写前备份），并把「claude-sonnet-5 → 逻辑模型」别名表持久化到 settings（`access.desktop_aliases`，last-applied-wins）；网关 candidates 解析入站名前先查别名表、`/v1/models` 追加别名（跟随逻辑模型启用态）。Desktop 只接受 claude-* 角色路由 ID（白名单参照 cc-switch：sonnet/opus/haiku/fable）。参考 cc-switch 的 inferenceGateway 方案。
 
@@ -93,7 +93,7 @@ P0-A 核心网关（单协议端到端）→ P0-B 账号池与故障转移 → P
 - 网关单进程 vs 独立子进程**未定**——先做生命周期抽象，验证 MyGo 运行模型后再决定。
 - MyGo 具体 API、托盘/开机启动等能力未经验证，以选定版本官方文档与仓库实现为准。
 
-本机 Agent 接入环境变量（真实令牌不入库；当前会话值见 `~/.claude/settings.json` 的 env，泄露后于设置页「重新生成令牌」作废）：
+本机 Agent 接入环境变量（真实令牌不入库；当前会话值见 `~/.claude/settings.json` 的 env）：
 
   ANTHROPIC_BASE_URL=http://127.0.0.1:17890
   ANTHROPIC_AUTH_TOKEN=<gateway-token>
