@@ -195,3 +195,48 @@ func TestAccessDeleteRequiresConfirm(t *testing.T) {
 		t.Fatalf("结果提示缺失: %q", st.Access.Msg)
 	}
 }
+
+// TestTabSwitchDirtyGuard 覆盖页签切换脏检查：有未保存编辑时先弹确认，
+// 「继续编辑」留在原页签、「放弃并切换」才切换并清空草稿；干净时直接切换。
+func TestTabSwitchDirtyGuard(t *testing.T) {
+	st, _ := uitest.New(t)
+	st.Access.App = "claude"
+	st.Access.Form = state.AccessForm{Open: true}
+	st.Access.Form.Baseline = st.Access.Form.Signature("claude")
+	st.Access.Form.Name = "draft" // 未保存修改
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
+	if err := tt.Click("Codex"); err != nil {
+		t.Fatal(err)
+	}
+	if !tt.HasText("未保存的编辑") {
+		t.Fatalf("确认弹窗未出现: %v", tt.Texts())
+	}
+	if st.Access.App != "claude" {
+		t.Fatalf("确认前不应切换: %q", st.Access.App)
+	}
+	if err := tt.Click("继续编辑"); err != nil {
+		t.Fatal(err)
+	}
+	if st.Access.App != "claude" || st.Access.Form.Name != "draft" {
+		t.Fatalf("继续编辑应保留草稿: %q %q", st.Access.App, st.Access.Form.Name)
+	}
+	// 再次切换并放弃：切换成功且草稿清空。
+	if err := tt.Click("Codex"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("放弃并切换"); err != nil {
+		t.Fatal(err)
+	}
+	if st.Access.App != "codex" || st.Access.Form.Open {
+		t.Fatalf("放弃后应切换并清空: %q %+v", st.Access.App, st.Access.Form)
+	}
+	// 干净状态下直接切换。
+	st.Access.App = "claude"
+	tt2 := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
+	if err := tt2.Click("连接指南"); err != nil {
+		t.Fatal(err)
+	}
+	if st.Access.App != "guide" {
+		t.Fatalf("干净状态应直接切换: %q", st.Access.App)
+	}
+}

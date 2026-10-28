@@ -4,6 +4,8 @@
 package state
 
 import (
+	"strings"
+
 	"AgentSwitch/internal/bridge"
 	"AgentSwitch/internal/telemetry"
 )
@@ -46,6 +48,8 @@ type AccessState struct {
 	DesktopForm DesktopForm
 	DeleteArm   bool   // 删除接入配置 AlertDialog open 位
 	DeleteID    string // 删除武装对象——确认仅对匹配 id 生效
+	SwitchArm   bool   // 页签切换确认 AlertDialog open 位（有未保存编辑时）
+	SwitchTo    string // 待切换的 Agent 页签
 }
 
 // AccessForm 是接入配置新建/编辑表单状态（Open 非空即编辑）。DocJSON 是唯一
@@ -71,6 +75,9 @@ type AccessForm struct {
 	SubagentEffort  string
 	AutoReviewModel string
 	CodexPreview    string
+
+	// Baseline 是打开编辑器时的内容签名，用于页签切换脏检查。
+	Baseline string
 }
 
 // DesktopForm 是 Claude Desktop 接入的新建/编辑表单状态；Models/OneM 与
@@ -82,6 +89,38 @@ type DesktopForm struct {
 	Models [4]string
 	OneM   [4]bool
 	Msg    string
+
+	// Baseline 是打开编辑器时的内容签名，用于页签切换脏检查。
+	Baseline string
+}
+
+// Signature 返回表单内容签名（页签切换脏检查用）：名称/模型/配置 JSON。
+// 角色行与 Codex 模型列表的变化都会写回 DocJSON，故无需单独计入。
+func (f *AccessForm) Signature(app string) string {
+	return app + "\x00" + f.Name + "\x00" + f.ModelLabel + "\x00" + f.DocJSON
+}
+
+// Dirty 报告编辑器是否有未保存修改（未打开视为干净）。
+func (f *AccessForm) Dirty(app string) bool {
+	return f.Open && f.Signature(app) != f.Baseline
+}
+
+// Signature 返回 Desktop 角色表单的内容签名（名称/四角色/1M 勾选）。
+func (f *DesktopForm) Signature() string {
+	oneM := ""
+	for _, b := range f.OneM {
+		if b {
+			oneM += "1"
+		} else {
+			oneM += "0"
+		}
+	}
+	return f.Name + "\x00" + strings.Join(f.Models[:], "\x00") + "\x00" + oneM
+}
+
+// Dirty 报告 Desktop 编辑器是否有未保存修改（未打开视为干净）。
+func (f *DesktopForm) Dirty() bool {
+	return f.Open && f.Signature() != f.Baseline
 }
 
 // ChannelState 是渠道页状态：View 为子视图（""=列表，"new"=新建，

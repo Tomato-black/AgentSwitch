@@ -85,15 +85,18 @@ func desktopFormFromDoc(st *state.State, raw string) {
 func preloadForm(st *state.State, acc bridge.AccessConfigs) {
 	f := &st.Access.DesktopForm
 	if f.EditID == "" {
+		f.Baseline = f.Signature()
 		return
 	}
 	for _, v := range acc.List("claude_desktop") {
 		if v.ID == f.EditID {
 			f.Name = v.Name
 			desktopFormFromDoc(st, v.Settings)
+			f.Baseline = f.Signature()
 			return
 		}
 	}
+	f.Baseline = f.Signature()
 }
 
 // desktopEditorCard 渲染 Desktop 配置的新建/编辑表单。

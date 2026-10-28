@@ -13,6 +13,22 @@ func TabTitles() (claude, codex, desktop, guide string) {
 	return "Claude Code", "Codex", "Claude Desktop", "连接指南"
 }
 
+// TabTitle 返回 Agent 页签的显示名（未知 app 原样返回）。
+func TabTitle(app string) string {
+	claude, codex, desktop, guide := TabTitles()
+	switch app {
+	case "claude":
+		return claude
+	case "codex":
+		return codex
+	case "claude_desktop":
+		return desktop
+	case "guide":
+		return guide
+	}
+	return app
+}
+
 // TabKind 把选中态译成软按钮 kind（选中 act 高亮，未选 gray）。
 func TabKind(selected bool) string {
 	if selected {

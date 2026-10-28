@@ -53,34 +53,23 @@ func Page(c *ui.Context, st *state.State) {
 	// 320 高 TextArea）会让页面超出视口，没有滚动容器时底部内容不可达。
 	ui.Scroll(c).Grow(1).Children(func() {
 		ui.Column(c).Gap(12).Children(func() {
-			// Agent tab 行（切 tab 重置编辑态，避免表单跨 Agent 误存）
+			// Agent tab 行（切 tab 丢弃编辑态；有未保存修改时先确认）
 			ui.Row(c).Gap(8).Children(func() {
 				if uikit.SoftButton(c, t, s, accesskit.TabKind(st.Access.App == "claude"), claudeTitle).Clicked() {
-					st.Access.App = "claude"
-					st.Access.Msg = ""
-					st.Access.Form = state.AccessForm{}
-					reloadGlobal(st, acc)
+					requestTab(st, acc, "claude")
 				}
 				if uikit.SoftButton(c, t, s, accesskit.TabKind(st.Access.App == "codex"), codexTitle).Clicked() {
-					st.Access.App = "codex"
-					st.Access.Msg = ""
-					st.Access.Form = state.AccessForm{}
-					st.Access.DesktopForm = state.DesktopForm{}
-					reloadGlobal(st, acc)
+					requestTab(st, acc, "codex")
 				}
 				if uikit.SoftButton(c, t, s, accesskit.TabKind(st.Access.App == "claude_desktop"), desktopTitle).Clicked() {
-					st.Access.App = "claude_desktop"
-					st.Access.Msg = ""
-					st.Access.Form = state.AccessForm{}
-					st.Access.DesktopForm = state.DesktopForm{}
+					requestTab(st, acc, "claude_desktop")
 				}
 				if uikit.SoftButton(c, t, s, accesskit.TabKind(st.Access.App == "guide"), guideTitle).Clicked() {
-					st.Access.App = "guide"
-					st.Access.Msg = ""
-					st.Access.Form = state.AccessForm{}
-					st.Access.DesktopForm = state.DesktopForm{}
+					requestTab(st, acc, "guide")
 				}
 			})
+			// 未保存编辑的切换确认（挂在页签行后，guide 早退前渲染）。
+			switchConfirm(c, st, acc)
 			// 连接指南页签：只渲染通用连接信息卡（第三方系统如 Kun 照此
 			// 在目标系统里手工填写），跳过 Agent 专属的全局配置/实际配置/
 			// 编辑器（提前退出本闭包，下方卡片不再渲染）。
@@ -186,6 +175,7 @@ func Page(c *ui.Context, st *state.State) {
 						if uikit.PillButton(c, t, "＋ 新建配置").Clicked() {
 							if st.Access.App == "claude_desktop" {
 								st.Access.DesktopForm = state.DesktopForm{Open: true}
+								st.Access.DesktopForm.Baseline = st.Access.DesktopForm.Signature()
 							} else {
 								st.Access.Form = state.AccessForm{Open: true}
 								preloadForm(st, acc)
@@ -261,6 +251,7 @@ func preloadForm(st *state.State, acc bridge.AccessConfigs) {
 		// 编辑器打开即回填模型列表并生成只读 config.toml 预览。
 		codex.Prepare(st, acc)
 	}
+	f.Baseline = f.Signature(st.Access.App)
 }
 
 // accessRepreviewForm 用当前表单模型重新合成预览（基线变化后调用）；失败内联报错。
@@ -369,5 +360,51 @@ func deleteConfirm(c *ui.Context, st *state.State, acc bridge.AccessConfigs) {
 		st.Access.DeleteID = ""
 	case 0, ui.AlertDismissed:
 		st.Access.DeleteID = ""
+	}
+}
+
+// tabDirty 报告接入页是否存在未保存的编辑器内容（两套表单任一）。
+func tabDirty(st *state.State) bool {
+	return st.Access.Form.Dirty(st.Access.App) || st.Access.DesktopForm.Dirty()
+}
+
+// requestTab 处理页签点击：干净则立即切换；有未保存编辑则武装确认弹窗。
+func requestTab(st *state.State, acc bridge.AccessConfigs, app string) {
+	if app == st.Access.App {
+		return
+	}
+	if tabDirty(st) {
+		st.Access.SwitchArm = true
+		st.Access.SwitchTo = app
+		return
+	}
+	switchTab(st, acc, app)
+}
+
+// switchTab 执行页签切换：丢弃两套编辑器草稿，按目标页签刷新全局配置
+// （claude/codex 有 env 合成层，需要重载全局配置行）。
+func switchTab(st *state.State, acc bridge.AccessConfigs, app string) {
+	st.Access.App = app
+	st.Access.Msg = ""
+	st.Access.Form = state.AccessForm{}
+	st.Access.DesktopForm = state.DesktopForm{}
+	if app == "claude" || app == "codex" {
+		reloadGlobal(st, acc)
+	}
+}
+
+// switchConfirm 是未保存编辑的切换确认弹窗：确认才执行切换。
+func switchConfirm(c *ui.Context, st *state.State, acc bridge.AccessConfigs) {
+	if !st.Access.SwitchArm {
+		return
+	}
+	target := st.Access.SwitchTo
+	msg := "当前编辑器有未保存的修改，切换到「" + accesskit.TabTitle(target) + "」将丢弃这些修改。"
+	switch ui.AlertDialog(c, &st.Access.SwitchArm, "未保存的编辑", msg, "继续编辑", "放弃并切换") {
+	case 1:
+		st.Access.SwitchTo = ""
+		switchTab(st, acc, target)
+	case 0, ui.AlertDismissed:
+		st.Access.SwitchTo = ""
 	}
 }
