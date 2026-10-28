@@ -1,4 +1,4 @@
-package desktop
+package claudedesktop
 
 import (
 	"encoding/json"
