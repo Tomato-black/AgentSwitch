@@ -1,6 +1,7 @@
 package accesskit
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -105,4 +106,24 @@ func GatewayGate(gw bridge.Gateway) (bool, string) {
 		return false, "网关未运行——请先在侧栏底条启动网关"
 	}
 	return true, ""
+}
+
+// ModelSummary 返回接入配置行的模型摘要：Codex 且文档声明多个模型时显示
+// 「首模型 等 N 个」（默认模型即首项），其余情况回退绑定的逻辑模型名。
+func ModelSummary(app, settingsJSON, fallback string) string {
+	if app != "codex" {
+		return fallback
+	}
+	doc, err := DocObject(settingsJSON)
+	if err != nil {
+		return fallback
+	}
+	models, ok := DocModels(doc)
+	if !ok || len(models) == 0 {
+		return fallback
+	}
+	if len(models) == 1 {
+		return models[0]
+	}
+	return fmt.Sprintf("%s 等 %d 个", models[0], len(models))
 }

@@ -292,7 +292,7 @@ func configRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State,
 		if badge := accesskit.RowBadge(v.IsCurrent); badge != "" {
 			uikit.SoftBadge(c, t, s, "ok", badge)
 		}
-		ui.Text(c, "→ "+v.LogicalModelName).TextColor(t.TextMuted).Grow(1)
+		ui.Text(c, "→ "+accesskit.ModelSummary(st.Access.App, v.Settings, v.LogicalModelName)).TextColor(t.TextMuted).Grow(1)
 		// 应用/复制命令/打开终端依赖网关（终审#3：编辑/删除是纯 DB 操作，
 		// 不受门禁影响——spec 只点名门禁前三个操作）。
 		apply := func() {

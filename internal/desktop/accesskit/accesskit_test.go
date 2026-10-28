@@ -193,3 +193,21 @@ func TestAccessDocSetCodexRoundTrip(t *testing.T) {
 		t.Fatal("非法 JSON 应报错")
 	}
 }
+
+// TestModelSummary：Codex 多模型显示「首模型 等 N 个」；单模型/非 Codex/
+// 非法文档回退绑定模型名。
+func TestModelSummary(t *testing.T) {
+	two := `{"models":["m-a","m-b"],"env":{}}`
+	if got := ModelSummary("codex", two, "bound"); got != "m-a 等 2 个" {
+		t.Fatalf("multi = %q", got)
+	}
+	if got := ModelSummary("codex", `{"models":["only"],"env":{}}`, "bound"); got != "only" {
+		t.Fatalf("single = %q", got)
+	}
+	if got := ModelSummary("codex", `{bad`, "bound"); got != "bound" {
+		t.Fatalf("invalid = %q", got)
+	}
+	if got := ModelSummary("claude", two, "bound"); got != "bound" {
+		t.Fatalf("non-codex = %q", got)
+	}
+}
