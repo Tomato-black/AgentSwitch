@@ -28,7 +28,30 @@ type State struct {
 	HideWindow     func()       // 隐藏当前主窗（openWindow 注入；测试可为 nil）
 	Schedule       func(func()) // 把窗口操作推迟出 GTK 事件回调（默认 afterEvent）
 
+	Logical  LogicalState
 	Settings SettingsState
+}
+
+// LogicalState 是逻辑模型页状态。
+type LogicalState struct {
+	EditModelID string // 编辑页锚定逻辑模型 id（空=新建）
+	Edit        LMForm // 新建/编辑表单状态（名称/描述/目标链/信息位）
+	DeleteArm   bool   // 删除 AlertDialog open 位
+	DeleteID    string // 删除武装对象——确认仅对匹配 id 生效
+}
+
+// LMForm 是逻辑模型新建/编辑表单状态：Targets 即目标链行（Priority 落库
+// 前按下标重排）；元数据以原始字符串保存（在 meta 校验时解析）；Msg 是
+// 表单信息位（校验/保存错误）。
+type LMForm struct {
+	Name                  string
+	Description           string
+	DisplayName           string
+	ContextWindow         string
+	ReasoningLevels       string
+	DefaultReasoningLevel string
+	Targets               []bridge.TargetSpec
+	Msg                   string
 }
 
 // SettingsState 是设置页状态：输入框为空时按当前生效值回显（不与输入中的

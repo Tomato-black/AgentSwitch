@@ -1,4 +1,4 @@
-package desktop
+package logical
 
 import (
 	"strings"
@@ -7,6 +7,8 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"AgentSwitch/internal/bridge"
+	"AgentSwitch/internal/desktop/state"
+	"AgentSwitch/internal/desktop/uitest"
 )
 
 // TestLogicalCardShowsTargetChain 覆盖目标链摘要纯函数：两目标按序拼成
@@ -64,73 +66,73 @@ func TestTargetMoveUpDown(t *testing.T) {
 // 名称」；至少一个目标且每行渠道/模型名齐备才放行（校验函数返回错误信息，
 // 表单信息位展示）。
 func TestEditValidationEmptyName(t *testing.T) {
-	f := lmForm{targets: []bridge.TargetSpec{{ChannelID: "c1", ModelName: "m1"}}}
-	err := f.validate()
+	f := state.LMForm{Targets: []bridge.TargetSpec{{ChannelID: "c1", ModelName: "m1"}}}
+	err := validate(f)
 	if err == nil || !strings.Contains(err.Error(), "模型名称") {
 		t.Fatalf("empty name: %v", err)
 	}
-	f.name = "  "
-	if err := f.validate(); err == nil || !strings.Contains(err.Error(), "模型名称") {
+	f.Name = "  "
+	if err := validate(f); err == nil || !strings.Contains(err.Error(), "模型名称") {
 		t.Fatalf("blank name: %v", err)
 	}
-	f.name = "my-code"
-	f.targets = nil
-	if err := f.validate(); err == nil || !strings.Contains(err.Error(), "目标") {
+	f.Name = "my-code"
+	f.Targets = nil
+	if err := validate(f); err == nil || !strings.Contains(err.Error(), "目标") {
 		t.Fatalf("no targets: %v", err)
 	}
-	f.targets = []bridge.TargetSpec{{ChannelID: "", ModelName: "m1"}}
-	if err := f.validate(); err == nil || !strings.Contains(err.Error(), "渠道") {
+	f.Targets = []bridge.TargetSpec{{ChannelID: "", ModelName: "m1"}}
+	if err := validate(f); err == nil || !strings.Contains(err.Error(), "渠道") {
 		t.Fatalf("missing channel: %v", err)
 	}
-	f.targets = []bridge.TargetSpec{{ChannelID: "c1", ModelName: " "}}
-	if err := f.validate(); err == nil || !strings.Contains(err.Error(), "模型名") {
+	f.Targets = []bridge.TargetSpec{{ChannelID: "c1", ModelName: " "}}
+	if err := validate(f); err == nil || !strings.Contains(err.Error(), "模型名") {
 		t.Fatalf("missing model: %v", err)
 	}
-	f.targets = []bridge.TargetSpec{{ChannelID: "c1", ModelName: "m1"}, {ChannelID: "c2", ModelName: "m2"}}
-	if err := f.validate(); err != nil {
+	f.Targets = []bridge.TargetSpec{{ChannelID: "c1", ModelName: "m1"}, {ChannelID: "c2", ModelName: "m2"}}
+	if err := validate(f); err != nil {
 		t.Fatalf("complete form: %v", err)
 	}
 }
 
 // TestLmFormMetaParsesLevels 覆盖元数据表单解析：思考等级按逗号分隔、
 // 去空格、去空项、去重且保持首次出现顺序；未知等级与非数字上下文窗口
-// 都报中文错误（brief Task 3）。
+// 都报中文错误。
 func TestLmFormMetaParsesLevels(t *testing.T) {
-	f := lmForm{reasoningLevels: " low, high ,low ", defaultReasoningLevel: "high"}
-	meta, err := f.meta()
+	f := state.LMForm{ReasoningLevels: " low, high ,low ", DefaultReasoningLevel: "high"}
+	m, err := meta(f)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(meta.ReasoningLevels) != 2 || meta.ReasoningLevels[0] != "low" ||
-		meta.ReasoningLevels[1] != "high" || meta.DefaultReasoningLevel != "high" {
-		t.Fatalf("%+v", meta)
+	if len(m.ReasoningLevels) != 2 || m.ReasoningLevels[0] != "low" ||
+		m.ReasoningLevels[1] != "high" || m.DefaultReasoningLevel != "high" {
+		t.Fatalf("%+v", m)
 	}
-	if _, err := (lmForm{reasoningLevels: "bogus"}).meta(); err == nil {
+	if _, err := meta(state.LMForm{ReasoningLevels: "bogus"}); err == nil {
 		t.Fatal("未知等级应报错")
 	}
-	if _, err := (lmForm{contextWindow: "abc"}).meta(); err == nil {
+	if _, err := meta(state.LMForm{ContextWindow: "abc"}); err == nil {
 		t.Fatal("非数字上下文窗口应报错")
 	}
 }
 
-// TestLmFormMetaDefaultsToFirstLevel 覆盖 Task 2 交接的归一化规则：等级
-// 非空而默认等级为空时取首项（spec §4），否则目录会写出空字符串。
+// TestLmFormMetaDefaultsToFirstLevel 覆盖归一化规则：等级非空而默认等级
+// 为空时取首项（spec §4），否则目录会写出空字符串。
 func TestLmFormMetaDefaultsToFirstLevel(t *testing.T) {
-	meta, err := (lmForm{reasoningLevels: "medium, high"}).meta()
+	m, err := meta(state.LMForm{ReasoningLevels: "medium, high"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if meta.DefaultReasoningLevel != "medium" {
-		t.Fatalf("default = %q, want medium", meta.DefaultReasoningLevel)
+	if m.DefaultReasoningLevel != "medium" {
+		t.Fatalf("default = %q, want medium", m.DefaultReasoningLevel)
 	}
-	empty, err := (lmForm{}).meta()
+	empty, err := meta(state.LMForm{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if empty.DefaultReasoningLevel != "" || empty.ContextWindow != 0 || len(empty.ReasoningLevels) != 0 {
 		t.Fatalf("empty form must stay unset: %+v", empty)
 	}
-	if _, err := (lmForm{reasoningLevels: "low", defaultReasoningLevel: "high"}).meta(); err == nil {
+	if _, err := meta(state.LMForm{ReasoningLevels: "low", DefaultReasoningLevel: "high"}); err == nil {
 		t.Fatal("默认等级不在列表应报错")
 	}
 }
@@ -138,42 +140,42 @@ func TestLmFormMetaDefaultsToFirstLevel(t *testing.T) {
 // TestLogicalEditBackfillsMeta 覆盖编辑页回填元数据（显示名、上下文
 // 窗口、等级列表与默认等级），保存时原样写回。
 func TestLogicalEditBackfillsMeta(t *testing.T) {
-	u, _ := testUI(t)
-	ch, err := u.Svc.Channels.Create("", "渠道A", "https://api.example.com", "openai", "sk-1", true, false)
+	st, _ := uitest.New(t)
+	ch, err := st.Svc.Channels.Create("", "渠道A", "https://api.example.com", "openai", "sk-1", true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := u.Svc.Logical.Create("my-code", "", bridge.ModelMeta{
+	m, err := st.Svc.Logical.Create("my-code", "", bridge.ModelMeta{
 		DisplayName: "My Code", ContextWindow: 1000000,
 		ReasoningLevels: []string{"low", "high"}, DefaultReasoningLevel: "high",
 	}, []bridge.TargetSpec{{ChannelID: ch.ID, ModelName: "m1", Priority: 0}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	u.openLogicalEdit(m.ID)
-	if u.lmEdit.displayName != "My Code" || u.lmEdit.contextWindow != "1000000" ||
-		u.lmEdit.reasoningLevels != "low,high" || u.lmEdit.defaultReasoningLevel != "high" {
-		t.Fatalf("backfill = %+v", u.lmEdit)
+	openEdit(st, m.ID)
+	if st.Logical.Edit.DisplayName != "My Code" || st.Logical.Edit.ContextWindow != "1000000" ||
+		st.Logical.Edit.ReasoningLevels != "low,high" || st.Logical.Edit.DefaultReasoningLevel != "high" {
+		t.Fatalf("backfill = %+v", st.Logical.Edit)
 	}
 }
 
 // TestLogicalSaveRejectsBadMeta 覆盖元数据校验失败路径：不写库、留在
 // 编辑页并把中文错误放进表单信息位。
 func TestLogicalSaveRejectsBadMeta(t *testing.T) {
-	u, _ := testUI(t)
-	ch, err := u.Svc.Channels.Create("", "渠道A", "https://api.example.com", "openai", "sk-1", true, false)
+	st, _ := uitest.New(t)
+	ch, err := st.Svc.Channels.Create("", "渠道A", "https://api.example.com", "openai", "sk-1", true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	u.openLogicalNew()
-	u.lmEdit.name = "my-code"
-	u.lmEdit.contextWindow = "abc"
-	u.lmEdit.targets = []bridge.TargetSpec{{ChannelID: ch.ID, ModelName: "m1"}}
-	u.saveLogicalModel()
-	if u.Page != "logical-edit" || !strings.Contains(u.lmEdit.msg, "上下文窗口") {
-		t.Fatalf("page=%q msg=%q", u.Page, u.lmEdit.msg)
+	openNew(st)
+	st.Logical.Edit.Name = "my-code"
+	st.Logical.Edit.ContextWindow = "abc"
+	st.Logical.Edit.Targets = []bridge.TargetSpec{{ChannelID: ch.ID, ModelName: "m1"}}
+	save(st)
+	if st.Page != "logical-edit" || !strings.Contains(st.Logical.Edit.Msg, "上下文窗口") {
+		t.Fatalf("page=%q msg=%q", st.Page, st.Logical.Edit.Msg)
 	}
-	if got := u.Svc.Logical.List(); len(got) != 0 {
+	if got := st.Svc.Logical.List(); len(got) != 0 {
 		t.Fatalf("must not persist on bad meta: %+v", got)
 	}
 }
@@ -181,9 +183,9 @@ func TestLogicalSaveRejectsBadMeta(t *testing.T) {
 // TestLogicalEditViewRenders 覆盖编辑页渲染薄壳：新建态出现名称/描述/目标
 // 行/添加目标/保存且无 TODO 占位；校验失败错误进表单信息位。
 func TestLogicalEditViewRenders(t *testing.T) {
-	u, _ := testUI(t)
-	u.openLogicalNew()
-	tt := ui.NewTester(u.view, 900, 700)
+	st, _ := uitest.New(t)
+	openNew(st)
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 900, 700)
 	for _, want := range []string{
 		"新建逻辑模型", "名称:", "描述:", "显示名:", "上下文窗口:", "思考等级:",
 		"默认思考等级:", "模板默认", "目标链", "添加目标", "保存",
@@ -201,33 +203,33 @@ func TestLogicalEditViewRenders(t *testing.T) {
 	if !tt.HasText("需要填写模型名称") {
 		t.Fatalf("validation msg missing: %v", tt.Texts())
 	}
-	if u.Page != "logical-edit" {
-		t.Fatalf("page = %q, must stay on edit on validation failure", u.Page)
+	if st.Page != "logical-edit" {
+		t.Fatalf("page = %q, must stay on edit on validation failure", st.Page)
 	}
 }
 
-// TestLogicalSaveReturnsToList 覆盖保存成功回列表（简报「保存成功后
-// u.Page=logical」）：目标链按下标重排 Priority 后落库。
+// TestLogicalSaveReturnsToList 覆盖保存成功回列表：目标链按下标重排
+// Priority 后落库。
 func TestLogicalSaveReturnsToList(t *testing.T) {
-	u, _ := testUI(t)
-	ch, err := u.Svc.Channels.Create("", "渠道A", "https://api.example.com", "openai", "sk-1", true, false)
+	st, _ := uitest.New(t)
+	ch, err := st.Svc.Channels.Create("", "渠道A", "https://api.example.com", "openai", "sk-1", true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	u.openLogicalNew()
-	u.lmEdit.name = "my-code"
-	u.lmEdit.displayName = "My Code"
-	u.lmEdit.contextWindow = "1000000"
-	u.lmEdit.reasoningLevels = "low, high" // 默认等级留空 → 保存时取首项
-	u.lmEdit.targets = []bridge.TargetSpec{
+	openNew(st)
+	st.Logical.Edit.Name = "my-code"
+	st.Logical.Edit.DisplayName = "My Code"
+	st.Logical.Edit.ContextWindow = "1000000"
+	st.Logical.Edit.ReasoningLevels = "low, high" // 默认等级留空 → 保存时取首项
+	st.Logical.Edit.Targets = []bridge.TargetSpec{
 		{ChannelID: ch.ID, ModelName: "m2", Priority: 9},
 		{ChannelID: ch.ID, ModelName: "m1", Priority: 9},
 	}
-	u.saveLogicalModel()
-	if u.Page != "logical" {
-		t.Fatalf("page = %q, want logical (msg=%q)", u.Page, u.lmEdit.msg)
+	save(st)
+	if st.Page != "logical" {
+		t.Fatalf("page = %q, want logical (msg=%q)", st.Page, st.Logical.Edit.Msg)
 	}
-	m, err := u.Svc.Logical.Get(u.Svc.Logical.List()[0].ID)
+	m, err := st.Svc.Logical.Get(st.Svc.Logical.List()[0].ID)
 	if err != nil {
 		t.Fatal(err)
 	}

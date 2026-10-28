@@ -61,11 +61,6 @@ type uiState struct {
 	chTestMsg   string      // 连通测试/操作结果信息位
 	chDeleteArm bool        // 删除渠道 AlertDialog open 位
 	chDeleteID  string      // 删除武装对象——弹窗仅对匹配 id 触发
-	// 逻辑模型页（Task 12 卡片列表；Task 13 新建/编辑表单）：
-	editModelID string // 编辑页锚定逻辑模型 id（空=新建）
-	lmEdit      lmForm // 新建/编辑表单状态（名称/描述/目标链/信息位）
-	lmDeleteArm bool   // 删除逻辑模型 AlertDialog open 位
-	lmDeleteID  string // 删除武装对象——确认仅对匹配 id 生效
 	// 接入页（2026-10-18-agent-access-config）：
 	accessApp     string      // Agent tab："claude"/"codex"/"claude_desktop"（"" 落 claude）
 	accessGlob    [][2]string // 全局配置编辑行（键/值；nil 时首帧从库加载）

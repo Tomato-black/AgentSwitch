@@ -5,7 +5,7 @@
 // 输入或建议选择、上移/下移/删除、添加目标）+ 保存（Create/Update）。纯助手
 // moveTarget / lmForm.validate / lmForm.meta 供测试直断言；渲染薄壳不测字符串
 // 细节。
-package desktop
+package logical
 
 import (
 	"fmt"
@@ -16,23 +16,9 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"AgentSwitch/internal/bridge"
+	"AgentSwitch/internal/desktop/state"
 	"AgentSwitch/internal/desktop/uikit"
 )
-
-// lmForm 是逻辑模型新建/编辑表单状态（Task 13）：targets 即目标链行
-// （ChannelID/ModelName 随行编辑，Priority 落库前按下标重排）；元数据字段
-// 以原始字符串保存（contextWindow/reasoningLevels 在 meta() 里解析）；msg
-// 是表单信息位（校验/保存错误，channels 页同款模式）。
-type lmForm struct {
-	name                  string
-	description           string
-	displayName           string
-	contextWindow         string
-	reasoningLevels       string
-	defaultReasoningLevel string
-	targets               []bridge.TargetSpec
-	msg                   string
-}
 
 // lmReasoningLevels 是 Codex 认可的思考等级（spec §4），与 bridge 的
 // reasoningLevelWhitelist 保持一致。桌面层提前校验，错误直接进表单信息位；
@@ -58,9 +44,9 @@ func lmParsedLevels(raw string) []string {
 // meta 把表单字符串解析成桥接层元数据：上下文窗口空串=0、否则须为非负
 // 整数；思考等级须在白名单内；默认等级空时取列表首项（spec §4「非空但
 // 默认空 → 列表第一项」），非空须属于列表。错误信息中文、可进信息位。
-func (f lmForm) meta() (bridge.ModelMeta, error) {
-	meta := bridge.ModelMeta{DisplayName: strings.TrimSpace(f.displayName)}
-	if raw := strings.TrimSpace(f.contextWindow); raw != "" {
+func meta(f state.LMForm) (bridge.ModelMeta, error) {
+	meta := bridge.ModelMeta{DisplayName: strings.TrimSpace(f.DisplayName)}
+	if raw := strings.TrimSpace(f.ContextWindow); raw != "" {
 		n, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || n < 0 {
 			return meta, fmt.Errorf("上下文窗口需要是非负整数，如 1000000")
@@ -71,14 +57,14 @@ func (f lmForm) meta() (bridge.ModelMeta, error) {
 	for _, lv := range lmReasoningLevels {
 		known[lv] = true
 	}
-	meta.ReasoningLevels = lmParsedLevels(f.reasoningLevels)
+	meta.ReasoningLevels = lmParsedLevels(f.ReasoningLevels)
 	for _, lv := range meta.ReasoningLevels {
 		if !known[lv] {
 			return meta, fmt.Errorf("未知思考等级「%s」，可用：%s",
 				lv, strings.Join(lmReasoningLevels, "、"))
 		}
 	}
-	def := strings.TrimSpace(f.defaultReasoningLevel)
+	def := strings.TrimSpace(f.DefaultReasoningLevel)
 	if def == "" && len(meta.ReasoningLevels) > 0 {
 		def = meta.ReasoningLevels[0]
 	}
@@ -103,14 +89,14 @@ func moveTarget(targets []bridge.TargetSpec, i, delta int) {
 
 // validate 是保存前校验：名称必填、至少一个目标、每行渠道与模型名必填。
 // 错误信息中文、进表单信息位。
-func (f lmForm) validate() error {
-	if strings.TrimSpace(f.name) == "" {
+func validate(f state.LMForm) error {
+	if strings.TrimSpace(f.Name) == "" {
 		return fmt.Errorf("需要填写模型名称")
 	}
-	if len(f.targets) == 0 {
+	if len(f.Targets) == 0 {
 		return fmt.Errorf("至少需要一个目标")
 	}
-	for i, tg := range f.targets {
+	for i, tg := range f.Targets {
 		if tg.ChannelID == "" {
 			return fmt.Errorf("目标 %d：需要选择渠道", i+1)
 		}
@@ -140,19 +126,19 @@ func formatTargetChain(m bridge.ModelView) string {
 
 // logicalModelsView 是逻辑模型列表页主体：页头新建钮 + 卡片行列表（名称/
 // 启用徽章/目标链摘要 + 编辑/删除/启用停用），空态引导「先建渠道，再把渠道
-// 挂进逻辑模型」。数据每帧自 u.Svc.Logical.List() 取（进程内直调）。
-func logicalModelsView(c *ui.Context, u *uiState) {
+// 挂进逻辑模型」。数据每帧自 st.Svc.Logical.List() 取（进程内直调）。
+func listView(c *ui.Context, st *state.State) {
 	t := c.Theme()
 	s := uikit.Softs(t)
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, "逻辑模型").Bold().FontSize(16).Grow(1)
 		if uikit.PillButton(c, t, "＋ 新建逻辑模型").Clicked() {
-			u.openLogicalNew()
+			openNew(st)
 		}
 	})
 	var models []bridge.ModelView
-	if u.Svc.Logical != nil {
-		models = u.Svc.Logical.List()
+	if st.Svc.Logical != nil {
+		models = st.Svc.Logical.List()
 	}
 	if len(models) == 0 {
 		uikit.Card(c, t, func() {
@@ -169,18 +155,18 @@ func logicalModelsView(c *ui.Context, u *uiState) {
 					uikit.SoftBadge(c, t, s, "gray", "停用")
 				}
 				if uikit.SoftButton(c, t, s, "gray", "编辑").Clicked() {
-					u.openLogicalEdit(m.ID)
+					openEdit(st, m.ID)
 				}
 				if uikit.SoftButton(c, t, s, "danger", "删除").Clicked() {
-					u.lmDeleteArm = true
-					u.lmDeleteID = m.ID
+					st.Logical.DeleteArm = true
+					st.Logical.DeleteID = m.ID
 				}
 				toggleLabel := "停用"
 				if !m.Enabled {
 					toggleLabel = "启用"
 				}
-				if uikit.SoftButton(c, t, s, "act", toggleLabel).Clicked() && u.Svc.Logical != nil {
-					u.Svc.Logical.SetEnabled(m.ID, !m.Enabled)
+				if uikit.SoftButton(c, t, s, "act", toggleLabel).Clicked() && st.Svc.Logical != nil {
+					st.Svc.Logical.SetEnabled(m.ID, !m.Enabled)
 				}
 			})
 			ui.Text(c, formatTargetChain(m)).TextColor(t.TextMuted)
@@ -190,130 +176,130 @@ func logicalModelsView(c *ui.Context, u *uiState) {
 	// 弹窗标题带模型名、确认（下标 1）才 Remove。
 	armedName := ""
 	for _, m := range models {
-		if m.ID == u.lmDeleteID {
+		if m.ID == st.Logical.DeleteID {
 			armedName = m.Name
 		}
 	}
-	logicalDeleteConfirm(c, u, armedName)
+	deleteConfirm(c, st, armedName)
 }
 
 // logicalDeleteConfirm 是删除逻辑模型的 AlertDialog 二次确认：open 位
 // lmDeleteArm、对象 lmDeleteID；框架在选定后自关 open 位，Escape 走
 // AlertDismissed 同样收场。按钮序「取消, 删除」——末位是主钮。
-func logicalDeleteConfirm(c *ui.Context, u *uiState, name string) {
-	if !u.lmDeleteArm {
+func deleteConfirm(c *ui.Context, st *state.State, name string) {
+	if !st.Logical.DeleteArm {
 		return
 	}
 	msg := "确定删除该逻辑模型？"
 	if name != "" {
 		msg = fmt.Sprintf("确定删除逻辑模型「%s」？", name)
 	}
-	switch ui.AlertDialog(c, &u.lmDeleteArm, "删除逻辑模型", msg, "取消", "删除") {
+	switch ui.AlertDialog(c, &st.Logical.DeleteArm, "删除逻辑模型", msg, "取消", "删除") {
 	case 1:
-		if u.Svc.Logical != nil {
-			u.Svc.Logical.Remove(u.lmDeleteID)
+		if st.Svc.Logical != nil {
+			st.Svc.Logical.Remove(st.Logical.DeleteID)
 		}
-		u.lmDeleteID = ""
+		st.Logical.DeleteID = ""
 	case 0, ui.AlertDismissed:
-		u.lmDeleteID = ""
+		st.Logical.DeleteID = ""
 	}
 }
 
 // openLogicalNew 进新建页并复位表单（editModelID 空=新建）。
-func (u *uiState) openLogicalNew() {
-	u.editModelID = ""
-	u.lmEdit = lmForm{}
-	u.Page = "logical-edit"
+func openNew(st *state.State) {
+	st.Logical.EditModelID = ""
+	st.Logical.Edit = state.LMForm{}
+	st.Page = "logical-edit"
 }
 
 // openLogicalEdit 进编辑页并回显表单：名称/描述/目标链取自 Logical.Get，
 // 目标行 Priority 保序（保存前按下标重排）。模型已删则信息位提示。
-func (u *uiState) openLogicalEdit(id string) {
-	u.editModelID = id
-	u.lmEdit = lmForm{}
+func openEdit(st *state.State, id string) {
+	st.Logical.EditModelID = id
+	st.Logical.Edit = state.LMForm{}
 	if id == "" {
-		u.Page = "logical-edit"
+		st.Page = "logical-edit"
 		return
 	}
-	if u.Svc.Logical != nil {
-		if m, err := u.Svc.Logical.Get(id); err != nil {
-			u.lmEdit.msg = "逻辑模型不存在或已删除"
+	if st.Svc.Logical != nil {
+		if m, err := st.Svc.Logical.Get(id); err != nil {
+			st.Logical.Edit.Msg = "逻辑模型不存在或已删除"
 		} else {
-			u.lmEdit.name = m.Name
-			u.lmEdit.description = m.Description
-			u.lmEdit.displayName = m.DisplayName
+			st.Logical.Edit.Name = m.Name
+			st.Logical.Edit.Description = m.Description
+			st.Logical.Edit.DisplayName = m.DisplayName
 			if m.ContextWindow > 0 {
-				u.lmEdit.contextWindow = strconv.FormatInt(m.ContextWindow, 10)
+				st.Logical.Edit.ContextWindow = strconv.FormatInt(m.ContextWindow, 10)
 			}
-			u.lmEdit.reasoningLevels = strings.Join(m.ReasoningLevels, ",")
-			u.lmEdit.defaultReasoningLevel = m.DefaultReasoningLevel
+			st.Logical.Edit.ReasoningLevels = strings.Join(m.ReasoningLevels, ",")
+			st.Logical.Edit.DefaultReasoningLevel = m.DefaultReasoningLevel
 			for _, tg := range m.Targets {
-				u.lmEdit.targets = append(u.lmEdit.targets, bridge.TargetSpec{
+				st.Logical.Edit.Targets = append(st.Logical.Edit.Targets, bridge.TargetSpec{
 					ChannelID: tg.ChannelID, ModelName: tg.ModelName, Priority: tg.Priority,
 				})
 			}
 		}
 	}
-	u.Page = "logical-edit"
+	st.Page = "logical-edit"
 }
 
 // saveLogicalModel 落「保存」：校验 → Priority 按下标重排 → 新建走 Create、
 // 编辑走 Update（enabled 保持原值——表单不含启用开关）；成功回列表页，
 // 失败错误进表单信息位（channels 页同款模式）。
-func (u *uiState) saveLogicalModel() {
-	if err := u.lmEdit.validate(); err != nil {
-		u.lmEdit.msg = err.Error()
+func save(st *state.State) {
+	if err := validate(st.Logical.Edit); err != nil {
+		st.Logical.Edit.Msg = err.Error()
 		return
 	}
-	if u.Svc.Logical == nil {
-		u.lmEdit.msg = "逻辑模型服务未就绪"
+	if st.Svc.Logical == nil {
+		st.Logical.Edit.Msg = "逻辑模型服务未就绪"
 		return
 	}
-	meta, err := u.lmEdit.meta()
+	modelMeta, err := meta(st.Logical.Edit)
 	if err != nil {
-		u.lmEdit.msg = err.Error()
+		st.Logical.Edit.Msg = err.Error()
 		return
 	}
-	targets := make([]bridge.TargetSpec, len(u.lmEdit.targets))
-	for i, tg := range u.lmEdit.targets {
+	targets := make([]bridge.TargetSpec, len(st.Logical.Edit.Targets))
+	for i, tg := range st.Logical.Edit.Targets {
 		targets[i] = bridge.TargetSpec{ChannelID: tg.ChannelID, ModelName: tg.ModelName, Priority: i}
 	}
-	name := strings.TrimSpace(u.lmEdit.name)
-	if u.editModelID == "" {
-		if _, err := u.Svc.Logical.Create(name, u.lmEdit.description, meta, targets); err != nil {
-			u.lmEdit.msg = err.Error()
+	name := strings.TrimSpace(st.Logical.Edit.Name)
+	if st.Logical.EditModelID == "" {
+		if _, err := st.Svc.Logical.Create(name, st.Logical.Edit.Description, modelMeta, targets); err != nil {
+			st.Logical.Edit.Msg = err.Error()
 			return
 		}
 	} else {
 		enabled := true
-		if m, err := u.Svc.Logical.Get(u.editModelID); err == nil {
+		if m, err := st.Svc.Logical.Get(st.Logical.EditModelID); err == nil {
 			enabled = m.Enabled
 		}
-		if err := u.Svc.Logical.Update(u.editModelID, name, u.lmEdit.description, meta, enabled, targets); err != nil {
-			u.lmEdit.msg = err.Error()
+		if err := st.Svc.Logical.Update(st.Logical.EditModelID, name, st.Logical.Edit.Description, modelMeta, enabled, targets); err != nil {
+			st.Logical.Edit.Msg = err.Error()
 			return
 		}
 	}
-	u.Page = "logical"
+	st.Page = "logical"
 }
 
 // logicalModelEditView 是新建/编辑页（spec §6.2 / Task 13）：名称/描述 +
 // 目标链行编辑（渠道下拉=Channel list、模型名输入或建议选择、上移/下移/
 // 删除）+ 添加目标 + 保存。editModelID 空=新建；校验/保存错误进表单信息位，
 // 保存成功回列表页（saveLogicalModel）。
-func (u *uiState) logicalModelEditView(c *ui.Context) {
+func editView(c *ui.Context, st *state.State) {
 	t := c.Theme()
 	s := uikit.Softs(t)
-	chans := u.Svc.Channels.List()
+	chans := st.Svc.Channels.List()
 	title := "新建逻辑模型"
-	if u.editModelID != "" {
+	if st.Logical.EditModelID != "" {
 		title = "编辑逻辑模型"
 	}
 	ui.Scroll(c).Grow(1).Children(func() {
 		ui.Column(c).Gap(12).Children(func() {
 			ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 				if ui.Button(c, "返回列表").Clicked() {
-					u.Page = "logical"
+					st.Page = "logical"
 				}
 				ui.Text(c, title).Bold().FontSize(t.FontSize + 2)
 			})
@@ -322,34 +308,34 @@ func (u *uiState) logicalModelEditView(c *ui.Context) {
 					ui.Text(c, "基本信息").Bold()
 					ui.Row(c).Gap(12).Children(func() {
 						ui.Text(c, "名称:").Width(112).TextColor(t.TextMuted)
-						ui.TextInput(c, &u.lmEdit.name).Grow(1).Placeholder("网关对外模型名，如 my-code")
+						ui.TextInput(c, &st.Logical.Edit.Name).Grow(1).Placeholder("网关对外模型名，如 my-code")
 					})
 					ui.Row(c).Gap(12).Children(func() {
 						ui.Text(c, "描述:").Width(112).TextColor(t.TextMuted)
-						ui.TextInput(c, &u.lmEdit.description).Grow(1)
+						ui.TextInput(c, &st.Logical.Edit.Description).Grow(1)
 					})
 					ui.Row(c).Gap(12).Children(func() {
 						ui.Text(c, "显示名:").Width(112).TextColor(t.TextMuted)
-						ui.TextInput(c, &u.lmEdit.displayName).Grow(1).
+						ui.TextInput(c, &st.Logical.Edit.DisplayName).Grow(1).
 							Placeholder("Codex 模型菜单显示名（空 = 模型名）")
 					})
 					ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 						ui.Text(c, "上下文窗口:").Width(112).TextColor(t.TextMuted)
-						ui.TextInput(c, &u.lmEdit.contextWindow).Grow(1).
+						ui.TextInput(c, &st.Logical.Edit.ContextWindow).Grow(1).
 							Placeholder("如 1000000；空 = 不声明")
 						if uikit.SoftButton(c, t, s, "gray", "1M").Clicked() {
-							u.lmEdit.contextWindow = "1000000"
+							st.Logical.Edit.ContextWindow = "1000000"
 						}
 					})
 					ui.Row(c).Gap(12).Children(func() {
 						ui.Text(c, "思考等级:").Width(112).TextColor(t.TextMuted)
-						ui.TextInput(c, &u.lmEdit.reasoningLevels).Grow(1).
+						ui.TextInput(c, &st.Logical.Edit.ReasoningLevels).Grow(1).
 							Placeholder("low,medium,high,xhigh")
 					})
 					ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 						ui.Text(c, "默认思考等级:").Width(112).TextColor(t.TextMuted)
-						lmLevelSelect(c, t, &u.lmEdit.defaultReasoningLevel,
-							lmParsedLevels(u.lmEdit.reasoningLevels))
+						lmLevelSelect(c, t, &st.Logical.Edit.DefaultReasoningLevel,
+							lmParsedLevels(st.Logical.Edit.ReasoningLevels))
 						ui.Text(c, "空 = 模板默认；有等级时默认取首项").TextColor(t.TextMuted)
 					})
 				})
@@ -364,32 +350,32 @@ func (u *uiState) logicalModelEditView(c *ui.Context) {
 					// 行内按钮只记动作，循环结束后统一应用：构建中改切片会
 					// 让 range 跳行/越界。
 					act, actI := "", -1
-					for i := range u.lmEdit.targets {
-						if a := u.lmTargetRow(c, t, s, i, chans); a != "" {
+					for i := range st.Logical.Edit.Targets {
+						if a := targetRow(c, t, s, st, i, chans); a != "" {
 							act, actI = a, i
 						}
 					}
 					switch act {
 					case "up":
-						moveTarget(u.lmEdit.targets, actI, -1)
+						moveTarget(st.Logical.Edit.Targets, actI, -1)
 					case "down":
-						moveTarget(u.lmEdit.targets, actI, +1)
+						moveTarget(st.Logical.Edit.Targets, actI, +1)
 					case "del":
-						u.lmEdit.targets = append(u.lmEdit.targets[:actI], u.lmEdit.targets[actI+1:]...)
+						st.Logical.Edit.Targets = append(st.Logical.Edit.Targets[:actI], st.Logical.Edit.Targets[actI+1:]...)
 					}
 					if uikit.SoftButton(c, t, s, "act", "＋ 添加目标").Clicked() {
-						u.lmEdit.targets = append(u.lmEdit.targets, bridge.TargetSpec{})
+						st.Logical.Edit.Targets = append(st.Logical.Edit.Targets, bridge.TargetSpec{})
 					}
 				})
 			})
 			ui.Row(c).Gap(8).Children(func() {
 				if uikit.PillButton(c, t, "保存").Clicked() {
-					u.saveLogicalModel()
+					save(st)
 				}
 				ui.Box(c).Grow(1)
 			})
-			if u.lmEdit.msg != "" {
-				ui.Text(c, u.lmEdit.msg).TextColor(t.Danger)
+			if st.Logical.Edit.Msg != "" {
+				ui.Text(c, st.Logical.Edit.Msg).TextColor(t.Danger)
 			}
 		})
 	})
@@ -398,13 +384,13 @@ func (u *uiState) logicalModelEditView(c *ui.Context) {
 // lmTargetRow 渲染一行目标编辑控件并返回行操作（""|"up"|"down"|"del"），
 // 由调用方在循环后统一应用。渠道用 SelectBase 绑 ChannelID、显示渠道名；
 // 模型名有建议时走建议下拉、否则文本输入。
-func (u *uiState) lmTargetRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, i int, chans []bridge.ChannelView) string {
-	tg := &u.lmEdit.targets[i]
+func targetRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, i int, chans []bridge.ChannelView) string {
+	tg := &st.Logical.Edit.Targets[i]
 	act := ""
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, fmt.Sprintf("%d.", i+1)).Width(20).TextColor(t.TextMuted)
 		lmChannelSelect(c, t, &tg.ChannelID, chans)
-		sugg := u.Svc.Channels.Suggestions(tg.ChannelID)
+		sugg := st.Svc.Channels.Suggestions(tg.ChannelID)
 		if len(sugg) > 0 {
 			opts := sugg
 			if tg.ModelName != "" && !slices.Contains(opts, tg.ModelName) {
@@ -487,4 +473,14 @@ func lmLevelSelect(c *ui.Context, t *ui.Theme, level *string, levels []string) {
 			item.Children(func() { ui.Text(c, text).SingleLine() })
 		}
 	})
+}
+
+// Page 是逻辑模型页入口（组合根 pageView 分发）：编辑态渲染新建/编辑页，
+// 其余（含零值与未知 id 的兜底）渲染列表页。
+func Page(c *ui.Context, st *state.State) {
+	if st.Page == "logical-edit" {
+		editView(c, st)
+		return
+	}
+	listView(c, st)
 }

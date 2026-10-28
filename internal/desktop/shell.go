@@ -8,6 +8,7 @@ package desktop
 import (
 	"github.com/egoist/mygo/ui"
 
+	"AgentSwitch/internal/desktop/pages/logical"
 	"AgentSwitch/internal/desktop/pages/settings"
 	"AgentSwitch/internal/desktop/uikit"
 )
@@ -101,8 +102,6 @@ func gatewayStatusBar(c *ui.Context, u *uiState) {
 // Task 16 清空占位痕迹。
 func (u *uiState) pageView(c *ui.Context) {
 	switch u.normalizedPage() {
-	case "logical-edit":
-		u.logicalModelEditView(c)
 	case "channels":
 		u.channelsPage(c)
 	case "access":
@@ -110,16 +109,12 @@ func (u *uiState) pageView(c *ui.Context) {
 	case "settings":
 		settings.Page(c, u.State)
 	default:
-		u.logicalPage(c)
+		logical.Page(c, u.State)
 	}
 }
 
 // 以下四个 *Page 是页面占位视图（Task 11）：Task 12 填逻辑模型列表、
 // Task 14 填渠道页、Task 15 填接入页与设置页。签名即接线契约，不得改名。
-
-func (u *uiState) logicalPage(c *ui.Context) {
-	logicalModelsView(c, u)
-}
 
 func (u *uiState) channelsPage(c *ui.Context) {
 	switch u.chView {
