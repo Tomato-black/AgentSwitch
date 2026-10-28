@@ -21,6 +21,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"AgentSwitch/internal/bridge"
+	"AgentSwitch/internal/desktop/uikit"
 )
 
 // accessForm 是接入配置新建/编辑表单状态（open 非空即编辑）。docJSON 是唯一
@@ -569,7 +570,7 @@ func (u *uiState) accessSvc() bridge.AccessConfigs {
 // 结构：Agent tab 行 → 全局配置卡 → 实际配置列表卡 → 编辑器卡（表单 open 时）。
 func (u *uiState) accessPage(c *ui.Context) {
 	t := c.Theme()
-	s := softs(t)
+	s := uikit.Softs(t)
 	acc := u.accessSvc()
 	if u.accessApp == "" {
 		u.accessApp = "claude"
@@ -842,7 +843,7 @@ func (u *uiState) accessRepreviewForm(acc bridge.AccessConfigs) {
 // accessConfigRow 渲染一行实际配置：名称 + 使用中徽标 + 逻辑模型名 +
 // 操作按钮（应用/重新应用/编辑/复制启动命令/打开终端/删除）。网关不可用
 // 时仅 应用/复制启动命令/打开终端 不渲染；编辑/删除是纯 DB 操作，始终在。
-func (u *uiState) accessConfigRow(c *ui.Context, t *ui.Theme, s softPalette, acc bridge.AccessConfigs, v bridge.AccessConfigView, gateOK bool) {
+func (u *uiState) accessConfigRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, acc bridge.AccessConfigs, v bridge.AccessConfigView, gateOK bool) {
 	ui.Row(c).Gap(10).Children(func() {
 		ui.Text(c, v.Name).Width(140)
 		if badge := accessRowBadge(v.IsCurrent); badge != "" {
@@ -906,7 +907,7 @@ func (u *uiState) accessConfigRow(c *ui.Context, t *ui.Theme, s softPalette, acc
 // accessEditorCard 渲染新建/编辑表单（spec 2026-10-19 §5.1）：名称、逻辑模型
 // 下拉（主模型，锁定键）、网关只读行、配置 JSON（TextArea，令牌渲染真值）。
 // 保存原文送 bridge（校验+归一化在 bridge）。
-func (u *uiState) accessEditorCard(c *ui.Context, t *ui.Theme, s softPalette, acc bridge.AccessConfigs, gateOK bool) {
+func (u *uiState) accessEditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, acc bridge.AccessConfigs, gateOK bool) {
 	card(c, t, func() {
 		ui.Column(c).Gap(10).Children(func() {
 			title := "新建配置"
@@ -1051,7 +1052,7 @@ func (u *uiState) accessEditorCard(c *ui.Context, t *ui.Theme, s softPalette, ac
 // 写回文档 models（accessPatchCodexModels）。只剩一项时不渲染删除按钮
 // ——列表至少保留一项（保存另有空列表校验）。返回列表是否发生变化（调用
 // 方据此刷新只读 config.toml 预览）。
-func (u *uiState) accessCodexModelsSection(c *ui.Context, t *ui.Theme, s softPalette, labels []string) bool {
+func (u *uiState) accessCodexModelsSection(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, labels []string) bool {
 	f := &u.accessForm
 	ui.Text(c, "模型列表").Bold()
 	ui.Text(c, "按序显示在 Codex 模型菜单；第一行为默认模型").TextColor(t.TextMuted)

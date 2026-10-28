@@ -7,6 +7,8 @@ package desktop
 
 import (
 	"github.com/egoist/mygo/ui"
+
+	"AgentSwitch/internal/desktop/uikit"
 )
 
 // navItems 是侧栏导航的四项：id 即 uiState.page 的分发 id（pageView 消费），
@@ -15,10 +17,10 @@ var navItems = []struct {
 	id, label string
 	icon      *ui.SVG
 }{
-	{"logical", "逻辑模型", iconLogical},
-	{"channels", "渠道", iconChannels},
-	{"access", "接入", iconAccess},
-	{"settings", "设置", iconSettings},
+	{"logical", "逻辑模型", uikit.IconLogical},
+	{"channels", "渠道", uikit.IconChannels},
+	{"access", "接入", uikit.IconAccess},
+	{"settings", "设置", uikit.IconSettings},
 }
 
 // normalizedPage 把 u.page 归一成当前页 id：零值（""）落逻辑模型——默认页 =
@@ -41,7 +43,7 @@ func (u *uiState) navItem(c *ui.Context, t *ui.Theme, id, label string, icon *ui
 	on := u.normalizedPage() == id
 	bg := ui.Color{}
 	if on {
-		bg = selectedColor(t)
+		bg = uikit.SelectedColor(t)
 	} else if b.Hovered() {
 		bg = t.SurfaceHover
 	}
@@ -65,19 +67,19 @@ func (u *uiState) navItem(c *ui.Context, t *ui.Theme, id, label string, icon *ui
 // spec §8.3 放行集合不变）；点击经 go 异步执行，避免阻塞渲染帧。
 func gatewayStatusBar(c *ui.Context, u *uiState) {
 	t := c.Theme()
-	s := softs(t)
+	s := uikit.Softs(t)
 	gs := u.svc.Gateway.Status()
 	state := gs.State
 	ui.Column(c).Gap(6).Padding(12).Children(func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ledDot(c, t, state)
-			ui.Text(c, stateWord(state))
+			uikit.LedDot(c, t, state)
+			ui.Text(c, uikit.StateWord(state))
 		})
 		addr := gs.Addr
 		if addr == "" {
 			addr = "未监听"
 		}
-		ui.Text(c, addr).Font(monoFont).TextColor(t.TextMuted)
+		ui.Text(c, addr).Font(uikit.MonoFont).TextColor(t.TextMuted)
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			if state == "stopped" || state == "failed" {
 				if pillButton(c, t, "启动网关").Clicked() {

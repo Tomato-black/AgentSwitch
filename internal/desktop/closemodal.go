@@ -7,13 +7,15 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
+
+	"AgentSwitch/internal/desktop/uikit"
 )
 
 // closeModal 渲染首关驻留模态。DialogBase 自带 Esc/点遮罩关闭，会把
 // u.closeNotice 置 false（等同取消）。
 func (u *uiState) closeModal(c *ui.Context) {
 	t := c.Theme()
-	s := softs(t)
+	s := uikit.Softs(t)
 	ui.DialogBase(c, &u.closeNotice, func(backdrop, panel ui.Element) {
 		backdrop.Background(ui.RGBA(0, 0, 0, 0.45))
 		panel.Width(420).Radius(14).Background(t.Surface).Border(1, t.Border).
@@ -21,7 +23,7 @@ func (u *uiState) closeModal(c *ui.Context) {
 			ui.Column(c).Gap(t.Space(4)).Children(func() {
 				ui.Row(c).Gap(t.Space(3.5)).AlignItems(ui.Center).Children(func() {
 					ui.Box(c).Size(40, 40).Radius(10).Background(s.Act).Center().Children(func() {
-						ui.Icon(c, iconTray).FontSize(20).TextColor(s.ActText)
+						ui.Icon(c, uikit.IconTray).FontSize(20).TextColor(s.ActText)
 					})
 					ui.Column(c).Gap(2).Grow(1).Children(func() {
 						ui.Text(c, "网关继续运行").Bold().FontSize(t.FontSize + 2)

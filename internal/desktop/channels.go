@@ -12,6 +12,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"AgentSwitch/internal/bridge"
+	"AgentSwitch/internal/desktop/uikit"
 	"AgentSwitch/internal/presets"
 	"AgentSwitch/internal/telemetry"
 )
@@ -289,7 +290,7 @@ func (u *uiState) fetchChannelModelsDraft() {
 // base_url、HasKey、建议模型数）。卡体点击进详情；空态引导添加。
 func (u *uiState) channelsView(c *ui.Context) {
 	t := c.Theme()
-	s := softs(t)
+	s := uikit.Softs(t)
 	chans := u.svc.Channels.List()
 	ui.Column(c).Gap(12).Children(func() {
 		ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
@@ -321,7 +322,7 @@ func (u *uiState) channelsView(c *ui.Context) {
 
 // channelCard 是一枚渠道卡：tile + 名称/徽章行（启用、HasKey）+ 协议·
 // base_url + 建议模型数与近况 meta。卡体 ButtonBase 点击进详情。
-func (u *uiState) channelCard(c *ui.Context, t *ui.Theme, s softPalette, ch bridge.ChannelView) {
+func (u *uiState) channelCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, ch bridge.ChannelView) {
 	okN, failN := channelStats(u.recent, ch.Name)
 	card(c, t, func() {
 		b := ui.ButtonBase(c).Grow(1).Gap(12).Children(func() {
@@ -340,7 +341,7 @@ func (u *uiState) channelCard(c *ui.Context, t *ui.Theme, s softPalette, ch brid
 						softBadge(c, t, s, "warn", "无 Key")
 					}
 				})
-				ui.Text(c, ch.Protocol+" · "+ch.BaseURL).Font(monoFont).TextColor(t.TextMuted).SingleLine()
+				ui.Text(c, ch.Protocol+" · "+ch.BaseURL).Font(uikit.MonoFont).TextColor(t.TextMuted).SingleLine()
 				meta := fmt.Sprintf("建议模型 %d 个", ch.SuggestionCount)
 				if okN+failN > 0 {
 					meta += fmt.Sprintf(" · 近 %d 条 %d✓ %d✗", okN+failN, okN, failN)
@@ -359,7 +360,7 @@ func (u *uiState) channelCard(c *ui.Context, t *ui.Theme, s softPalette, ch brid
 // allowPrivate 保存。内容列包 Scroll（小窗口可超视口）。
 func (u *uiState) channelNewView(c *ui.Context) {
 	t := c.Theme()
-	s := softs(t)
+	s := uikit.Softs(t)
 	ui.Scroll(c).Grow(1).Children(func() {
 		ui.Column(c).Gap(12).Children(func() {
 			// 预置加载警告一行（spec §4：降级/跳过不阻塞，网格顶部提示）。
@@ -437,11 +438,11 @@ func (u *uiState) channelNewView(c *ui.Context) {
 
 // presetTile 是预设网格一格：类型 tile + DisplayName/ID 两行，点选
 // applyPreset 回填；选中底用应用级选中灰（不漂移）。
-func (u *uiState) presetTile(c *ui.Context, t *ui.Theme, s softPalette, p presets.ChannelPreset) {
+func (u *uiState) presetTile(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, p presets.ChannelPreset) {
 	b := ui.ButtonBase(c)
 	bg := s.Gray
 	if u.chForm.presetID == p.ID {
-		bg = selectedColor(t)
+		bg = uikit.SelectedColor(t)
 	} else if b.Hovered() {
 		bg = t.SurfaceHover
 	}
@@ -460,11 +461,11 @@ func (u *uiState) presetTile(c *ui.Context, t *ui.Theme, s softPalette, p preset
 
 // customTile 是预设网格的「自定义」格：点选清预设字段（protocol 落默认
 // openai），base_url/建议全手填；name/apiKey 保留用户已填内容。
-func (u *uiState) customTile(c *ui.Context, t *ui.Theme, s softPalette) {
+func (u *uiState) customTile(c *ui.Context, t *ui.Theme, s uikit.SoftPalette) {
 	b := ui.ButtonBase(c)
 	bg := s.Gray
 	if u.chForm.presetID == "" && u.chForm.baseURL == "" && u.chForm.suggestions == "" {
-		bg = selectedColor(t)
+		bg = uikit.SelectedColor(t)
 	} else if b.Hovered() {
 		bg = t.SurfaceHover
 	}
@@ -488,7 +489,7 @@ func (u *uiState) customTile(c *ui.Context, t *ui.Theme, s softPalette) {
 // 建议模型多行编辑 + 测试连通 + 删除（引用警告）。
 func (u *uiState) channelDetailView(c *ui.Context) {
 	t := c.Theme()
-	s := softs(t)
+	s := uikit.Softs(t)
 	d, err := u.svc.Channels.Get(u.chDetailID)
 	if err != nil {
 		ui.Column(c).Gap(12).Children(func() {

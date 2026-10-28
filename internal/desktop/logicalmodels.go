@@ -16,6 +16,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"AgentSwitch/internal/bridge"
+	"AgentSwitch/internal/desktop/uikit"
 )
 
 // lmForm 是逻辑模型新建/编辑表单状态（Task 13）：targets 即目标链行
@@ -142,7 +143,7 @@ func formatTargetChain(m bridge.ModelView) string {
 // 挂进逻辑模型」。数据每帧自 u.svc.Logical.List() 取（进程内直调）。
 func logicalModelsView(c *ui.Context, u *uiState) {
 	t := c.Theme()
-	s := softs(t)
+	s := uikit.Softs(t)
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, "逻辑模型").Bold().FontSize(16).Grow(1)
 		if pillButton(c, t, "＋ 新建逻辑模型").Clicked() {
@@ -302,7 +303,7 @@ func (u *uiState) saveLogicalModel() {
 // 保存成功回列表页（saveLogicalModel）。
 func (u *uiState) logicalModelEditView(c *ui.Context) {
 	t := c.Theme()
-	s := softs(t)
+	s := uikit.Softs(t)
 	chans := u.svc.Channels.List()
 	title := "新建逻辑模型"
 	if u.editModelID != "" {
@@ -397,7 +398,7 @@ func (u *uiState) logicalModelEditView(c *ui.Context) {
 // lmTargetRow 渲染一行目标编辑控件并返回行操作（""|"up"|"down"|"del"），
 // 由调用方在循环后统一应用。渠道用 SelectBase 绑 ChannelID、显示渠道名；
 // 模型名有建议时走建议下拉、否则文本输入。
-func (u *uiState) lmTargetRow(c *ui.Context, t *ui.Theme, s softPalette, i int, chans []bridge.ChannelView) string {
+func (u *uiState) lmTargetRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, i int, chans []bridge.ChannelView) string {
 	tg := &u.lmEdit.targets[i]
 	act := ""
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {

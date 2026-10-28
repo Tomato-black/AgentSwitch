@@ -8,6 +8,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"AgentSwitch/internal/bridge"
+	"AgentSwitch/internal/desktop/uikit"
 )
 
 // Claude Desktop 接入页签（2026-10-22）：与 Claude Code/Codex 不同，Desktop
@@ -102,7 +103,7 @@ func (u *uiState) desktopPreloadForm(acc bridge.AccessConfigs) {
 }
 
 // desktopEditorCard 渲染 Desktop 配置的新建/编辑表单。
-func (u *uiState) desktopEditorCard(c *ui.Context, t *ui.Theme, s softPalette, acc bridge.AccessConfigs, gateOK bool) {
+func (u *uiState) desktopEditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, acc bridge.AccessConfigs, gateOK bool) {
 	card(c, t, func() {
 		ui.Column(c).Gap(10).Children(func() {
 			title := "新建配置"
@@ -196,7 +197,7 @@ func (u *uiState) desktopSaveForm(acc bridge.AccessConfigs, models []bridge.Mode
 
 // accessDesktopConfigRow 渲染 Desktop 配置行：应用/编辑/删除（无启动命令与
 // 终端——Desktop 是 GUI，重启其应用生效）。逻辑模型摘要展示角色映射。
-func (u *uiState) accessDesktopConfigRow(c *ui.Context, t *ui.Theme, s softPalette, acc bridge.AccessConfigs, v bridge.AccessConfigView, gateOK bool) {
+func (u *uiState) accessDesktopConfigRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, acc bridge.AccessConfigs, v bridge.AccessConfigView, gateOK bool) {
 	ui.Row(c).Gap(10).Children(func() {
 		ui.Text(c, v.Name).Width(140)
 		if badge := accessRowBadge(v.IsCurrent); badge != "" {

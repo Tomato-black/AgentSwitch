@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/egoist/mygo/ui"
+
+	"AgentSwitch/internal/desktop/uikit"
 )
 
 // TestTileSoftDeterministic 覆盖 tileSoft 的预设映射与确定性：anthropic
@@ -26,7 +28,7 @@ func TestWidgetsRender(t *testing.T) {
 	var stopClicked, addClicked bool
 	tt := ui.NewTester(func(c *ui.Context) {
 		th := c.Theme()
-		s := softs(th)
+		s := uikit.Softs(th)
 		card(c, th, func() {
 			softBadge(c, th, s, "ok", "启用")
 			softBadge(c, th, s, "warn", "冷却 1 把")

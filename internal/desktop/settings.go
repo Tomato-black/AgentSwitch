@@ -11,6 +11,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"AgentSwitch/internal/config"
+	"AgentSwitch/internal/desktop/uikit"
 )
 
 // settingsToForm 把生效 Settings 编成表单（Settings→表单）：端口/超时进
@@ -37,7 +38,7 @@ func formToSettings(portInput, timeoutInput string, passthrough bool) (config.Se
 // 重启）即清空输入，下一帧按新生效值回显——校验/落库失败不清，留用户手改。
 func (u *uiState) settingsPage(c *ui.Context) {
 	t := c.Theme()
-	s := softs(t)
+	s := uikit.Softs(t)
 	gs := u.svc.Gateway.Status()
 	if u.portInput == "" || u.timeoutInput == "" {
 		p, to, _ := settingsToForm(config.Settings{

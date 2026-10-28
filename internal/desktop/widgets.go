@@ -1,6 +1,6 @@
 // widgets.go 是「交换机面板」的共享视觉词汇（spec §4 组件词汇表）：卡片、
 // 软徽章、软底胶囊钮、胶囊主钮与渠道类型 tile。全部建立在 Task 1 的软色板
-// （theme.go softs/softPalette）之上；Task 3–8 的页面按本文件签名消费，
+// （theme.go softs/uikit.SoftPalette）之上；Task 3–8 的页面按本文件签名消费，
 // 签名即契约，不得改名。
 package desktop
 
@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/egoist/mygo/ui"
+
+	"AgentSwitch/internal/desktop/uikit"
 )
 
 // card 是各页容器卡片（spec §3.4「卡片一律 Radius 12」）：12 显式盖过主题
@@ -20,7 +22,7 @@ func card(c *ui.Context, t *ui.Theme, fn func()) {
 
 // softPair 按 kind 取软色板同组的一对（底，字）；未知 kind 落 gray——
 // 调用方拼错字符串时宁可弱化为中性也不染错语义色。
-func softPair(s softPalette, kind string) (bg, fg ui.Color) {
+func softPair(s uikit.SoftPalette, kind string) (bg, fg ui.Color) {
 	switch kind {
 	case "act":
 		return s.Act, s.ActText
@@ -37,7 +39,7 @@ func softPair(s softPalette, kind string) (bg, fg ui.Color) {
 
 // softBadge 是软底胶囊徽章（首选/启用/冷却/停用/计数，spec §5.2）：999
 // 全圆底 + 小一号字（FontSize-2），底与字取软色板同组。
-func softBadge(c *ui.Context, t *ui.Theme, s softPalette, kind, label string) {
+func softBadge(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, kind, label string) {
 	bg, fg := softPair(s, kind)
 	ui.Box(c).Radius(999).Background(bg).TextColor(fg).Padding(2, 8).Shrink(0).
 		Children(func() { ui.Text(c, label).FontSize(t.FontSize - 2) })
@@ -55,7 +57,7 @@ func pillButton(c *ui.Context, t *ui.Theme, label string) ui.Element {
 // 导入」act 软底，spec §5.2/§5.3）：底与字取软色板同组；软色板没有 hover
 // token，交互底色由 bg 向 fg 轻混派生（token 表本身仍全硬编码，不违
 // theme.go 口径）。危险动作用 kind="danger"。
-func softButton(c *ui.Context, t *ui.Theme, s softPalette, kind, label string) ui.Element {
+func softButton(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, kind, label string) ui.Element {
 	bg, fg := softPair(s, kind)
 	return capsuleButton(c, t, bg, bg.Mix(fg, 0.10), bg.Mix(fg, 0.22), fg, label)
 }
@@ -110,7 +112,7 @@ func tileSoft(name string) string {
 // tile 是渠道类型色块（渠道卡图标位，spec §5.2「40px 类型 tile」）：size
 // 见方、Radius=size/4 圆角方块，居中名称前 2 字符缩写（按 rune 截，中文
 // 渠道名不碎字）；字号随 size 缩放（40px tile ≈ 14）。
-func tile(c *ui.Context, t *ui.Theme, s softPalette, name string, size float32) {
+func tile(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, name string, size float32) {
 	var bg, fg ui.Color
 	switch kind := tileSoft(name); {
 	case kind == "act":

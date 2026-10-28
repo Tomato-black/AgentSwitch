@@ -4,22 +4,22 @@
 // 已知偏离旧档（2026-10-17-desktop-ui-mygo-native-design.md）§2.3 的「一个
 // 颜色想法」（Success==Accent）：状态绿与品牌橙必须分离——LED/健康语义用
 // 绿、主操作用橙，同屏并存不再互相染色（新 spec §1）。
-// 另沿旧档已知偏离：buildTheme 增加 textScale 入参——框架默认主题随系统
+// 另沿旧档已知偏离：BuildTheme 增加 textScale 入参——框架默认主题随系统
 // 文字缩放（Preferences.TextScale），自设主题必须自己接上，否则可访问性回退。
-package desktop
+package uikit
 
 import (
 	"github.com/egoist/mygo/ui"
 )
 
-// monoFont 是机器读数（地址、令牌、密钥尾、耗时等）的等宽字体族；
+// MonoFont 是机器读数（地址、令牌、密钥尾、耗时等）的等宽字体族；
 // 非 macOS 的回退行为见旧档 §8.3（当前仅 darwin 一等公民）。
-const monoFont = "Menlo"
+const MonoFont = "Menlo"
 
-// buildTheme 按 dark 构造品牌主题：以框架主题为底、覆写 cc-switch spec
+// BuildTheme 按 dark 构造品牌主题：以框架主题为底、覆写 cc-switch spec
 // §3.2 全部 19 个颜色 token 与度量（未列字段保持框架默认）。色值全部
 // 硬编码 ui.Hex，浅深两边逐字段给出，不派生。textScale<=0 视为 1。
-func buildTheme(dark bool, textScale float32) *ui.Theme {
+func BuildTheme(dark bool, textScale float32) *ui.Theme {
 	t := ui.LightTheme()
 	if dark {
 		t = ui.DarkTheme()
@@ -75,10 +75,10 @@ func buildTheme(dark bool, textScale float32) *ui.Theme {
 	return t
 }
 
-// softPalette 是软色板（spec §3.3）：每类语义一对「软底 + 前景字」，
+// SoftPalette 是软色板（spec §3.3）：每类语义一对「软底 + 前景字」，
 // 浅色取浅底深字、深色取深底亮字，供软徽章/软按钮/类型 tile 复用；
 // Link 是软色板里唯一的单值（链接文字无底色）。
-type softPalette struct {
+type SoftPalette struct {
 	Act, ActText       ui.Color
 	Ok, OkText         ui.Color
 	Warn, WarnText     ui.Color
@@ -87,10 +87,10 @@ type softPalette struct {
 	Link               ui.Color
 }
 
-// softs 按 t.Dark 取边返回软色板；色值全部硬编码，不派生自 token 表。
-func softs(t *ui.Theme) softPalette {
+// Softs 按 t.Dark 取边返回软色板；色值全部硬编码，不派生自 token 表。
+func Softs(t *ui.Theme) SoftPalette {
 	if t.Dark {
-		return softPalette{
+		return SoftPalette{
 			Act: ui.Hex("#33221A"), ActText: ui.Hex("#FB923C"),
 			Ok: ui.Hex("#12261A"), OkText: ui.Hex("#4ADE80"),
 			Warn: ui.Hex("#2E2410"), WarnText: ui.Hex("#FBBF24"),
@@ -99,7 +99,7 @@ func softs(t *ui.Theme) softPalette {
 			Link: ui.Hex("#5AA9F8"),
 		}
 	}
-	return softPalette{
+	return SoftPalette{
 		Act: ui.Hex("#FFF1E6"), ActText: ui.Hex("#C2410C"),
 		Ok: ui.Hex("#E8F7EE"), OkText: ui.Hex("#007634"),
 		Warn: ui.Hex("#FEF3C7"), WarnText: ui.Hex("#A64A00"),
@@ -109,27 +109,27 @@ func softs(t *ui.Theme) softPalette {
 	}
 }
 
-// selectedColor 是应用级选中灰（导航项/列表行/分段选中片的底），中性灰、
+// SelectedColor 是应用级选中灰（导航项/列表行/分段选中片的底），中性灰、
 // 与品牌橙无关；框架 Theme.Selection 只管文本选区（保持暖色），两者分工
 // 不得混用（spec §3.2 注）。
-func selectedColor(t *ui.Theme) ui.Color {
+func SelectedColor(t *ui.Theme) ui.Color {
 	if t.Dark {
 		return ui.Hex("#3A3A40")
 	}
 	return ui.Hex("#E4E4EA")
 }
 
-// sidebarColor 是自绘侧栏底色：比 Background 微沉一档，撑出侧栏与内容
+// SidebarColor 是自绘侧栏底色：比 Background 微沉一档，撑出侧栏与内容
 // 区的层级（spec §5 页面骨架）。
-func sidebarColor(t *ui.Theme) ui.Color {
+func SidebarColor(t *ui.Theme) ui.Color {
 	if t.Dark {
 		return ui.Hex("#232327")
 	}
 	return ui.Hex("#F5F5F7")
 }
 
-// stateWord 把网关状态译成面板状态词；未知状态原样回显（Review Focus 4）。
-func stateWord(state string) string {
+// StateWord 把网关状态译成面板状态词；未知状态原样回显（Review Focus 4）。
+func StateWord(state string) string {
 	switch state {
 	case "running":
 		return "运行中"
@@ -162,11 +162,11 @@ func stateColor(t *ui.Theme, state string) ui.Color {
 	}
 }
 
-// ledDot 画状态 LED：10px 圆点，色由 stateColor 决定，常亮不呼吸。
+// LedDot 画状态 LED：10px 圆点，色由 stateColor 决定，常亮不呼吸。
 // spec §8.4 的降级路径已启用：Loop 会调 c.AnimationFrame()，让**整个视图**
 // 按显示刷新率重建（不只是这个点），实测常驻约 20% 单核——对一个 10px 装
 // 饰点不划算。状态由颜色 + 底条「运行中/已降级」文字表达，不靠动效传递。
 // 不要加回 Loop/Animate：需要动效时先测空闲 CPU。
-func ledDot(c *ui.Context, t *ui.Theme, state string) {
+func LedDot(c *ui.Context, t *ui.Theme, state string) {
 	ui.Box(c).Width(10).Height(10).Radius(5).Background(stateColor(t, state))
 }

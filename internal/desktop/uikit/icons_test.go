@@ -1,4 +1,4 @@
-package desktop
+package uikit
 
 import (
 	"testing"
@@ -10,8 +10,8 @@ import (
 // 到这里即四枚图标解析成功；再显式断言非 nil 防将来改为惰性构造时漏检。
 func TestIconsParsed(t *testing.T) {
 	for name, ic := range map[string]*ui.SVG{
-		"logical": iconLogical, "channels": iconChannels,
-		"access": iconAccess, "settings": iconSettings,
+		"logical": IconLogical, "channels": IconChannels,
+		"access": IconAccess, "settings": IconSettings,
 	} {
 		if ic == nil {
 			t.Fatalf("icon %s is nil", name)
