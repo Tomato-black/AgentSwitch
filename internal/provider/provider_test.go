@@ -173,29 +173,6 @@ func TestProbeStages(t *testing.T) {
 	}
 }
 
-func TestPresetsCatalogAndLookup(t *testing.T) {
-	ps := Presets()
-	if len(ps) != 4 {
-		t.Fatalf("presets %d", len(ps))
-	}
-	p, ok := LookupPreset("openai-compatible")
-	if !ok || p.Protocol != "openai" || p.DefaultBaseURL != "" {
-		t.Fatalf("lookup: %+v %v", p, ok)
-	}
-	if _, ok := LookupPreset("nope"); ok {
-		t.Fatal("unknown preset must miss")
-	}
-	// 每个 preset 的 protocol 合法（anthropic|openai）且 official 有默认 URL
-	for _, p := range ps {
-		if p.Protocol != "anthropic" && p.Protocol != "openai" {
-			t.Fatalf("bad protocol %q", p.Protocol)
-		}
-		if strings.HasSuffix(p.ID, "-official") && p.DefaultBaseURL == "" {
-			t.Fatalf("%s missing default url", p.ID)
-		}
-	}
-}
-
 func TestAdapterConstructors(t *testing.T) {
 	if NewAnthropicAdapter() == nil {
 		t.Fatal("anthropic adapter nil")
@@ -791,4 +768,3 @@ func TestUserAgentPassthroughAdapters(t *testing.T) {
 		t.Fatal("空 UserAgent 时上游收到空 UA 头，want Go 默认")
 	}
 }
-

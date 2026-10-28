@@ -6,10 +6,10 @@ package presets
 
 import (
 	_ "embed"
-	"os"
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 
 	"AgentSwitch/internal/provider"
