@@ -1141,7 +1141,7 @@ func TestParseAccessDocValidation(t *testing.T) {
 		t.Fatalf("env 值非字符串应报错: %v", err)
 	}
 	// codex 仅允许 env、models、codex 键
-	if _, _, err := parseAccessDoc("codex", `{"env":{},"mcpServers":{}}`); err == nil || !strings.Contains(err.Error(), "Codex 配置仅支持 env、models、codex 键") {
+	if _, _, err := parseAccessDoc("codex", `{"env":{},"mcpServers":{}}`); err == nil || !strings.Contains(err.Error(), "Codex 配置仅支持 env、models、codex、model_meta 键") {
 		t.Fatalf("codex 顶层键应报错: %v", err)
 	}
 	// 非法 appType

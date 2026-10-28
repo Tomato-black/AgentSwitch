@@ -266,7 +266,7 @@ func TestCodexCatalogModelsResolvesMetadataAndDedupes(t *testing.T) {
 		}
 	}
 	acc := AccessConfigs{A: a}
-	got, err := acc.codexCatalogModels([]string{"test", "my-code", " test "})
+	got, err := acc.codexCatalogModels([]string{"test", "my-code", " test "}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,15 +292,15 @@ func TestCodexCatalogModelsRejectsMissingOrDisabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	acc := AccessConfigs{A: a}
-	if _, err := acc.codexCatalogModels([]string{"ghost"}); err == nil ||
+	if _, err := acc.codexCatalogModels([]string{"ghost"}, nil); err == nil ||
 		!strings.Contains(err.Error(), "ghost") || !strings.Contains(err.Error(), "不存在") {
 		t.Fatalf("缺失模型错误 = %v", err)
 	}
-	if _, err := acc.codexCatalogModels([]string{"off"}); err == nil ||
+	if _, err := acc.codexCatalogModels([]string{"off"}, nil); err == nil ||
 		!strings.Contains(err.Error(), "off") || !strings.Contains(err.Error(), "已停用") {
 		t.Fatalf("停用模型错误 = %v", err)
 	}
-	if _, err := acc.codexCatalogModels([]string{" "}); err == nil ||
+	if _, err := acc.codexCatalogModels([]string{" "}, nil); err == nil ||
 		!strings.Contains(err.Error(), "不能为空") || !strings.Contains(err.Error(), "请移除后重试") {
 		t.Fatalf("空模型名错误 = %v", err)
 	}
@@ -388,5 +388,65 @@ func TestLoadLocalCodexCatalogTemplate(t *testing.T) {
 	}
 	if entry["base_instructions"] != "from local catalog" {
 		t.Fatalf("本地目录模板未读到: %v", entry)
+	}
+}
+
+// TestCodexCatalogModelsMetaOverrides：接入文档 model_meta 按字段覆盖逻辑
+// 模型元数据（未覆盖字段保持库值），非法取值报错。
+func TestCodexCatalogModelsMetaOverrides(t *testing.T) {
+	a := tempApp(t)
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{
+		ID: "lm1", Name: "my-code", Enabled: true,
+		DisplayName: "Base", ContextWindow: 1000,
+		ReasoningLevels: []string{"low", "high"}, DefaultReasoningLevel: "low",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	acc := AccessConfigs{A: a}
+	models, err := acc.codexCatalogModels([]string{"my-code"}, map[string]map[string]any{
+		"my-code": {"context_window": json.Number("2000000"), "display_name": "Per Config"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 1 {
+		t.Fatalf("%+v", models)
+	}
+	m := models[0]
+	if m.DisplayName != "Per Config" || m.ContextWindow != 2000000 {
+		t.Fatalf("override not applied: %+v", m)
+	}
+	if len(m.ReasoningLevels) != 2 || m.DefaultReasoningLevel != "low" {
+		t.Fatalf("non-overridden fields must keep logical meta: %+v", m)
+	}
+	if _, err := acc.codexCatalogModels([]string{"my-code"}, map[string]map[string]any{
+		"my-code": {"reasoning_levels": []any{"bogus"}},
+	}); err == nil {
+		t.Fatal("invalid level override must fail")
+	}
+	if _, err := codexModelMetaFromDoc(map[string]any{"model_meta": []any{}}); err == nil {
+		t.Fatal("model_meta non-object must fail")
+	}
+}
+
+// TestCodexDocModelMetaSaveValidation：model_meta 是合法顶层键；坏结构/坏
+// 等级在保存时即被拒绝（不等到应用）。
+func TestCodexDocModelMetaSaveValidation(t *testing.T) {
+	a := tempApp(t)
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	acc := AccessConfigs{A: a}
+	good := `{"models":["my-code"],"model_meta":{"my-code":{"display_name":"Per","context_window":2000000,"reasoning_levels":["low","high"],"default_reasoning_level":"high"}}}`
+	if _, err := acc.Create("codex", "cfg", "lm1", good); err != nil {
+		t.Fatal(err)
+	}
+	badLevel := `{"models":["my-code"],"model_meta":{"my-code":{"reasoning_levels":["bogus"]}}}`
+	if _, err := acc.Create("codex", "cfg2", "lm1", badLevel); err == nil {
+		t.Fatal("invalid reasoning level must be rejected on save")
+	}
+	badType := `{"models":["my-code"],"model_meta":[]}`
+	if _, err := acc.Create("codex", "cfg3", "lm1", badType); err == nil {
+		t.Fatal("non-object model_meta must be rejected")
 	}
 }

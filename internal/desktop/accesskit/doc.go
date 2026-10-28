@@ -182,3 +182,99 @@ func DocEnvStrings(raw string) (map[string]string, error) {
 	}
 	return out, nil
 }
+
+// ModelMetaDoc 是 model_meta 条目在接入文档里的形态：空字段省略（= 回退
+// 逻辑模型库值），per-config 覆盖只写用户改过的字段。
+type ModelMetaDoc struct {
+	DisplayName           string
+	ContextWindow         int64
+	ReasoningLevels       []string
+	DefaultReasoningLevel string
+}
+
+// DocModelMeta 读取文档 model_meta.<model>：字段缺失按零值；类型错误/条目
+// 非对象按缺失处理（编辑器回填不阻塞，坏值在应用时由 bridge 报错）。
+func DocModelMeta(doc map[string]any, model string) (ModelMetaDoc, bool) {
+	m, ok := doc["model_meta"].(map[string]any)
+	if !ok {
+		return ModelMetaDoc{}, false
+	}
+	e, ok := m[model].(map[string]any)
+	if !ok {
+		return ModelMetaDoc{}, false
+	}
+	out := ModelMetaDoc{}
+	if s, ok := e["display_name"].(string); ok {
+		out.DisplayName = strings.TrimSpace(s)
+	}
+	if n, err := docNumberInt64(e["context_window"]); err == nil {
+		out.ContextWindow = n
+	}
+	if xs, ok := e["reasoning_levels"].([]any); ok {
+		for _, x := range xs {
+			if s, ok := x.(string); ok && strings.TrimSpace(s) != "" {
+				out.ReasoningLevels = append(out.ReasoningLevels, strings.TrimSpace(s))
+			}
+		}
+	}
+	if s, ok := e["default_reasoning_level"].(string); ok {
+		out.DefaultReasoningLevel = strings.TrimSpace(s)
+	}
+	return out, true
+}
+
+// DocSetModelMeta 把一行元数据写入文档 model_meta.<model>：空字段省略
+// （回退库值）；条目为空则删除该模型键，model_meta 为空则删除该键。
+func DocSetModelMeta(raw, model string, meta ModelMetaDoc) (string, error) {
+	doc, err := DocObject(raw)
+	if err != nil {
+		return "", err
+	}
+	all, _ := doc["model_meta"].(map[string]any)
+	if all == nil {
+		all = map[string]any{}
+	}
+	entry := map[string]any{}
+	if s := strings.TrimSpace(meta.DisplayName); s != "" {
+		entry["display_name"] = s
+	}
+	if meta.ContextWindow > 0 {
+		entry["context_window"] = meta.ContextWindow
+	}
+	if len(meta.ReasoningLevels) > 0 {
+		entry["reasoning_levels"] = meta.ReasoningLevels
+	}
+	if s := strings.TrimSpace(meta.DefaultReasoningLevel); s != "" {
+		entry["default_reasoning_level"] = s
+	}
+	if len(entry) == 0 {
+		delete(all, model)
+	} else {
+		all[model] = entry
+	}
+	if len(all) == 0 {
+		delete(doc, "model_meta")
+	} else {
+		doc["model_meta"] = all
+	}
+	return MarshalDoc(doc)
+}
+
+// docNumberInt64 把文档数字（UseNumber 解码的 json.Number 或原生数值）转成
+// int64；非整数返回错误。
+func docNumberInt64(v any) (int64, error) {
+	switch n := v.(type) {
+	case json.Number:
+		return n.Int64()
+	case int64:
+		return n, nil
+	case int:
+		return int64(n), nil
+	case float64:
+		if n != float64(int64(n)) {
+			return 0, fmt.Errorf("not an integer")
+		}
+		return int64(n), nil
+	}
+	return 0, fmt.Errorf("not a number")
+}

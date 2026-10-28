@@ -211,3 +211,42 @@ func TestModelSummary(t *testing.T) {
 		t.Fatalf("non-codex = %q", got)
 	}
 }
+
+// TestModelMetaDocRoundTrip：model_meta 写入/读取往返；空字段省略，清空
+// 后删除条目与空的 model_meta 键；部分字段只覆盖改过的键。
+func TestModelMetaDocRoundTrip(t *testing.T) {
+	raw, err := DocSetModelMeta(`{"env":{}}`, "m1", ModelMetaDoc{
+		DisplayName: "X", ContextWindow: 2000000,
+		ReasoningLevels: []string{"low", "high"}, DefaultReasoningLevel: "high",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := DocObject(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := DocModelMeta(doc, "m1")
+	if !ok || got.DisplayName != "X" || got.ContextWindow != 2000000 ||
+		len(got.ReasoningLevels) != 2 || got.DefaultReasoningLevel != "high" {
+		t.Fatalf("round trip = %+v", got)
+	}
+	// 部分覆盖：只写窗口，其余零值。
+	raw2, _ := DocSetModelMeta(raw, "m2", ModelMetaDoc{ContextWindow: 1000})
+	doc2, _ := DocObject(raw2)
+	if m2, ok := DocModelMeta(doc2, "m2"); !ok || m2.ContextWindow != 1000 || m2.DisplayName != "" {
+		t.Fatalf("partial = %+v", m2)
+	}
+	// 清空 m2：仅剩 m1，条目删除。
+	raw3, _ := DocSetModelMeta(raw2, "m2", ModelMetaDoc{})
+	doc3, _ := DocObject(raw3)
+	if _, ok := DocModelMeta(doc3, "m2"); ok {
+		t.Fatal("empty entry must be removed")
+	}
+	// 清空全部：model_meta 键删除。
+	raw4, _ := DocSetModelMeta(raw3, "m1", ModelMetaDoc{})
+	doc4, _ := DocObject(raw4)
+	if _, exists := doc4["model_meta"]; exists {
+		t.Fatal("empty model_meta must be removed")
+	}
+}

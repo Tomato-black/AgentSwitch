@@ -258,12 +258,24 @@ func parseAccessDoc(appType, raw string) (map[string]any, map[string]string, err
 	}
 	if appType == "codex" {
 		for k := range doc {
-			if k != "env" && k != "models" && k != "codex" {
-				return nil, nil, fmt.Errorf("Codex 配置仅支持 env、models、codex 键")
+			if k != "env" && k != "models" && k != "codex" && k != "model_meta" {
+				return nil, nil, fmt.Errorf("Codex 配置仅支持 env、models、codex、model_meta 键")
 			}
 		}
 		if _, err := parseCodexSettings(doc); err != nil {
 			return nil, nil, err
+		}
+		// model_meta 结构 + 取值早校验（与目录生成同一套规则）：坏值不能
+		// 静默入库，等到「应用」才失败。
+		metas, err := codexModelMetaFromDoc(doc)
+		if err != nil {
+			return nil, nil, err
+		}
+		for name, o := range metas {
+			stub := codexCatalogModel{Name: name}
+			if err := applyCodexMetaOverride(&stub, o); err != nil {
+				return nil, nil, err
+			}
 		}
 	}
 	return doc, env, nil

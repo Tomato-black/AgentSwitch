@@ -11,6 +11,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"AgentSwitch/internal/bridge"
+	"AgentSwitch/internal/desktop/accesskit"
 	"AgentSwitch/internal/desktop/state"
 	"AgentSwitch/internal/desktop/uikit"
 	"AgentSwitch/internal/desktop/uitest"
@@ -381,34 +382,29 @@ func TestParseMeta(t *testing.T) {
 	}
 }
 
-// TestSaveMetaPersists：保存元数据写回逻辑模型（默认等级取列表首项），
-// 并给出成功提示；非法输入内联报错且不落库。
-func TestSaveMetaPersists(t *testing.T) {
-	st, a := uitest.New(t)
-	ch, err := st.Svc.Channels.Create("", "渠道A", "https://api.example.com", "openai", "sk-1", true, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lm, err := st.Svc.Logical.Create("my-code", "", bridge.ModelMeta{}, []bridge.TargetSpec{{ChannelID: ch.ID, ModelName: "m1"}})
-	if err != nil {
-		t.Fatal(err)
-	}
+// TestApplyMetaEditPatchesDoc：元数据编辑即时写入本配置文档 model_meta
+// （空字段省略、默认等级取首项）；非法输入不改文档并内联报错。
+func TestApplyMetaEditPatchesDoc(t *testing.T) {
+	f := &state.AccessForm{DocJSON: `{"env":{}}`}
 	ed := &state.MetaEditState{DisplayName: "My Code", ContextWindow: "1000000", ReasoningLevels: "low, high"}
-	saveMeta(st, bridge.AccessConfigs{A: a}, lm.ID, ed)
-	if ed.Msg != "已保存" {
-		t.Fatalf("msg = %q", ed.Msg)
+	if !applyMetaEdit(f, "my-code", ed) {
+		t.Fatalf("patch failed: %s", ed.Msg)
 	}
-	got, err := st.Svc.Logical.Get(lm.ID)
+	doc, err := accesskit.DocObject(f.DocJSON)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.DisplayName != "My Code" || got.ContextWindow != 1000000 ||
-		len(got.ReasoningLevels) != 2 || got.DefaultReasoningLevel != "low" {
-		t.Fatalf("meta not saved: %+v", got)
+	meta, ok := accesskit.DocModelMeta(doc, "my-code")
+	if !ok || meta.DisplayName != "My Code" || meta.ContextWindow != 1000000 ||
+		len(meta.ReasoningLevels) != 2 || meta.DefaultReasoningLevel != "low" {
+		t.Fatalf("patched meta = %+v", meta)
 	}
+	before := f.DocJSON
 	bad := &state.MetaEditState{ReasoningLevels: "bogus"}
-	saveMeta(st, bridge.AccessConfigs{A: a}, lm.ID, bad)
-	if !strings.Contains(bad.Msg, "思考等级") {
-		t.Fatalf("invalid meta should report: %q", bad.Msg)
+	if applyMetaEdit(f, "my-code", bad) {
+		t.Fatal("invalid meta must not patch")
+	}
+	if f.DocJSON != before || !strings.Contains(bad.Msg, "思考等级") {
+		t.Fatalf("doc changed=%v msg=%q", f.DocJSON != before, bad.Msg)
 	}
 }

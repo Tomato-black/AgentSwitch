@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -222,4 +223,94 @@ func asStringList(v any) ([]string, bool) {
 	default:
 		return nil, false
 	}
+}
+
+// codexModelMetaFromDoc 解析接入文档的 model_meta（按模型名索引的 Codex
+// 元数据覆盖项，2026-10-28 per-config 化）：只接受对象；条目字段由
+// applyCodexMetaOverride 做类型与取值校验。缺失/null 返回 nil。
+func codexModelMetaFromDoc(doc map[string]any) (map[string]map[string]any, error) {
+	raw, ok := doc["model_meta"]
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	m, ok := raw.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("model_meta 必须是 JSON 对象")
+	}
+	out := make(map[string]map[string]any, len(m))
+	for name, v := range m {
+		name = strings.TrimSpace(name)
+		if name == "" || v == nil {
+			continue
+		}
+		e, ok := v.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("model_meta.%s 必须是 JSON 对象", name)
+		}
+		out[name] = e
+	}
+	return out, nil
+}
+
+// applyCodexMetaOverride 把 model_meta 条目按字段覆盖到目录模型上：仅出现在
+// 文档里的字段生效（部分覆盖合法），合并后整体过 validateModelMeta。
+func applyCodexMetaOverride(m *codexCatalogModel, o map[string]any) error {
+	if v, ok := o["display_name"]; ok {
+		str, ok := v.(string)
+		if !ok {
+			return fmt.Errorf("model_meta.%s.display_name 必须是字符串", m.Name)
+		}
+		m.DisplayName = strings.TrimSpace(str)
+	}
+	if v, ok := o["context_window"]; ok {
+		n, err := docInt64(v)
+		if err != nil || n < 0 {
+			return fmt.Errorf("model_meta.%s.context_window 必须是非负整数", m.Name)
+		}
+		m.ContextWindow = n
+	}
+	if v, ok := o["reasoning_levels"]; ok {
+		xs, ok := v.([]any)
+		if !ok {
+			return fmt.Errorf("model_meta.%s.reasoning_levels 必须是字符串数组", m.Name)
+		}
+		levels := make([]string, 0, len(xs))
+		for _, x := range xs {
+			str, ok := x.(string)
+			if !ok {
+				return fmt.Errorf("model_meta.%s.reasoning_levels 必须是字符串数组", m.Name)
+			}
+			levels = append(levels, strings.TrimSpace(str))
+		}
+		m.ReasoningLevels = levels
+	}
+	if v, ok := o["default_reasoning_level"]; ok {
+		str, ok := v.(string)
+		if !ok {
+			return fmt.Errorf("model_meta.%s.default_reasoning_level 必须是字符串", m.Name)
+		}
+		m.DefaultReasoningLevel = strings.TrimSpace(str)
+	}
+	return validateModelMeta(ModelMeta{
+		DisplayName: m.DisplayName, ContextWindow: m.ContextWindow,
+		ReasoningLevels: m.ReasoningLevels, DefaultReasoningLevel: m.DefaultReasoningLevel,
+	})
+}
+
+// docInt64 把文档数字（UseNumber 解码或测试里的原生数字）转成 int64。
+func docInt64(v any) (int64, error) {
+	switch n := v.(type) {
+	case json.Number:
+		return n.Int64()
+	case int64:
+		return n, nil
+	case int:
+		return int64(n), nil
+	case float64:
+		if n != float64(int64(n)) {
+			return 0, fmt.Errorf("not an integer")
+		}
+		return int64(n), nil
+	}
+	return 0, fmt.Errorf("not a number")
 }

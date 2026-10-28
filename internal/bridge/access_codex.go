@@ -66,7 +66,11 @@ func (s AccessConfigs) projectCodex(env map[string]string, model string, doc map
 	if err != nil {
 		return nil, nil, err
 	}
-	models, err := s.codexCatalogModels(names)
+	overrides, err := codexModelMetaFromDoc(doc)
+	if err != nil {
+		return nil, nil, err
+	}
+	models, err := s.codexCatalogModels(names, overrides)
 	if err != nil {
 		return nil, nil, err
 	}

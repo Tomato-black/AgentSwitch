@@ -259,6 +259,7 @@ func ensureMetaEntries(f *state.AccessForm, models []bridge.ModelView) {
 			byName[m.Name] = m
 		}
 	}
+	doc, _ := accesskit.DocObject(f.DocJSON)
 	for _, name := range f.CodexModels {
 		if _, ok := f.CodexMeta[name]; ok {
 			continue
@@ -271,6 +272,21 @@ func ensureMetaEntries(f *state.AccessForm, models []bridge.ModelView) {
 			}
 			ed.ReasoningLevels = strings.Join(m.ReasoningLevels, ",")
 			ed.DefaultReasoningLevel = m.DefaultReasoningLevel
+		}
+		// 文档 model_meta 的非空字段覆盖库值（per-config 覆盖项优先）。
+		if meta, ok := accesskit.DocModelMeta(doc, name); ok {
+			if meta.DisplayName != "" {
+				ed.DisplayName = meta.DisplayName
+			}
+			if meta.ContextWindow > 0 {
+				ed.ContextWindow = strconv.FormatInt(meta.ContextWindow, 10)
+			}
+			if len(meta.ReasoningLevels) > 0 {
+				ed.ReasoningLevels = strings.Join(meta.ReasoningLevels, ",")
+			}
+			if meta.DefaultReasoningLevel != "" {
+				ed.DefaultReasoningLevel = meta.DefaultReasoningLevel
+			}
 		}
 		f.CodexMeta[name] = ed
 	}
@@ -312,7 +328,7 @@ func metaLevelSelect(c *ui.Context, t *ui.Theme, level *string, levels []string)
 func modelMetaSection(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, acc bridge.AccessConfigs, models []bridge.ModelView) {
 	f := &st.Access.Form
 	ui.Text(c, "模型元数据").Bold()
-	ui.Text(c, "显示名/上下文窗口/思考等级写入 Codex 模型菜单（保存到逻辑模型，所有 Codex 接入共享）").TextColor(t.TextMuted)
+	ui.Text(c, "仅影响 Codex 模型菜单；改动即时写入本配置（覆盖逻辑模型默认值），保存配置并「应用」后生效").TextColor(t.TextMuted)
 	ensureMetaEntries(f, models)
 	byName := map[string]bridge.ModelView{}
 	for _, m := range models {
@@ -320,45 +336,64 @@ func modelMetaSection(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state
 			byName[m.Name] = m
 		}
 	}
+	changed := false
 	for _, name := range f.CodexModels {
-		m, ok := byName[name]
-		if !ok {
-			ui.Text(c, name+"（模型不存在）").TextColor(t.Danger)
+		modelName := name
+		if _, ok := byName[modelName]; !ok {
+			ui.Text(c, modelName+"（模型不存在）").TextColor(t.Danger)
 			continue
 		}
-		ed := f.CodexMeta[name]
+		ed := f.CodexMeta[modelName]
 		if ed == nil {
 			continue
 		}
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, name).Width(150).Bold().SingleLine()
-			ui.TextInput(c, &ed.DisplayName).Width(150).Placeholder("显示名")
-			ui.TextInput(c, &ed.ContextWindow).Width(120).Placeholder("上下文窗口")
-			ui.TextInput(c, &ed.ReasoningLevels).Grow(1).Placeholder("思考等级：low,medium,high")
+			ui.Text(c, modelName).Width(150).Bold().SingleLine()
+			if ui.TextInput(c, &ed.DisplayName).Width(150).Placeholder("显示名").Changed() {
+				changed = applyMetaEdit(f, modelName, ed) || changed
+			}
+			if ui.TextInput(c, &ed.ContextWindow).Width(120).Placeholder("上下文窗口").Changed() {
+				changed = applyMetaEdit(f, modelName, ed) || changed
+			}
+			if ui.TextInput(c, &ed.ReasoningLevels).Grow(1).Placeholder("思考等级：low,medium,high").Changed() {
+				changed = applyMetaEdit(f, modelName, ed) || changed
+			}
+			beforeLevel := ed.DefaultReasoningLevel
 			metaLevelSelect(c, t, &ed.DefaultReasoningLevel, parsedLevels(ed.ReasoningLevels))
-			if uikit.SoftButton(c, t, s, "gray", "保存元数据").Clicked() {
-				saveMeta(st, acc, m.ID, ed)
+			if ed.DefaultReasoningLevel != beforeLevel {
+				changed = applyMetaEdit(f, modelName, ed) || changed
 			}
 		})
 		if ed.Msg != "" {
 			ui.Text(c, ed.Msg).TextColor(t.TextMuted)
 		}
 	}
+	if changed {
+		RefreshPreview(st, acc)
+	}
 }
 
-// saveMeta 校验并写回逻辑模型元数据；成功后刷新 config.toml 预览。
-func saveMeta(st *state.State, acc bridge.AccessConfigs, modelID string, ed *state.MetaEditState) {
+// applyMetaEdit 校验并写入本配置文档的 model_meta（失败内联提示、不改文档）；
+// 返回是否成功写入。
+func applyMetaEdit(f *state.AccessForm, modelName string, ed *state.MetaEditState) bool {
 	meta, err := parseMeta(ed)
 	if err != nil {
 		ed.Msg = err.Error()
-		return
+		return false
 	}
-	if err := st.Svc.Logical.UpdateMeta(modelID, meta); err != nil {
-		ed.Msg = err.Error()
-		return
+	raw, err := accesskit.DocSetModelMeta(f.DocJSON, modelName, accesskit.ModelMetaDoc{
+		DisplayName:           meta.DisplayName,
+		ContextWindow:         meta.ContextWindow,
+		ReasoningLevels:       meta.ReasoningLevels,
+		DefaultReasoningLevel: meta.DefaultReasoningLevel,
+	})
+	if err != nil {
+		ed.Msg = "写入配置文档失败：" + err.Error()
+		return false
 	}
-	ed.Msg = "已保存"
-	RefreshPreview(st, acc)
+	f.DocJSON = raw
+	ed.Msg = "已写入配置文档（保存并「应用」后生效）"
+	return true
 }
 
 // accessCodexAdvancedSection 渲染 Codex 高级设置（spec 2026-10-27 §4.2）：

@@ -216,39 +216,3 @@ func TestLogicalRemoveModel(t *testing.T) {
 		t.Fatalf("duplicate name: %v", err)
 	}
 }
-
-// TestUpdateMetaOnlyMetadata：UpdateMeta 只改 Codex 元数据，名称/目标链/
-// 启用态保持不变；非法等级被拒绝。
-func TestUpdateMetaOnlyMetadata(t *testing.T) {
-	a := tempApp(t)
-	ch, err := Channels{A: a}.Create("", "渠道A", "https://api.example.com", "openai", "sk-1", true, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := LogicalModels{A: a}
-	m, err := s.Create("my-code", "desc", ModelMeta{}, []TargetSpec{{ChannelID: ch.ID, ModelName: "m1"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = s.UpdateMeta(m.ID, ModelMeta{
-		DisplayName: "My Code", ContextWindow: 1000000,
-		ReasoningLevels: []string{"low", "high"}, DefaultReasoningLevel: "high",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err := s.Get(m.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Name != "my-code" || got.Description != "desc" || len(got.Targets) != 1 {
-		t.Fatalf("non-meta fields changed: %+v", got)
-	}
-	if got.DisplayName != "My Code" || got.ContextWindow != 1000000 ||
-		len(got.ReasoningLevels) != 2 || got.DefaultReasoningLevel != "high" {
-		t.Fatalf("meta not saved: %+v", got)
-	}
-	if err := s.UpdateMeta(m.ID, ModelMeta{ReasoningLevels: []string{"bogus"}}); err == nil {
-		t.Fatal("invalid reasoning level must be rejected")
-	}
-}

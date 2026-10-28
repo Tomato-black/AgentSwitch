@@ -216,26 +216,6 @@ func (s LogicalModels) Update(id, name, description string, meta ModelMeta, enab
 }
 
 // Remove 删逻辑模型（logical_model_targets 由 FK CASCADE）。
-// UpdateMeta 只更新逻辑模型的 Codex 元数据（显示名/上下文窗口/思考等级），
-// 不动名称/描述/目标链/启用态——接入页 Codex 编辑器据此维护模型菜单元数据
-// （2026-10-28 从逻辑模型编辑页迁出）。
-func (s LogicalModels) UpdateMeta(id string, meta ModelMeta) error {
-	if err := validateModelMeta(meta); err != nil {
-		return err
-	}
-	m, err := s.A.Store().LogicalModels().Get(id)
-	if err != nil {
-		return err
-	}
-	m.DisplayName, m.ContextWindow = meta.DisplayName, meta.ContextWindow
-	m.ReasoningLevels, m.DefaultReasoningLevel = meta.ReasoningLevels, meta.DefaultReasoningLevel
-	if _, err := s.A.Store().LogicalModels().Save(m); err != nil {
-		return friendlyModelError(err)
-	}
-	s.A.Log().Info("logical model meta updated", "id", id, "actor", "ui", "result", "ok")
-	return nil
-}
-
 func (s LogicalModels) Remove(id string) {
 	if err := s.A.Store().LogicalModels().Delete(id); err != nil {
 		s.A.Log().Error("logical model remove failed", "id", id, "err", err)

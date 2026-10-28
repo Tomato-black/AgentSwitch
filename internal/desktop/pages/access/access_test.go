@@ -100,7 +100,7 @@ func TestAccessCodexEditorShowsModelMetaPreview(t *testing.T) {
 	st.Access.App = "codex"
 	st.Access.Form = state.AccessForm{Open: true, ModelLabel: "my-code", DocJSON: `{"env":{}}`}
 	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
-	for _, want := range []string{"模型元数据", "保存元数据"} {
+	for _, want := range []string{"模型元数据", "保存配置并「应用」后生效"} {
 		if !tt.HasText(want) {
 			t.Fatalf("missing %q in %v", want, tt.Texts())
 		}
@@ -108,7 +108,7 @@ func TestAccessCodexEditorShowsModelMetaPreview(t *testing.T) {
 	st.Access.App = "claude"
 	st.Access.Form = state.AccessForm{Open: true, ModelLabel: "my-code", DocJSON: `{"env":{}}`}
 	tt = ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
-	if tt.HasText("模型元数据") || tt.HasText("保存元数据") {
+	if tt.HasText("模型元数据") || tt.HasText("保存配置并「应用」后生效") {
 		t.Fatal("Claude 编辑器不应出现 Codex 元数据编辑区")
 	}
 }

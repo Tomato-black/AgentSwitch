@@ -87,7 +87,7 @@ func TestParseAccessDocCodexAllowsModelsAndCodex(t *testing.T) {
 
 func TestParseAccessDocCodexRejectsOtherTopLevelKeys(t *testing.T) {
 	_, _, err := parseAccessDoc("codex", `{"env":{},"mcpServers":{}}`)
-	if err == nil || !strings.Contains(err.Error(), "Codex 配置仅支持 env、models、codex 键") {
+	if err == nil || !strings.Contains(err.Error(), "Codex 配置仅支持 env、models、codex、model_meta 键") {
 		t.Fatalf("codex 顶层键应报错: %v", err)
 	}
 }

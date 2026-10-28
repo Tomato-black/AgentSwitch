@@ -41,7 +41,7 @@ type codexCatalogModel struct {
 // codexCatalogModels 把有序模型名解析为目录元数据：保持传入顺序（首项为
 // 默认模型），按去空白后的名字防御性去重（宽松读取的旧文档可能带重复），
 // 每个名字必须对应存在且启用的逻辑模型——目录不能为不可用模型生成条目。
-func (s AccessConfigs) codexCatalogModels(names []string) ([]codexCatalogModel, error) {
+func (s AccessConfigs) codexCatalogModels(names []string, overrides map[string]map[string]any) ([]codexCatalogModel, error) {
 	lms, err := s.A.Store().LogicalModels().List()
 	if err != nil {
 		return nil, err
@@ -68,14 +68,20 @@ func (s AccessConfigs) codexCatalogModels(names []string) ([]codexCatalogModel, 
 		if !lm.Enabled {
 			return nil, fmt.Errorf("模型 %s 已停用，请启用或从模型列表中移除", name)
 		}
-		out = append(out, codexCatalogModel{
+		model := codexCatalogModel{
 			Name:                  name,
 			DisplayName:           strings.TrimSpace(lm.DisplayName),
 			Description:           strings.TrimSpace(lm.Description),
 			ContextWindow:         lm.ContextWindow,
 			ReasoningLevels:       append([]string(nil), lm.ReasoningLevels...),
 			DefaultReasoningLevel: strings.TrimSpace(lm.DefaultReasoningLevel),
-		})
+		}
+		if o, ok := overrides[name]; ok {
+			if err := applyCodexMetaOverride(&model, o); err != nil {
+				return nil, err
+			}
+		}
+		out = append(out, model)
 	}
 	return out, nil
 }
