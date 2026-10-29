@@ -6,11 +6,13 @@ import (
 
 func scanAccessConfig(sc func(...any) error) (AccessConfig, error) {
 	var c AccessConfig
-	var cur int
-	if err := sc(&c.ID, &c.AppType, &c.Name, &c.LogicalModelID, &c.Settings, &cur, &c.SortOrder, &c.CreatedAt, &c.UpdatedAt); err != nil {
+	var cur, pending int
+	if err := sc(&c.ID, &c.AppType, &c.Name, &c.LogicalModelID, &c.Settings,
+		&cur, &pending, &c.SortOrder, &c.CreatedAt, &c.UpdatedAt); err != nil {
 		return AccessConfig{}, err
 	}
 	c.IsCurrent = cur == 1
+	c.NeedsApply = pending == 1
 	if c.Settings == "" { // 写入侧保证合法 JSON；空串回读为 "{}"
 		c.Settings = "{}"
 	}
@@ -58,12 +60,14 @@ func (r *accessConfigRepo) Save(c AccessConfig) (AccessConfig, error) {
 		c.Settings = "{}"
 	}
 	// UNIQUE(app_type, name) 冲突由驱动冒泡为非 nil error（bridge 负责友好化）。
-	_, err = r.db.Exec(`INSERT INTO access_configs(id,app_type,name,logical_model_id,settings,is_current,sort_order,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?)
+	_, err = r.db.Exec(`INSERT INTO access_configs(id,app_type,name,logical_model_id,settings,is_current,needs_apply,sort_order,created_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET app_type=excluded.app_type, name=excluded.name,
 			logical_model_id=excluded.logical_model_id, settings=excluded.settings,
-			is_current=excluded.is_current, sort_order=excluded.sort_order, updated_at=excluded.updated_at`,
-		c.ID, c.AppType, c.Name, c.LogicalModelID, c.Settings, boolInt(c.IsCurrent), c.SortOrder, c.CreatedAt, c.UpdatedAt)
+			is_current=excluded.is_current, needs_apply=excluded.needs_apply,
+			sort_order=excluded.sort_order, updated_at=excluded.updated_at`,
+		c.ID, c.AppType, c.Name, c.LogicalModelID, c.Settings,
+		boolInt(c.IsCurrent), boolInt(c.NeedsApply), c.SortOrder, c.CreatedAt, c.UpdatedAt)
 	if err != nil {
 		return AccessConfig{}, err
 	}
@@ -92,7 +96,7 @@ func (r *accessConfigRepo) SetCurrent(appType, id string) error {
 			tx.Rollback()
 			return ErrNotFound
 		}
-		if _, err := tx.Exec(`UPDATE access_configs SET is_current=1 WHERE id=?`, id); err != nil {
+		if _, err := tx.Exec(`UPDATE access_configs SET is_current=1, needs_apply=0 WHERE id=?`, id); err != nil {
 			tx.Rollback()
 			return err
 		}

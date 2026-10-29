@@ -82,6 +82,38 @@ ALTER TABLE logical_models ADD COLUMN reasoning_levels TEXT NOT NULL DEFAULT '';
 ALTER TABLE logical_models ADD COLUMN default_reasoning_level TEXT NOT NULL DEFAULT '';
 `
 
+// migrationV4 为 access_configs 增加 needs_apply：区分「仅保存」与「已应用」。
+// v3 是合并单一 schema 前的旧版本号（rejectLegacySchema 拒绝），故从 4 起。
+const migrationV4 = `
+ALTER TABLE access_configs ADD COLUMN needs_apply INTEGER NOT NULL DEFAULT 0;
+`
+
+// migrationV5 新增 request_history：请求/路由决策的脱敏元数据，供重启后
+// 排障与诊断导出；不存 prompt/response 正文、Authorization 或密钥。
+const migrationV5 = `
+CREATE TABLE request_history (
+  id TEXT PRIMARY KEY,
+  started_at INTEGER NOT NULL,
+  model TEXT NOT NULL DEFAULT '',
+  upstream_model TEXT NOT NULL DEFAULT '',
+  channel TEXT NOT NULL DEFAULT '',
+  account TEXT NOT NULL DEFAULT '',
+  status INTEGER NOT NULL DEFAULT 0,
+  duration_ms INTEGER NOT NULL DEFAULT 0,
+  failover_count INTEGER NOT NULL DEFAULT 0,
+  streaming INTEGER NOT NULL DEFAULT 0,
+  error_class TEXT NOT NULL DEFAULT '',
+  attempts_json TEXT NOT NULL DEFAULT '[]'
+);
+CREATE INDEX idx_request_history_started_at ON request_history(started_at DESC);
+`
+
+// migrationV6 为请求历史增加非流式 token usage（P1-2a）；流式暂不统计。
+const migrationV6 = `
+ALTER TABLE request_history ADD COLUMN input_tokens INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE request_history ADD COLUMN output_tokens INTEGER NOT NULL DEFAULT 0;
+`
+
 // migrations 是按版本序执行的迁移表；migrate 只跑 schema_migrations 里
 // 未记录的版本（幂等）。v1 之后只允许追加就地迁移（ALTER TABLE），勿就地
 // 改已发布语句；需删库重建时先过用户决策。
@@ -91,6 +123,9 @@ var migrations = []struct {
 }{
 	{1, migrationV1},
 	{2, migrationV2},
+	{4, migrationV4},
+	{5, migrationV5},
+	{6, migrationV6},
 }
 
 type dbStore struct {
@@ -232,6 +267,49 @@ func rejectLegacySchema(db *sql.DB) error {
 			return errLegacyDB
 		}
 	}
+	// v4 记录必须真的含 needs_apply：migrate 见版本已记录会跳过，列缺失的
+	// 残库放行后首次读写接入配置即裸 SQL 报错。
+	v4, err := hasRecordedVersion(db, 4)
+	if err != nil {
+		return err
+	}
+	if v4 {
+		hasNeedsApply, err := columnExists(db, "access_configs", "needs_apply")
+		if err != nil {
+			return err
+		}
+		if !hasNeedsApply {
+			return errLegacyDB
+		}
+	}
+	v5, err := hasRecordedVersion(db, 5)
+	if err != nil {
+		return err
+	}
+	if v5 {
+		hasHistory, err := tableExists(db, "request_history")
+		if err != nil {
+			return err
+		}
+		if !hasHistory {
+			return errLegacyDB
+		}
+	}
+	v6, err := hasRecordedVersion(db, 6)
+	if err != nil {
+		return err
+	}
+	if v6 {
+		for _, column := range []string{"input_tokens", "output_tokens"} {
+			ok, err := columnExists(db, "request_history", column)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return errLegacyDB
+			}
+		}
+	}
 	return nil
 }
 
@@ -327,7 +405,10 @@ func (s *dbStore) LogicalModelTargets() LogicalModelTargetRepo {
 	return &logicalModelTargetRepo{db: s.db, ver: &s.routeVer}
 }
 func (s *dbStore) AccessConfigs() AccessConfigRepo { return &accessConfigRepo{s.db} }
-func (s *dbStore) Secrets() SecretRepo             { return &secretStore{db: s.db, key: s.key} }
-func (s *dbStore) Settings() SettingsRepo          { return &settingsRepo{s.db} }
-func (s *dbStore) RouteVersion() uint64            { return s.routeVer.Load() }
-func (s *dbStore) Close() error                    { return s.db.Close() }
+func (s *dbStore) RequestHistory() RequestHistoryRepo {
+	return &requestHistoryRepo{s.db}
+}
+func (s *dbStore) Secrets() SecretRepo    { return &secretStore{db: s.db, key: s.key} }
+func (s *dbStore) Settings() SettingsRepo { return &settingsRepo{s.db} }
+func (s *dbStore) RouteVersion() uint64   { return s.routeVer.Load() }
+func (s *dbStore) Close() error           { return s.db.Close() }

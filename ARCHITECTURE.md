@@ -52,6 +52,6 @@ gateway ──→ protocol / router / provider / telemetry
 
 ## 存储
 
-- SQLite 单库（非秘密配置 + 状态）；migrations 内嵌 `internal/storage`（单一 v1，破坏性变更走删库重建、启动显式报错）
+- SQLite 单库（非秘密配置 + 状态）；migrations 内嵌 `internal/storage`（v1 + v2 纯增列就地升级；破坏性变更走删库重建、启动显式报错）
 - 密钥密文（AES-256-GCM）在库内、主密钥 `master.key` 在库外
 - 事件遥测 = 内存环 + 轮转文件日志（5 MiB gzip × 2），不落 SQLite

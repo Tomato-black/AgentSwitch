@@ -450,3 +450,37 @@ func TestCodexDocModelMetaSaveValidation(t *testing.T) {
 		t.Fatal("non-object model_meta must be rejected")
 	}
 }
+
+// TestCodexTemplateCacheLoadsOnce 覆盖 P0-2 的模板缓存：首次加载后进程内
+// 复用，且返回深拷贝（调用方修改不污染缓存）。
+func TestCodexTemplateCacheLoadsOnce(t *testing.T) {
+	resetCodexTemplateCache()
+	old := codexTemplateSource
+	calls := 0
+	codexTemplateSource = func() (map[string]any, error) {
+		calls++
+		return testCodexCatalogTemplate(), nil
+	}
+	defer func() {
+		codexTemplateSource = old
+		resetCodexTemplateCache()
+	}()
+	m1, err := loadCodexModelCatalogTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadCodexModelCatalogTemplate(); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("template loaded %d times, want 1 (cache miss only)", calls)
+	}
+	m1["slug"] = "mutated"
+	m3, err := loadCodexModelCatalogTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m3["slug"] == "mutated" {
+		t.Fatal("cache must return a deep copy")
+	}
+}

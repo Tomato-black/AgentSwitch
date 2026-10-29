@@ -108,3 +108,37 @@ func TestCooldownSharedAcrossModels(t *testing.T) {
 		t.Fatal("same ChannelID must stay cooled (shared across logical models)")
 	}
 }
+
+func TestCooldownsHalfOpenSingleFlight(t *testing.T) {
+	c := NewCooldowns()
+	now := time.Now()
+	c.MarkClassified("ch", provider.ClassServer, 0, now)
+	after := now.Add(CooldownServer)
+	if _, ok := c.TryAcquire("ch", after); !ok {
+		t.Fatal("first request after expiry should be the probe")
+	}
+	if _, ok := c.TryAcquire("ch", after.Add(time.Second)); ok {
+		t.Fatal("second request must wait for probe result")
+	}
+	c.MarkSuccess("ch")
+	if _, ok := c.TryAcquire("ch", after.Add(2*time.Second)); !ok {
+		t.Fatal("after success channel must be available")
+	}
+}
+
+func TestCooldownsHalfOpenFailureExtends(t *testing.T) {
+	c := NewCooldowns()
+	now := time.Now()
+	c.MarkClassified("ch", provider.ClassServer, 0, now)
+	after := now.Add(CooldownServer)
+	if _, ok := c.TryAcquire("ch", after); !ok {
+		t.Fatal("first request after expiry should probe")
+	}
+	c.MarkClassified("ch", provider.ClassServer, 0, after)
+	if _, ok := c.TryAcquire("ch", after.Add(time.Second)); ok {
+		t.Fatal("failed probe must re-cool the channel")
+	}
+	if sn := c.Snapshot(after.Add(time.Second)); len(sn) != 1 {
+		t.Fatalf("snapshot = %v", sn)
+	}
+}

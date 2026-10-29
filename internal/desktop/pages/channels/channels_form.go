@@ -1,6 +1,8 @@
 package channels
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -122,6 +124,16 @@ func refNames(st *state.State, channelID string) []string {
 	return referencedBy(st.Svc.Logical.List(), channelID)
 }
 
+// cooldownsByChannel 把 Gateway.Cooldowns() 转成 ChannelID→快照，供列表卡
+// 显示冷却倒计时；无冷却返回空 map。
+func cooldownsByChannel(st *state.State) map[string]bridge.CooldownView {
+	out := map[string]bridge.CooldownView{}
+	for _, cd := range st.Svc.Gateway.Cooldowns() {
+		out[cd.ChannelID] = cd
+	}
+	return out
+}
+
 // channelStats 统计遥测环里该渠道名的近况：ok=2xx、fail=Status==0||>=400，
 // 按 rec.Channel（渠道名）过滤。
 func channelStats(recs []telemetry.RequestRecord, channel string) (ok, fail int) {
@@ -142,6 +154,7 @@ func channelStats(recs []telemetry.RequestRecord, channel string) (ok, fail int)
 // openChannelNew 进新建页并复位表单（预设网格从头选）。
 func openNew(st *state.State) {
 	resetForm(st)
+	st.Channels.Baseline = st.Channels.Signature()
 	st.Channels.View = "new"
 }
 
@@ -165,6 +178,7 @@ func openDetail(st *state.State, id string) {
 		Enabled: d.Enabled, AllowPrivate: d.AllowPrivate,
 	}
 	st.Channels.SuggText = strings.Join(d.Suggestions, "\n")
+	st.Channels.Baseline = st.Channels.Signature()
 }
 
 // detailProtocolSwitched 是详情页协议切换联动：与新建页共用 switchProtocol
@@ -222,16 +236,43 @@ func saveDetail(st *state.State) {
 	}
 	st.Channels.KeyInput = ""
 	st.Channels.TestMsg = "已保存"
+	st.Channels.Baseline = st.Channels.Signature()
 }
 
-// testChannelDetail 落「测试连通」：结果进 chTestMsg 信息位。
+// detailDirty 报告详情页是否有未保存修改：测试/拉取使用已保存的 Base URL
+// 与 Key，未保存时先拦住，避免「测的是旧 Key」的误判（P1-3）。
+func detailDirty(st *state.State) bool {
+	return st.Channels.View == "detail" && st.Channels.Signature() != st.Channels.Baseline
+}
+
+// testDetail 落「测试连通」：移到后台任务执行，按钮显示进行中并可取消，
+// 结果回主线程进 TestMsg（P0-2：不再阻塞渲染帧）。
 func testDetail(st *state.State) {
-	res := st.Svc.Channels.Test(st.Channels.DetailID)
-	if res.OK {
-		st.Channels.TestMsg = "连通正常 (" + res.Stage + ")"
+	if detailDirty(st) {
+		st.Channels.TestMsg = "表单有未保存修改，请先保存后再测试连通"
 		return
 	}
-	st.Channels.TestMsg = res.Stage + " 失败: " + res.Error
+	id := st.Channels.DetailID // 快照：后台任务不得读 UI 可变状态
+	state.RunAsync(st, &st.Channels.TestTask, "正在测试连通…", func(ctx context.Context) (string, error) {
+		res := st.Svc.Channels.TestContext(ctx, id)
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		if res.OK {
+			return "连通正常 (" + res.Stage + ")", nil
+		}
+		return "", fmt.Errorf("%s 失败: %s", res.Stage, res.Error)
+	}, func(msg string, err error) {
+		if errors.Is(err, context.Canceled) {
+			st.Channels.TestMsg = "已取消测试"
+			return
+		}
+		if err != nil {
+			st.Channels.TestMsg = err.Error()
+			return
+		}
+		st.Channels.TestMsg = msg
+	})
 }
 
 // applyFetchedModels 处理拉取结果：错误/空列表进信息位；目标文本为空则
@@ -256,19 +297,40 @@ func applyFetchedModels(st *state.State, target string, dst *string, msg *string
 	*msg = fmt.Sprintf("上游返回 %d 个模型——请选择替换或追加", len(ids))
 }
 
-// fetchModels 落「拉取模型」（详情页）：用已保存渠道的 Base URL/协议/Key
-// 拉上游模型列表；已有建议文本时先确认追加/替换。
+// fetchModels 落「拉取模型」（详情页）：后台任务执行，完成后回主线程套用
+// 追加/替换确认（P0-2）。
 func fetchModels(st *state.State) {
-	ids, err := st.Svc.Channels.FetchModels(st.Channels.DetailID)
-	applyFetchedModels(st, "detail", &st.Channels.SuggText, &st.Channels.TestMsg, ids, err, "保存后生效")
+	if detailDirty(st) {
+		st.Channels.TestMsg = "表单有未保存修改，请先保存后再拉取模型"
+		return
+	}
+	id := st.Channels.DetailID // 快照：后台任务不得读 UI 可变状态
+	state.RunAsync(st, &st.Channels.FetchTask, "正在拉取模型…", func(ctx context.Context) ([]string, error) {
+		return st.Svc.Channels.FetchModelsContext(ctx, id)
+	}, func(ids []string, err error) {
+		if errors.Is(err, context.Canceled) {
+			st.Channels.TestMsg = "已取消拉取模型"
+			return
+		}
+		applyFetchedModels(st, "detail", &st.Channels.SuggText, &st.Channels.TestMsg, ids, err, "保存后生效")
+	})
 }
 
 // fetchModelsDraft 同上，但用新建表单的 baseURL/protocol/key——渠道尚未
-// 入库，没有可读的 Key，只能走草稿拉取。
+// 入库，没有可读的 Key，只能走草稿拉取。启动时快照输入值，避免用户编辑
+// 表单与后台请求竞争。
 func fetchModelsDraft(st *state.State) {
 	f := &st.Channels.Form
-	ids, err := st.Svc.Channels.FetchModelsFromDraft(f.BaseURL, f.Protocol, f.APIKey, f.AllowPrivate)
-	applyFetchedModels(st, "new", &f.Suggestions, &f.Msg, ids, err, "创建后生效")
+	baseURL, protocol, apiKey, allowPrivate := f.BaseURL, f.Protocol, f.APIKey, f.AllowPrivate
+	state.RunAsync(st, &st.Channels.FetchTask, "正在拉取模型…", func(ctx context.Context) ([]string, error) {
+		return st.Svc.Channels.FetchModelsFromDraftContext(ctx, baseURL, protocol, apiKey, allowPrivate)
+	}, func(ids []string, err error) {
+		if errors.Is(err, context.Canceled) {
+			f.Msg = "已取消拉取模型"
+			return
+		}
+		applyFetchedModels(st, "new", &f.Suggestions, &f.Msg, ids, err, "创建后生效")
+	})
 }
 
 // appendModelIDs 把新模型追加到既有文本（按行去重，保持原顺序）。

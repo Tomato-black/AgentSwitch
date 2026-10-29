@@ -576,3 +576,56 @@ func TestPresetModelURLsNeverDoubleVersionSegment(t *testing.T) {
 		}
 	}
 }
+
+func TestChannelsCopyWithoutKey(t *testing.T) {
+	a := tempApp(t)
+	ch, err := (Channels{A: a}).Create("", "主渠道", "https://api.example.com", "anthropic", "sk-secret", true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (Channels{A: a}).SetSuggestions(ch.ID, []string{"m1", "m2"}); err != nil {
+		t.Fatal(err)
+	}
+	cp, err := (Channels{A: a}).Copy(ch.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cp.Name == ch.Name || cp.HasKey {
+		t.Fatalf("copy = %+v", cp)
+	}
+	if got := (Channels{A: a}).Suggestions(cp.ID); len(got) != 2 {
+		t.Fatalf("suggestions = %v", got)
+	}
+	cp2, err := (Channels{A: a}).Copy(ch.ID, false)
+	if err != nil || cp2.Name == cp.Name {
+		t.Fatalf("second copy = %+v, %v", cp2, err)
+	}
+}
+
+func TestChannelsCopyWithKey(t *testing.T) {
+	a := tempApp(t)
+	ch, _ := (Channels{A: a}).Create("", "主渠道", "https://api.example.com", "anthropic", "sk-secret", true, false)
+	cp, err := (Channels{A: a}).Copy(ch.ID, true)
+	if err != nil || !cp.HasKey {
+		t.Fatalf("copy with key = %+v, %v", cp, err)
+	}
+}
+
+func TestChannelsBalance(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/user/balance" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		w.Write([]byte(`{"is_available":true,"balance_infos":[{"currency":"CNY","total_balance":"12.50","granted_balance":"0","topped_up_balance":"12.50"}]}`))
+	}))
+	defer up.Close()
+	a := tempApp(t)
+	ch, err := (Channels{A: a}).Create("deepseek", "ds", up.URL, "openai", "sk-test", true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := (Channels{A: a}).Balance(ch.ID)
+	if !got.Supported || got.Total != 12.5 || got.Currency != "CNY" {
+		t.Fatalf("balance = %+v", got)
+	}
+}

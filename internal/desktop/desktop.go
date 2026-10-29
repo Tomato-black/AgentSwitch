@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"log"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -42,10 +43,11 @@ func keepTray(t *mygo.Tray) { appTray = t }
 // 下列过渡字段在 T4–T12 迁移中逐页迁出（页面搬走后删除）。
 type uiState struct {
 	*state.State
+	alerts *alertState
 }
 
 func newUIState(svc state.Services) *uiState {
-	u := &uiState{State: state.New(svc)}
+	u := &uiState{State: state.New(svc), alerts: newAlertState()}
 	u.Schedule = afterEvent
 	return u
 }
@@ -82,6 +84,7 @@ func (u *uiState) view(c *ui.Context) {
 		})
 		// 右列：当前页
 		ui.Column(c).Gap(12).Padding(16).Grow(1).FillHeight().Children(func() {
+			setupChecklist(c, u)
 			u.pageView(c)
 		})
 	})
@@ -89,6 +92,8 @@ func (u *uiState) view(c *ui.Context) {
 	u.closeModal(c)
 	// 停止网关确认同理挂在根层（底条在任何页可见）。
 	stopConfirm(c, u)
+	// 未保存编辑的切页确认（侧栏导航 / 页面返回共用）。
+	u.navConfirm(c)
 }
 
 func Run(a *app.App) error {
@@ -107,6 +112,36 @@ func Run(a *app.App) error {
 	// win 经 atomic 读写：WhenReady/托盘重开（主线程）写，OnState/OnRecord
 	// 回调（网关 goroutine）读——消除裸指针的数据竞争。
 	var win atomic.Pointer[mygo.Window]
+	// 冷却倒计时刷新：仅当存在冷却时每秒重绘一次（空闲零开销），退出时停止。
+	coolStop := make(chan struct{})
+	var coolStopOnce sync.Once
+
+	// 第二实例唤回：隐藏到托盘后用户再次启动应用（常见于托盘不可见的
+	// Linux 桌面），不能静默退出——把已有窗口 Show/Restore/Focus，窗口已
+	// 销毁则重建（2026-10-29 P1-15）。
+	mygo.App.OnSecondInstance(func([]string, string) {
+		if w := win.Load(); !needsReopen(w) {
+			afterEvent(func() {
+				w.Show()
+				w.Restore()
+				w.Focus()
+			})
+			return
+		}
+		openWindow(u, &win)
+	})
+	// 点击系统通知唤回主窗（告警只在托盘驻留时最有价值）。
+	mygo.App.OnNotificationClick(func(string) {
+		if w := win.Load(); !needsReopen(w) {
+			afterEvent(func() {
+				w.Show()
+				w.Restore()
+				w.Focus()
+			})
+			return
+		}
+		openWindow(u, &win)
+	})
 
 	mygo.App.WhenReady(func() {
 		// 必须在建窗前：MyGo 在窗口宿主初始化时读一次 GTK 的字体渲染设置。
@@ -135,15 +170,59 @@ func Run(a *app.App) error {
 				{Role: mygo.RoleQuit},
 			}),
 		}); err != nil {
+			u.TrayUnavailable = true
 			a.Log().Info("tray unavailable (继续运行)", "err", err.Error())
 		} else {
 			// 必须保留强引用：见 appTray。
 			keepTray(tray)
 		}
 		openWindow(u, &win)
+		go func() {
+			t := time.NewTicker(time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-coolStop:
+					return
+				case now := <-t.C:
+					if len(a.Cooldowns().Snapshot(now)) == 0 {
+						continue // 无冷却不重绘，保持空闲 0%
+					}
+					if w := win.Load(); w != nil {
+						w.Update(func() {})
+					}
+				}
+			}
+		}()
+		// 异步任务完成后回主线程重绘：Window.Update 在校验窗口存活后把
+		// 回调排进 GTK 主循环；无窗口时直接执行（测试/退出边缘）。
+		u.Dispatch = func(fn func()) {
+			if w := win.Load(); w != nil {
+				w.Update(fn)
+			} else {
+				fn()
+			}
+		}
 		a.OnRecord(func(rec telemetry.RequestRecord) {
+			alertID, alertTitle, alertBody := "", "", ""
+			if u.Svc.Gateway.AlertsEnabled() {
+				alertID, alertTitle, alertBody = u.alerts.evaluate(rec, time.Now())
+			}
+			if alertID != "" && mygo.NotificationsSupported() {
+				go func() {
+					_ = mygo.NewNotification(mygo.NotificationOptions{
+						ID: "agentswitch-" + alertID, Title: alertTitle, Body: alertBody, Group: "AgentSwitch",
+					}).Show()
+				}()
+			}
 			if w := win.Load(); w != nil {
 				w.Update(func() {
+					if alertID != "" {
+						u.AlertMsg = alertTitle + "：" + alertBody
+					}
+					// 新请求到达后让「用量」卡片下一帧重新拉取；否则用户先打开
+					// 过设置页、再发请求时，图表会一直停留在旧（可能为空）数据。
+					u.Settings.UsageLoaded = false
 					u.Recent = append([]telemetry.RequestRecord{rec}, u.Recent...)
 					if len(u.Recent) > 100 {
 						u.Recent = u.Recent[:100]
@@ -155,7 +234,7 @@ func Run(a *app.App) error {
 		// 记录回调再启动，首帧状态变化不丢。失败只记日志——状态机已进 Failed，
 		// 由概览页（组 4 已放行 failed 态启动按钮）呈现与重试；端口被占等场景
 		// 不必静默死在后台。
-		if err := a.StartGateway(); err != nil {
+		if err := svc.Gateway.Start(); err != nil {
 			a.Log().Info("gateway auto-start failed", "err", err.Error())
 		}
 	})
@@ -173,6 +252,7 @@ func Run(a *app.App) error {
 		// 已关闭 DB 的尸体上。
 		u.Quitting = true
 		u.CloseConfirmed = true
+		coolStopOnce.Do(func() { close(coolStop) })
 		ctx, cancel := context.WithTimeout(context.Background(),
 			time.Duration(graceSeconds(a))*time.Second)
 		defer cancel()
@@ -201,7 +281,7 @@ func needsReopen(w *mygo.Window) bool { return w == nil || w.IsDestroyed() }
 // 一起消失。隐藏既绕开析构路径，也让托盘唤回保留界面状态。
 func openWindow(u *uiState, win *atomic.Pointer[mygo.Window]) *mygo.Window {
 	w := mygo.NewWindow(mygo.WindowOptions{
-		Title: "AgentSwitch", Width: 1080, Height: 720, StateKey: "main",
+		Title: "AgentSwitch", Width: 1080, Height: 720, MinWidth: 900, MinHeight: 600, StateKey: "main",
 		Content: ui.View(u.view),
 	})
 	// 窗口/任务栏图标（Linux、Windows）；macOS 窗口无自身图标，由打包

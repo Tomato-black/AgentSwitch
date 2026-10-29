@@ -7,10 +7,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"AgentSwitch/internal/storage"
+	"AgentSwitch/internal/telemetry"
 )
 
 // openApp 开空库应用（无渠道/模型夹具）；凭据走库内 AES-256-GCM 加密存储，
@@ -462,5 +465,106 @@ func TestPublicModelsIncludeDesktopAliases(t *testing.T) {
 	}
 	if got["alias"] || got["claude-sonnet-5"] {
 		t.Fatalf("禁用模型与其别名不得出现: %v", got)
+	}
+}
+
+func TestHistoryPersistsAcrossReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "h.db")
+	a, err := Open(Options{DBPath: path, LogPath: filepath.Join(t.TempDir(), "h.log"), Host: "127.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := telemetry.RequestRecord{
+		ID: "r1", StartedAt: time.Now(), Model: "m", Channel: "c", Status: 200,
+		DurationMs: 12, FailoverCount: 1,
+		Attempts: []telemetry.AttemptRecord{{Channel: "c", Model: "u", Outcome: "ok", DurationMs: 12}},
+	}
+	a.enqueueRecord(rec)
+	a.stopHistory()
+	if err := a.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := Open(Options{DBPath: path, LogPath: filepath.Join(t.TempDir(), "h2.log"), Host: "127.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { b.Close() })
+	got := b.Recent()
+	if len(got) != 1 || got[0].ID != "r1" || len(got[0].Attempts) != 1 {
+		t.Fatalf("Recent after reopen = %+v", got)
+	}
+}
+
+func TestProbeLogicalModelOK(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	defer up.Close()
+	a := newTestApp(t, up.URL, true)
+	res, err := a.ProbeLogicalModel(context.Background(), "alias")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.OK || len(res.Targets) != 1 || !res.Targets[0].OK || res.Targets[0].Status != 200 {
+		t.Fatalf("probe = %+v", res)
+	}
+	if res.Hit == "" {
+		t.Fatal("success should set Hit")
+	}
+}
+
+func TestProbeLogicalModelAuthNextStep(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(401)
+		w.Write([]byte(`{"error":{"message":"invalid api key"}}`))
+	}))
+	defer up.Close()
+	a := newTestApp(t, up.URL, true)
+	res, err := a.ProbeLogicalModel(context.Background(), "alias")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.OK || len(res.Targets) != 1 || res.Targets[0].OK {
+		t.Fatalf("probe = %+v", res)
+	}
+	if !strings.Contains(res.Targets[0].NextStep, "API Key") {
+		t.Fatalf("next step = %q", res.Targets[0].NextStep)
+	}
+}
+
+func TestHistoryRetentionSevenDays(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "retention.db")
+	logPath := filepath.Join(t.TempDir(), "retention.log")
+	a, err := Open(Options{DBPath: path, LogPath: logPath, Host: "127.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Store().RequestHistory().Add(storage.RequestHistoryRecord{
+		ID: "old", StartedAt: time.Now().Add(-8 * 24 * time.Hour).UnixMilli(),
+		Model: "m", Channel: "c", Status: 200,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Store().RequestHistory().Add(storage.RequestHistoryRecord{
+		ID: "recent", StartedAt: time.Now().UnixMilli(),
+		Model: "m", Channel: "c", Status: 200,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := Open(Options{DBPath: path, LogPath: logPath, Host: "127.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { b.Close() })
+	got := b.Recent()
+	if len(got) != 1 || got[0].ID != "recent" {
+		t.Fatalf("retention kept = %+v", got)
 	}
 }

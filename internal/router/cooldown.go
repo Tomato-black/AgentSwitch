@@ -32,9 +32,15 @@ type CooldownEntry struct {
 type Cooldowns struct {
 	mu sync.Mutex
 	m  map[string]CooldownEntry
+	// halfOpen 记录已过期、正在等待一个探测请求的渠道（P1-6 半开单飞）。
+	// 冷却到期后只放行一个请求；成功 MarkSuccess 清除，失败 MarkClassified
+	// 重新冷却；30 秒无结果允许再次探测，避免探测请求卡死。
+	halfOpen map[string]time.Time
 }
 
-func NewCooldowns() *Cooldowns { return &Cooldowns{m: map[string]CooldownEntry{}} }
+func NewCooldowns() *Cooldowns {
+	return &Cooldowns{m: map[string]CooldownEntry{}, halfOpen: map[string]time.Time{}}
+}
 
 // cooldownFor 把错误分类映射为冷却时长；retryAfterSec 仅 rate_limited 使用。
 func cooldownFor(class provider.ErrorClass, retryAfterSec int) (time.Duration, string) {
@@ -77,18 +83,36 @@ func (c *Cooldowns) MarkClassified(channelID string, class provider.ErrorClass, 
 		e.Until = old.Until
 	}
 	c.m[channelID] = e
+	delete(c.halfOpen, channelID)
+}
+
+// MarkSuccess 清除渠道冷却与半开状态（探测/正常请求成功）。
+func (c *Cooldowns) MarkSuccess(channelID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.m, channelID)
+	delete(c.halfOpen, channelID)
 }
 
 // TryAcquire 二次校验（docx §7：路由器真正发请求前二次校验账号状态）：
-// 未冷却返回 (零值,true)；冷却中返回 (条目,false)。本方法不写状态——写入只在 MarkClassified。
+// 未冷却返回 (零值,true)；冷却中返回 (条目,false)。冷却到期后进入半开：
+// 只放行一个探测请求，其余请求继续按冷却条目拒绝；探测结果由
+// MarkSuccess/MarkClassified 收敛。
 func (c *Cooldowns) TryAcquire(channelID string, now time.Time) (CooldownEntry, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.m[channelID]
-	if !ok || !now.Before(e.Until) {
+	if !ok {
 		return CooldownEntry{}, true
 	}
-	return e, false
+	if now.Before(e.Until) {
+		return e, false
+	}
+	if started, ok := c.halfOpen[channelID]; ok && now.Sub(started) < 30*time.Second {
+		return e, false
+	}
+	c.halfOpen[channelID] = now
+	return CooldownEntry{}, true
 }
 
 // Snapshot 返回未过期条目（按到期升序）；过期条目顺手清理。
@@ -98,6 +122,10 @@ func (c *Cooldowns) Snapshot(now time.Time) []CooldownEntry {
 	out := make([]CooldownEntry, 0, len(c.m))
 	for id, e := range c.m {
 		if !now.Before(e.Until) {
+			// 半开探测进行中：保留条目，避免后续请求绕过单飞。
+			if _, probing := c.halfOpen[id]; probing {
+				continue
+			}
 			delete(c.m, id)
 			continue
 		}

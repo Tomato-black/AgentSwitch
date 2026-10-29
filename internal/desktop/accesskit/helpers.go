@@ -1,11 +1,13 @@
 package accesskit
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
 
 	"AgentSwitch/internal/bridge"
+	"AgentSwitch/internal/desktop/state"
 )
 
 // TabTitles 返回接入页四个 tab 的标题（字符串快照锚点）：三个受管
@@ -30,12 +32,40 @@ func TabTitle(app string) string {
 	return app
 }
 
-// TabKind 把选中态译成软按钮 kind（选中 act 高亮，未选 gray）。
-func TabKind(selected bool) string {
-	if selected {
-		return "act"
+// TabIndex 返回 Agent 页签下标（未知 app 落 0=Claude Code）。
+func TabIndex(app string) int {
+	switch app {
+	case "codex":
+		return 1
+	case "claude_desktop":
+		return 2
+	case "guide":
+		return 3
+	default:
+		return 0
 	}
-	return "gray"
+}
+
+// TabApp 返回页签下标对应的 app 类型（越界落 "claude"）。
+func TabApp(i int) string {
+	switch i {
+	case 1:
+		return "codex"
+	case 2:
+		return "claude_desktop"
+	case 3:
+		return "guide"
+	default:
+		return "claude"
+	}
+}
+
+// CloseEditor 关闭接入编辑器并回到列表；经 State.Go 走统一的未保存确认。
+func CloseEditor(st *state.State) {
+	st.Go("access", func() {
+		st.Access.Form = state.AccessForm{}
+		st.Access.DesktopForm = state.DesktopForm{}
+	})
 }
 
 // RowBadge 返回配置行「使用中」徽标文本（非 current 为空串）。
@@ -44,6 +74,18 @@ func RowBadge(isCurrent bool) string {
 		return "使用中"
 	}
 	return ""
+}
+
+// ValidateGlobalRows 校验全局配置编辑行：任一行的键/值只填一半都算误操作
+// （空行同样拦截），提示用户补全或删除该行；不再静默丢弃。
+func ValidateGlobalRows(rows [][2]string) error {
+	for i, r := range rows {
+		k, v := strings.TrimSpace(r[0]), strings.TrimSpace(r[1])
+		if k == "" || v == "" {
+			return fmt.Errorf("第 %d 行：键和值都需要填写（或删除该行）", i+1)
+		}
+	}
+	return nil
 }
 
 // OverridesFromRows 把键值行转成 overrides map（空键/空值都剔除
@@ -126,4 +168,34 @@ func ModelSummary(app, settingsJSON, fallback string) string {
 		return models[0]
 	}
 	return fmt.Sprintf("%s 等 %d 个", models[0], len(models))
+}
+
+// ApplyAsync 把接入配置的「应用」移到后台任务（P0-2）：Codex 应用可能运行
+// `codex debug models` 或写多个文件，不能占用渲染帧。应用中的行显示
+// BusyRow，其余行的应用按钮禁用；完成后回主线程写 Access.Msg。
+func ApplyAsync(st *state.State, acc bridge.AccessConfigs, v bridge.AccessConfigView) {
+	if st.Access.ApplyTask.Running {
+		return
+	}
+	st.Access.ApplyID = v.ID
+	state.RunAsync(st, &st.Access.ApplyTask, "正在应用…", func(context.Context) (string, error) {
+		if err := acc.Apply(v.ID); err != nil {
+			return "", err
+		}
+		switch v.AppType {
+		case "codex":
+			return "已应用「" + v.Name + "」——重启 Codex 后生效（桌面版需完全退出后重新打开）", nil
+		case "claude_desktop":
+			return "已应用「" + v.Name + "」——重启 Claude Desktop 生效", nil
+		default:
+			return "已应用「" + v.Name + "」——Agent 下次启动生效", nil
+		}
+	}, func(msg string, err error) {
+		st.Access.ApplyID = ""
+		if err != nil {
+			st.Access.Msg = "应用失败：" + err.Error()
+			return
+		}
+		st.Access.Msg = msg
+	})
 }

@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -72,6 +73,13 @@ type App struct {
 	onState     []func(StateInfo)
 	onRecord    []func(telemetry.RequestRecord)
 
+	// 请求历史异步落库：有界 channel + 单写协程，避免阻塞 gateway 热路径。
+	historyMu     sync.RWMutex
+	historyCh     chan telemetry.RequestRecord
+	historyClosed bool
+	historyWG     sync.WaitGroup
+	historyOnce   sync.Once
+
 	// routeCache 缓存逻辑模型名→候选装配结果，避免每请求 N+1 查库。
 	// 只缓存静态部分（模型/目标/渠道），冷却状态每次叠加，见 candidates。
 	routeCacheMu  sync.Mutex
@@ -135,6 +143,7 @@ func Open(opts Options) (*App, error) {
 		a.Close()
 		return nil, err
 	}
+	a.startHistory()
 	a.setState(StateInfo{State: StateStopped, Since: time.Now(), Version: opts.Version})
 	return a, nil
 }
@@ -259,6 +268,7 @@ func (a *App) StartGateway() error {
 		Log:              a.log,
 		Ring:             a.ring,
 		OnRecord: func(rec telemetry.RequestRecord) {
+			a.enqueueRecord(rec)
 			a.mu.Lock()
 			cbs := append([]func(telemetry.RequestRecord){}, a.onRecord...)
 			a.mu.Unlock()
@@ -359,6 +369,7 @@ func (a *App) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	_ = a.StopGateway(ctx)
+	a.stopHistory()
 	a.mu.Lock()
 	closer := a.logClose
 	st := a.store
@@ -370,4 +381,131 @@ func (a *App) Close() error {
 		return st.Close()
 	}
 	return nil
+}
+
+// historyRetention 是请求历史默认保留期（2026-10-29 用户决定：1 周）。
+const historyRetention = 7 * 24 * time.Hour
+
+// startHistory 启动请求历史异步写入协程，并把最近 100 条灌回内存环，
+// 使重启后设置页仍能看到历史。清理超过保留期的记录（P0-1）。
+func (a *App) startHistory() {
+	a.historyCh = make(chan telemetry.RequestRecord, 256)
+	a.historyWG.Add(1)
+	go func() {
+		defer a.historyWG.Done()
+		for rec := range a.historyCh {
+			if err := a.store.RequestHistory().Add(historyToStorage(rec)); err != nil {
+				a.log.Warn("request history persist failed", "request_id", rec.ID, "err", err.Error())
+			}
+		}
+	}()
+	// 先清理过期记录，再灌入内存环；否则过期记录仍会出现在 UI 最近请求里。
+	if _, err := a.store.RequestHistory().DeleteOlderThan(time.Now().Add(-historyRetention).UnixMilli()); err != nil {
+		a.log.Warn("request history retention failed", "err", err.Error())
+	}
+	if recs, err := a.store.RequestHistory().ListRecent(100); err == nil {
+		for i := len(recs) - 1; i >= 0; i-- {
+			a.ring.Add(historyFromStorage(recs[i]))
+		}
+	} else {
+		a.log.Warn("request history load failed", "err", err.Error())
+	}
+}
+
+// enqueueRecord 非阻塞入队：队列满时丢弃并记日志，绝不阻塞请求收尾。
+func (a *App) enqueueRecord(rec telemetry.RequestRecord) {
+	a.historyMu.RLock()
+	defer a.historyMu.RUnlock()
+	if a.historyCh == nil || a.historyClosed {
+		return
+	}
+	select {
+	case a.historyCh <- rec:
+	default:
+		a.log.Warn("request history queue full; dropping record", "request_id", rec.ID)
+	}
+}
+
+// stopHistory 关闭写协程并等待队列刷完；可重复调用。
+func (a *App) stopHistory() {
+	a.historyOnce.Do(func() {
+		a.historyMu.Lock()
+		a.historyClosed = true
+		ch := a.historyCh
+		a.historyMu.Unlock()
+		if ch != nil {
+			close(ch)
+		}
+		a.historyWG.Wait()
+	})
+}
+
+// History 返回持久化的最近请求（新→旧）；失败返回 nil。
+func (a *App) History(limit int) []telemetry.RequestRecord {
+	recs, err := a.store.RequestHistory().ListRecent(limit)
+	if err != nil {
+		return nil
+	}
+	out := make([]telemetry.RequestRecord, 0, len(recs))
+	for _, r := range recs {
+		out = append(out, historyFromStorage(r))
+	}
+	return out
+}
+
+// ExportHistory 把最近请求导出为脱敏 JSON 到 dir，返回文件路径。
+// 不包含 prompt/response 正文、Authorization 或密钥。
+func (a *App) ExportHistory(dir string) (string, error) {
+	recs := a.History(10000)
+	payload := struct {
+		ExportedAt time.Time                 `json:"exported_at"`
+		Version    string                    `json:"version"`
+		Records    []telemetry.RequestRecord `json:"records"`
+	}{time.Now(), a.opts.Version, recs}
+	b, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, fmt.Sprintf("request-history-%d.json", time.Now().UnixMilli()))
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func historyToStorage(rec telemetry.RequestRecord) storage.RequestHistoryRecord {
+	attempts := make([]storage.RequestAttempt, 0, len(rec.Attempts))
+	for _, at := range rec.Attempts {
+		attempts = append(attempts, storage.RequestAttempt{
+			Channel: at.Channel, Model: at.Model, Outcome: at.Outcome,
+			Reason: at.Reason, DurationMs: at.DurationMs,
+		})
+	}
+	return storage.RequestHistoryRecord{
+		ID: rec.ID, StartedAt: rec.StartedAt.UnixMilli(), Model: rec.Model,
+		UpstreamModel: rec.UpstreamModel, Channel: rec.Channel, Account: rec.Account,
+		Status: rec.Status, DurationMs: rec.DurationMs, FailoverCount: rec.FailoverCount,
+		Streaming: rec.Streaming, InputTokens: rec.InputTokens, OutputTokens: rec.OutputTokens,
+		ErrorClass: rec.ErrorClass, Attempts: attempts,
+	}
+}
+
+func historyFromStorage(rec storage.RequestHistoryRecord) telemetry.RequestRecord {
+	attempts := make([]telemetry.AttemptRecord, 0, len(rec.Attempts))
+	for _, at := range rec.Attempts {
+		attempts = append(attempts, telemetry.AttemptRecord{
+			Channel: at.Channel, Model: at.Model, Outcome: at.Outcome,
+			Reason: at.Reason, DurationMs: at.DurationMs,
+		})
+	}
+	return telemetry.RequestRecord{
+		ID: rec.ID, StartedAt: time.UnixMilli(rec.StartedAt), Model: rec.Model,
+		UpstreamModel: rec.UpstreamModel, Channel: rec.Channel, Account: rec.Account,
+		Status: rec.Status, DurationMs: rec.DurationMs, FailoverCount: rec.FailoverCount,
+		Streaming: rec.Streaming, InputTokens: rec.InputTokens, OutputTokens: rec.OutputTokens,
+		ErrorClass: rec.ErrorClass, Attempts: attempts,
+	}
 }

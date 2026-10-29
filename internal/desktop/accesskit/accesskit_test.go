@@ -250,3 +250,22 @@ func TestModelMetaDocRoundTrip(t *testing.T) {
 		t.Fatal("empty model_meta must be removed")
 	}
 }
+
+// TestValidateGlobalRows 覆盖全局配置行校验：半填或空行都拦截，完整行放行。
+func TestValidateGlobalRows(t *testing.T) {
+	if err := ValidateGlobalRows(nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateGlobalRows([][2]string{{"HTTPS_PROXY", "http://p:1"}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, rows := range [][][2]string{
+		{{"KEY", ""}},
+		{{"", "value"}},
+		{{"", ""}},
+	} {
+		if err := ValidateGlobalRows(rows); err == nil {
+			t.Fatalf("rows %v must be rejected", rows)
+		}
+	}
+}

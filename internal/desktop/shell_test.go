@@ -28,6 +28,8 @@ func TestNavItemSet(t *testing.T) {
 // 根 Row 必须 Fill() 而非仅 Grow(1)，否则整窗内容自然高居中悬空。
 func TestShellFullHeightLayout(t *testing.T) {
 	u, _ := testUI(t)
+	// 空库默认页已改为渠道页（P1-3）；本测试聚焦逻辑模型页的内容列布局。
+	u.Page = "logical"
 	const winW, winH = 900, 640
 	tt := ui.NewTester(u.view, winW, winH)
 	brand, ok := tt.Find("AgentSwitch")
@@ -69,5 +71,56 @@ func TestPageDefaultLogical(t *testing.T) {
 	u.Page = "channels"
 	if got := u.normalizedPage(); got != "channels" {
 		t.Fatalf("normalizedPage() = %q, want channels", got)
+	}
+	u.Page = "logical-edit"
+	if got := u.normalizedPage(); got != "logical" {
+		t.Fatalf("normalizedPage(logical-edit) = %q, want logical", got)
+	}
+}
+
+// TestNavDirtyConfirm 覆盖侧栏切页的未保存确认：继续编辑保留草稿，
+// 放弃并离开才切换并清空。
+func TestNavDirtyConfirm(t *testing.T) {
+	u, _ := testUI(t)
+	u.Page = "logical-edit"
+	u.Logical.Baseline = u.Logical.Edit.Signature()
+	u.Logical.Edit.Name = "draft"
+	tt := ui.NewTester(u.view, 900, 700)
+	if err := tt.Click("渠道"); err != nil {
+		t.Fatal(err)
+	}
+	if !tt.HasText("未保存的编辑") {
+		t.Fatalf("confirm dialog missing: %v", tt.Texts())
+	}
+	if u.Page != "logical-edit" || u.Logical.Edit.Name != "draft" {
+		t.Fatalf("must stay before confirm: %q %+v", u.Page, u.Logical.Edit)
+	}
+	if err := tt.Click("继续编辑"); err != nil {
+		t.Fatal(err)
+	}
+	if u.Page != "logical-edit" || u.Logical.Edit.Name != "draft" {
+		t.Fatalf("continue editing must keep draft: %q %+v", u.Page, u.Logical.Edit)
+	}
+	if err := tt.Click("渠道"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("放弃并离开"); err != nil {
+		t.Fatal(err)
+	}
+	if u.Page != "channels" {
+		t.Fatalf("page = %q, want channels", u.Page)
+	}
+	if u.Logical.Edit.Name != "" {
+		t.Fatalf("discard must clear draft: %+v", u.Logical.Edit)
+	}
+}
+
+func TestSetupChecklistRendersWhenIncomplete(t *testing.T) {
+	u, _ := testUI(t)
+	tt := ui.NewTester(func(c *ui.Context) { setupChecklist(c, u) }, 1000, 400)
+	for _, want := range []string{"开始使用", "渠道", "逻辑模型", "接入"} {
+		if !tt.HasText(want) {
+			t.Fatalf("missing %q: %v", want, tt.Texts())
+		}
 	}
 }

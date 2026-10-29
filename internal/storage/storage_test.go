@@ -44,7 +44,7 @@ func TestMigrationIdempotent(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	t.Cleanup(func() { s2.Close() })
-	// 重开时已记录版本按序跳过，不得重放报错，schema_migrations 必须恰为 [1 2]。
+	// 重开时已记录版本按序跳过，不得重放报错，schema_migrations 必须恰为 [1 2 4]。
 	ds, ok := s2.(*dbStore)
 	if !ok {
 		t.Fatalf("Store = %T", s2)
@@ -62,8 +62,71 @@ func TestMigrationIdempotent(t *testing.T) {
 		}
 		got = append(got, v)
 	}
-	if rows.Err() != nil || len(got) != 2 || got[0] != 1 || got[1] != 2 {
-		t.Fatalf("schema_migrations = %v, want [1 2]", got)
+	if rows.Err() != nil || len(got) != 5 || got[0] != 1 || got[1] != 2 || got[2] != 4 || got[3] != 5 || got[4] != 6 {
+		t.Fatalf("schema_migrations = %v, want [1 2 4 5 6]", got)
+	}
+}
+
+func TestAccessConfigNeedsApplyRoundTrip(t *testing.T) {
+	s := tempStore(t)
+	r := s.AccessConfigs()
+	saved, err := r.Save(AccessConfig{
+		AppType: "claude", Name: "n", LogicalModelID: "lm",
+		Settings: "{}", NeedsApply: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.Get(saved.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.NeedsApply {
+		t.Fatal("Get 应保留 NeedsApply=true")
+	}
+	if err := r.SetCurrent("claude", saved.ID); err != nil {
+		t.Fatal(err)
+	}
+	cur, err := r.Current("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cur.NeedsApply {
+		t.Fatal("SetCurrent 应清除目标配置的 needs_apply")
+	}
+}
+
+func TestRequestHistoryRepoRoundTripAndRetention(t *testing.T) {
+	s := tempStore(t)
+	r := s.RequestHistory()
+	old := RequestHistoryRecord{
+		ID: "old", StartedAt: 1000, Model: "m", Channel: "c",
+		Status: 200, DurationMs: 12, FailoverCount: 1, Streaming: true,
+		Attempts: []RequestAttempt{{Channel: "c", Model: "u", Outcome: "ok", DurationMs: 12}},
+	}
+	if err := r.Add(old); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Add(RequestHistoryRecord{ID: "new", StartedAt: 2000, Model: "m2", Channel: "c2", Status: 429}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.ListRecent(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].ID != "new" || got[1].ID != "old" {
+		t.Fatalf("ListRecent = %+v", got)
+	}
+	if !got[1].Streaming || len(got[1].Attempts) != 1 || got[1].Attempts[0].Outcome != "ok" {
+		t.Fatalf("attempts round-trip = %+v", got[1])
+	}
+	n, err := r.DeleteOlderThan(1500)
+	if err != nil || n != 1 {
+		t.Fatalf("DeleteOlderThan = %d, %v", n, err)
+	}
+	got, _ = r.ListRecent(10)
+	if len(got) != 1 || got[0].ID != "new" {
+		t.Fatalf("after delete = %+v", got)
 	}
 }
 

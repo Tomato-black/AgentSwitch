@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 
@@ -254,6 +255,24 @@ func TestSaveChannelDetailPersistsProtocol(t *testing.T) {
 
 // --- 拉取模型（详情页 / 新建表单）---
 
+// asyncWaiter 把 Dispatch 换成带信号的版本并返回等待函数：异步任务完成后
+// 测试可等待回调落库，再断言（避免读取进行中的状态）。
+func asyncWaiter(t *testing.T, st *state.State) func() {
+	t.Helper()
+	// 模拟生产 Dispatch：回调不在工作 goroutine 执行，而是排队给「主线程」；
+	// 测试在帧结束后取出执行，避免与 Tester 的渲染帧并发读写状态。
+	queue := make(chan func(), 8)
+	st.Dispatch = func(fn func()) { queue <- fn }
+	return func() {
+		select {
+		case fn := <-queue:
+			fn()
+		case <-time.After(3 * time.Second):
+			t.Fatal("async task did not finish")
+		}
+	}
+}
+
 // TestChannelDetailFetchModelsOverwritesText：详情页点「拉取模型」把建议
 // 文本框覆盖为上游返回的 id 列表。
 func TestChannelDetailFetchModelsOverwritesText(t *testing.T) {
@@ -272,10 +291,12 @@ func TestChannelDetailFetchModelsOverwritesText(t *testing.T) {
 	if st.Channels.SuggText != "" {
 		t.Fatalf("前置条件：详情页建议文本应为空, %q", st.Channels.SuggText)
 	}
+	wait := asyncWaiter(t, st)
 	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 900, 700)
 	if err := tt.Click("拉取模型"); err != nil {
 		t.Fatalf("拉取模型按钮不可点: %v", err)
 	}
+	wait()
 	if st.Channels.SuggText != "m-a\nm-b" {
 		t.Fatalf("chSuggText = %q, want m-a\\nm-b", st.Channels.SuggText)
 	}
@@ -296,10 +317,13 @@ func TestChannelDetailFetchModelsErrorKeepsText(t *testing.T) {
 	st.Channels.View = "detail"
 	openDetail(st, v.ID)
 	st.Channels.SuggText = "keep-me"
+	st.Channels.Baseline = st.Channels.Signature() // 模拟已保存的既有建议文本
+	wait := asyncWaiter(t, st)
 	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 900, 700)
 	if err := tt.Click("拉取模型"); err != nil {
 		t.Fatalf("拉取模型按钮不可点: %v", err)
 	}
+	wait()
 	if st.Channels.SuggText != "keep-me" {
 		t.Fatalf("失败不应覆盖文本, %q", st.Channels.SuggText)
 	}
@@ -324,10 +348,13 @@ func TestChannelNewFetchModelsDraft(t *testing.T) {
 		APIKey:      "sk-draft-999",
 		Suggestions: "stale-old-model",
 	}
+	wait := asyncWaiter(t, st)
 	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 900, 700)
 	if err := tt.Click("拉取模型"); err != nil {
 		t.Fatalf("拉取模型按钮不可点: %v", err)
 	}
+	wait()
+	tt.Frame()
 	// 已有建议文本：先确认，选择「替换」后才覆盖。
 	if !tt.HasText("请选择替换或追加") && !tt.HasText("整体替换") {
 		t.Fatalf("缺少覆盖确认: %v", tt.Texts())
@@ -357,10 +384,12 @@ func TestChannelNewFetchModelsDraftRequiresKey(t *testing.T) {
 		BaseURL:     "https://api.example.com",
 		Suggestions: "keep-draft",
 	}
+	wait := asyncWaiter(t, st)
 	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 900, 700)
 	if err := tt.Click("拉取模型"); err != nil {
 		t.Fatalf("拉取模型按钮不可点: %v", err)
 	}
+	wait()
 	if st.Channels.Form.Suggestions != "keep-draft" {
 		t.Fatalf("缺 Key 不应覆盖建议文本, %q", st.Channels.Form.Suggestions)
 	}
@@ -383,10 +412,14 @@ func TestChannelDetailFetchAppend(t *testing.T) {
 	st.Channels.View = "detail"
 	openDetail(st, v.ID)
 	st.Channels.SuggText = "keep"
+	st.Channels.Baseline = st.Channels.Signature() // 模拟已保存的既有建议文本
+	wait := asyncWaiter(t, st)
 	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 900, 700)
 	if err := tt.Click("拉取模型"); err != nil {
 		t.Fatal(err)
 	}
+	wait()
+	tt.Frame()
 	if err := tt.Click("追加"); err != nil {
 		t.Fatal(err)
 	}
@@ -399,5 +432,129 @@ func TestChannelDetailFetchAppend(t *testing.T) {
 	}
 	if !strings.Contains(st.Channels.TestMsg, "追加") {
 		t.Fatalf("msg = %q", st.Channels.TestMsg)
+	}
+}
+
+// TestTestDetailAsyncCancel 覆盖 P0-2：测试连通不再阻塞调用方，进行中可
+// 取消；完成回调经 Dispatch 回主线程，取消后提示「已取消测试」。
+func TestTestDetailAsyncCancel(t *testing.T) {
+	st, _ := uitest.New(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done() // 永远不响应，直到客户端取消
+	}))
+	defer srv.Close()
+	ch, err := st.Svc.Channels.Create("", "slow", srv.URL, "openai", "sk-1", true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Channels.DetailID = ch.ID
+	done := make(chan struct{})
+	st.Dispatch = func(fn func()) { fn(); close(done) }
+	start := time.Now()
+	testDetail(st)
+	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
+		t.Fatalf("testDetail blocked for %v", elapsed)
+	}
+	st.Channels.TestTask.Cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("async test did not finish after cancel")
+	}
+	if st.Channels.TestMsg != "已取消测试" {
+		t.Fatalf("msg = %q, want 已取消测试", st.Channels.TestMsg)
+	}
+}
+
+// TestDetailDirtyBlocksTestAndFetch 覆盖 P1-3：详情页有未保存修改时，
+// 测试连通/拉取模型不得使用旧值，直接提示先保存且不启动任务。
+func TestDetailDirtyBlocksTestAndFetch(t *testing.T) {
+	st, _ := uitest.New(t)
+	v, err := st.Svc.Channels.Create("", "dirty", "https://api.example.com", "openai", "sk-1", true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Channels.View = "detail"
+	openDetail(st, v.ID)
+	st.Channels.Form.Name = "changed-but-not-saved"
+	if !detailDirty(st) {
+		t.Fatal("expected dirty detail")
+	}
+	testDetail(st)
+	if st.Channels.TestTask.Running || !strings.Contains(st.Channels.TestMsg, "未保存") {
+		t.Fatalf("test should be blocked: running=%v msg=%q", st.Channels.TestTask.Running, st.Channels.TestMsg)
+	}
+	fetchModels(st)
+	if st.Channels.FetchTask.Running || !strings.Contains(st.Channels.TestMsg, "未保存") {
+		t.Fatalf("fetch should be blocked: running=%v msg=%q", st.Channels.FetchTask.Running, st.Channels.TestMsg)
+	}
+}
+
+func TestPresetSearchFiltersGrid(t *testing.T) {
+	presets.Load(presets.DefaultJSON(), "")
+	st, _ := uitest.New(t)
+	st.Channels.View = "new"
+	st.Channels.PresetFilter = "deepseek"
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1200, 1000)
+	if !tt.HasText("DeepSeek") {
+		t.Fatalf("deepseek preset missing: %v", tt.Texts())
+	}
+	if tt.HasText("智谱 GLM") {
+		t.Fatalf("non-matching preset should be filtered: %v", tt.Texts())
+	}
+}
+
+func TestChannelListSearchFilters(t *testing.T) {
+	st, a := uitest.New(t)
+	for _, name := range []string{"c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "c9"} {
+		if _, err := (bridge.Channels{A: a}).Create("", name, "https://api.example.com", "anthropic", "", true, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st.Channels.Filter = "c9"
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1200, 900)
+	if !tt.HasText("c9") || tt.HasText("c1") {
+		t.Fatalf("channel filter failed: %v", tt.Texts())
+	}
+}
+
+func TestChannelListCopy(t *testing.T) {
+	st, a := uitest.New(t)
+	if _, err := (bridge.Channels{A: a}).Create("", "主渠道", "https://api.example.com", "anthropic", "sk-secret", true, false); err != nil {
+		t.Fatal(err)
+	}
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1200, 900)
+	if err := tt.Click("复制"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(st.Channels.TestMsg, "不含 Key") {
+		t.Fatalf("msg = %q", st.Channels.TestMsg)
+	}
+	if len((bridge.Channels{A: a}).List()) != 2 {
+		t.Fatal("copy not created")
+	}
+}
+
+func TestChannelListCopyLinksReferencingModel(t *testing.T) {
+	st, a := uitest.New(t)
+	ch, err := (bridge.Channels{A: a}).Create("", "主渠道", "https://api.example.com", "anthropic", "sk-secret", true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lm, err := (bridge.LogicalModels{A: a}).Create("my-code", "", bridge.ModelMeta{},
+		[]bridge.TargetSpec{{ChannelID: ch.ID, ModelName: "m1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1200, 900)
+	if err := tt.Click("复制"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(st.Channels.TestMsg, "已加入目标链") {
+		t.Fatalf("msg = %q", st.Channels.TestMsg)
+	}
+	targets, _ := a.Store().LogicalModelTargets().ListByModel(lm.ID)
+	if len(targets) != 2 {
+		t.Fatalf("targets = %+v", targets)
 	}
 }

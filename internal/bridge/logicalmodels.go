@@ -186,8 +186,19 @@ func (s LogicalModels) Create(name, description string, meta ModelMeta, targets 
 		s.A.Store().LogicalModels().Delete(m.ID) // 目标写失败回滚模型行
 		return ModelView{}, err
 	}
+	s.refreshDerived()
 	s.A.Log().Info("logical model created", "id", m.ID, "actor", "ui", "result", "ok")
 	return s.Get(m.ID)
+}
+
+// refreshDerived 在逻辑模型增删改/启停后刷新全部接入派生文件：Claude 的
+// live env 含模型名，Codex 的目录/默认模型也依赖逻辑模型集合，不刷新会让
+// Agent 继续请求旧名（2026-10-29 审计 P0-3）。失败只记日志，不阻断配置保存
+// ——文件权限等问题应由接入页提示，而不是让模型编辑失败。
+func (s LogicalModels) refreshDerived() {
+	for _, err := range (AccessConfigs{A: s.A}).RegenerateDerived() {
+		s.A.Log().Error("logical model derived refresh failed", "err", err)
+	}
 }
 
 // Update 改逻辑模型字段并全量替换目标链（空 targets=清空链；非空校验只在 Create）。
@@ -211,8 +222,61 @@ func (s LogicalModels) Update(id, name, description string, meta ModelMeta, enab
 	if err := s.writeTargets(id, targets); err != nil {
 		return err
 	}
+	s.refreshDerived()
 	s.A.Log().Info("logical model updated", "id", id, "actor", "ui", "result", "ok")
 	return nil
+}
+
+// AddCopyToReferencing 把复制渠道加入所有引用源渠道的逻辑模型目标链尾部，
+// 形成主备链；已存在的 (渠道, 模型名) 目标不重复添加。返回被更新的模型名。
+// 副本未填 Key 前 buildCandidates 会跳过，不影响现有路由。
+func (s LogicalModels) AddCopyToReferencing(sourceID, copyID string) ([]string, error) {
+	models, err := s.A.Store().LogicalModels().List()
+	if err != nil {
+		return nil, err
+	}
+	var updated []string
+	for _, lm := range models {
+		targets, err := s.A.Store().LogicalModelTargets().ListByModel(lm.ID)
+		if err != nil {
+			return nil, err
+		}
+		var src []storage.LogicalModelTarget
+		maxPri := -1
+		existing := map[string]bool{}
+		for _, t := range targets {
+			if t.Priority > maxPri {
+				maxPri = t.Priority
+			}
+			existing[t.ChannelID+"\x00"+t.ModelName] = true
+			if t.ChannelID == sourceID {
+				src = append(src, t)
+			}
+		}
+		if len(src) == 0 {
+			continue
+		}
+		added := false
+		for _, t := range src {
+			key := copyID + "\x00" + t.ModelName
+			if existing[key] {
+				continue
+			}
+			maxPri++
+			if _, err := s.A.Store().LogicalModelTargets().Save(storage.LogicalModelTarget{
+				ID: storage.NewID(), LogicalModelID: lm.ID, ChannelID: copyID,
+				ModelName: t.ModelName, Priority: maxPri,
+			}); err != nil {
+				return nil, err
+			}
+			existing[key] = true
+			added = true
+		}
+		if added {
+			updated = append(updated, lm.Name)
+		}
+	}
+	return updated, nil
 }
 
 // Remove 删逻辑模型（logical_model_targets 由 FK CASCADE）。
@@ -221,6 +285,7 @@ func (s LogicalModels) Remove(id string) {
 		s.A.Log().Error("logical model remove failed", "id", id, "err", err)
 		return
 	}
+	s.refreshDerived()
 	s.A.Log().Info("logical model removed", "id", id, "actor", "ui", "result", "ok")
 }
 
@@ -229,5 +294,6 @@ func (s LogicalModels) SetEnabled(id string, on bool) {
 		s.A.Log().Error("logical model enable failed", "id", id, "on", on, "err", err)
 		return
 	}
+	s.refreshDerived()
 	s.A.Log().Info("logical model enabled", "id", id, "on", on, "actor", "ui", "result", "ok")
 }

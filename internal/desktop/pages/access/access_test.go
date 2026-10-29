@@ -113,10 +113,9 @@ func TestAccessCodexEditorShowsModelMetaPreview(t *testing.T) {
 	}
 }
 
-// TestAccessGlobalSaveRefreshesCodexPreview：Codex 编辑器打开时保存全局配置，
-// 除按新基线重预览 JSON 文档外，也要刷新只读 config.toml 预览（否则预览会
-// 停留在保存前的模型解析结果）。
-func TestAccessGlobalSaveRefreshesCodexPreview(t *testing.T) {
+// TestAccessGlobalConfigAppearsInEditorPreview：全局配置在列表页保存后，
+// 再打开编辑器时预览应包含全局 env 并生成 Codex config.toml 预览。
+func TestAccessGlobalConfigAppearsInEditorPreview(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	dir := filepath.Join(home, ".codex")
@@ -135,17 +134,20 @@ func TestAccessGlobalSaveRefreshesCodexPreview(t *testing.T) {
 	st.Page = "access"
 	st.Access.App = "codex"
 	st.Access.Glob = [][2]string{{"HTTPS_PROXY", "http://p:1"}}
-	st.Access.Form = state.AccessForm{
-		Open: true, ModelLabel: "my-code", CodexModels: []string{"my-code"},
-		DocJSON: `{"models":["my-code"],"env":{}}`,
-	}
-	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1200, 4000)
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1200, 1200)
 	if err := tt.Click("保存全局配置"); err != nil {
 		t.Fatal(err)
 	}
+	if st.Access.GlobMsg != "已保存" {
+		t.Fatalf("全局配置保存失败: %q", st.Access.GlobMsg)
+	}
+	st.Access.Form = state.AccessForm{Open: true, CodexModels: []string{"my-code"}}
+	preloadForm(st, configs(st))
+	if !strings.Contains(st.Access.Form.DocJSON, "HTTPS_PROXY") {
+		t.Fatalf("编辑器预览应合并全局 env: %q", st.Access.Form.DocJSON)
+	}
 	if !strings.Contains(st.Access.Form.CodexPreview, "model_catalog_json") {
-		t.Fatalf("保存全局配置后应刷新 config.toml 预览: %q msg=%q",
-			st.Access.Form.CodexPreview, st.Access.Form.Msg)
+		t.Fatalf("Codex 应生成 config.toml 预览: %q msg=%q", st.Access.Form.CodexPreview, st.Access.Form.Msg)
 	}
 }
 
@@ -203,47 +205,49 @@ func TestAccessDeleteRequiresConfirm(t *testing.T) {
 	}
 }
 
-// TestTabSwitchDirtyGuard 覆盖页签切换脏检查：有未保存编辑时先弹确认，
-// 「继续编辑」留在原页签、「放弃并切换」才切换并清空草稿；干净时直接切换。
-func TestTabSwitchDirtyGuard(t *testing.T) {
+// TestEditorBackDirtyGuard 覆盖编辑器独立子页的返回确认：有未保存修改时
+// 返回只武装 NavArm（弹窗由壳层渲染），确认后才关闭并清空。
+func TestEditorBackDirtyGuard(t *testing.T) {
 	st, _ := uitest.New(t)
+	st.Page = "access"
 	st.Access.App = "claude"
-	st.Access.Form = state.AccessForm{Open: true}
+	st.Access.Form = state.AccessForm{Open: true, Name: "draft", DocJSON: `{}`}
 	st.Access.Form.Baseline = st.Access.Form.Signature("claude")
-	st.Access.Form.Name = "draft" // 未保存修改
+	st.Access.Form.Name = "draft-changed" // 未保存修改
 	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
-	if err := tt.Click("Codex"); err != nil {
+	if !tt.HasText("← 返回接入") {
+		t.Fatalf("editor subpage missing back: %v", tt.Texts())
+	}
+	if err := tt.Click("← 返回接入"); err != nil {
 		t.Fatal(err)
 	}
-	if !tt.HasText("未保存的编辑") {
-		t.Fatalf("确认弹窗未出现: %v", tt.Texts())
+	if !st.NavArm || !st.Access.Form.Open {
+		t.Fatalf("dirty back must arm confirm and keep editor: nav=%v form=%+v", st.NavArm, st.Access.Form)
 	}
-	if st.Access.App != "claude" {
-		t.Fatalf("确认前不应切换: %q", st.Access.App)
+	// 模拟「继续编辑」：取消确认。
+	st.NavArm = false
+	if !st.Access.Form.Open || st.Access.Form.Name != "draft-changed" {
+		t.Fatalf("continue editing must keep draft: %+v", st.Access.Form)
 	}
-	if err := tt.Click("继续编辑"); err != nil {
+	// 再次返回并确认：丢弃草稿回列表。
+	if err := tt.Click("← 返回接入"); err != nil {
 		t.Fatal(err)
 	}
-	if st.Access.App != "claude" || st.Access.Form.Name != "draft" {
-		t.Fatalf("继续编辑应保留草稿: %q %q", st.Access.App, st.Access.Form.Name)
+	st.Navigate(st.NavTo, nil)
+	if st.Access.Form.Open {
+		t.Fatalf("confirm must close editor: %+v", st.Access.Form)
 	}
-	// 再次切换并放弃：切换成功且草稿清空。
-	if err := tt.Click("Codex"); err != nil {
-		t.Fatal(err)
+	tt.Frame()
+	if !tt.HasText("Claude Code") || !tt.HasText("连接指南") {
+		t.Fatalf("应回到带页签的列表: %v", tt.Texts())
 	}
-	if err := tt.Click("放弃并切换"); err != nil {
-		t.Fatal(err)
-	}
-	if st.Access.App != "codex" || st.Access.Form.Open {
-		t.Fatalf("放弃后应切换并清空: %q %+v", st.Access.App, st.Access.Form)
-	}
-	// 干净状态下直接切换。
+	// 干净状态点页签直接切换（框架 Tabs）。
 	st.Access.App = "claude"
 	tt2 := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
-	if err := tt2.Click("连接指南"); err != nil {
+	if err := tt2.Click("Codex"); err != nil {
 		t.Fatal(err)
 	}
-	if st.Access.App != "guide" {
+	if st.Access.App != "codex" {
 		t.Fatalf("干净状态应直接切换: %q", st.Access.App)
 	}
 }
@@ -275,5 +279,59 @@ func TestRestoreBackupConfirm(t *testing.T) {
 	}
 	if !strings.Contains(st.Access.Msg, "还原失败") {
 		t.Fatalf("无备份应报错: %q", st.Access.Msg)
+	}
+}
+
+func TestAccessRowShowsNeedsApplyBadge(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	st, a := uitest.New(t)
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	acc := bridge.AccessConfigs{A: a}
+	v, err := acc.Create("claude", "工作", "lm1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".claude", "settings.json"), []byte(`{"old":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := acc.Apply(v.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := acc.Update(v.ID, "工作", "lm1", `{"env":{"CUSTOM":"x"}}`); err != nil {
+		t.Fatal(err)
+	}
+	st.Access.App = "claude"
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1200, 900)
+	if !tt.HasText("待应用") {
+		t.Fatalf("应显示待应用徽章：%v", tt.Texts())
+	}
+}
+
+func TestAccessBackupPageListsAndConfirms(t *testing.T) {
+	st, _ := uitest.New(t)
+	st.Access.App = "claude"
+	st.Access.BackupOpen = true
+	st.Access.Backups = []bridge.BackupInfo{{Timestamp: 1793253937554, Files: []string{"settings.json"}, SizeBytes: 2048}}
+	tt := ui.NewTester(func(c *ui.Context) { backupPage(c, st, configs(st)) }, 1000, 800)
+	if !tt.HasText("备份与恢复") || !tt.HasText("settings.json") {
+		t.Fatalf("backup page = %v", tt.Texts())
+	}
+	if !tt.HasText("还原") {
+		t.Fatal("restore button missing")
+	}
+}
+
+func TestAccessEmptyStateWithoutModelsOffersLogical(t *testing.T) {
+	st, _ := uitest.New(t)
+	st.Access.App = "claude"
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1200, 900)
+	if !tt.HasText("去逻辑模型") {
+		t.Fatalf("logical action missing: %v", tt.Texts())
 	}
 }

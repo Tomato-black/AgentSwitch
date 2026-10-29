@@ -58,10 +58,14 @@ func formatTargetChain(m bridge.ModelView) string {
 	return strings.Join(parts, " → ")
 }
 
+// StartNew 打开新建逻辑模型页（应用菜单/快捷键用）。
+func StartNew(st *state.State) { openNew(st) }
+
 // openLogicalNew 进新建页并复位表单（editModelID 空=新建）。
 func openNew(st *state.State) {
 	st.Logical.EditModelID = ""
 	st.Logical.Edit = state.LMForm{}
+	st.Logical.Baseline = st.Logical.Edit.Signature()
 	st.Page = "logical-edit"
 }
 
@@ -87,6 +91,7 @@ func openEdit(st *state.State, id string) {
 			}
 		}
 	}
+	st.Logical.Baseline = st.Logical.Edit.Signature()
 	st.Page = "logical-edit"
 }
 
@@ -133,7 +138,7 @@ func save(st *state.State) {
 			return
 		}
 	}
-	st.Page = "logical"
+	st.Navigate("logical", nil)
 }
 
 // hasDanglingTarget 报告目标链是否含已失效目标（渠道被删后 ChannelName
@@ -145,4 +150,45 @@ func hasDanglingTarget(m bridge.ModelView) bool {
 		}
 	}
 	return false
+}
+
+// coolingChannels 返回 ChannelID→剩余冷却秒数（内存快照）。
+func coolingChannels(st *state.State) map[string]int {
+	out := map[string]int{}
+	for _, cd := range st.Svc.Gateway.Cooldowns() {
+		out[cd.ChannelID] = cd.RemainingSeconds
+	}
+	return out
+}
+
+// modelCooling 报告逻辑模型的任一目标渠道是否在冷却中。
+func modelCooling(m bridge.ModelView, cool map[string]int) bool {
+	for _, tg := range m.Targets {
+		if _, ok := cool[tg.ChannelID]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// targetIssue 返回目标链的可见风险：渠道被删=「目标失效」，渠道存在但
+// 停用/无 Key=「渠道不可用」（bridge 已提供 TargetView.Healthy）。空串表示
+// 没有需要警示的目标。删除优先于不可用，避免同时打两个徽章。
+func targetIssue(m bridge.ModelView) string {
+	unhealthy := false
+	for _, tg := range m.Targets {
+		if tg.ChannelID == "" {
+			continue
+		}
+		if tg.ChannelName == "" {
+			return "目标失效"
+		}
+		if !tg.Healthy {
+			unhealthy = true
+		}
+	}
+	if unhealthy {
+		return "渠道不可用"
+	}
+	return ""
 }

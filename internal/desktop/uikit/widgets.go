@@ -133,3 +133,243 @@ func Tile(c *ui.Context, t *ui.Theme, s SoftPalette, name string, size float32) 
 	ui.Box(c).Size(size, size).Radius(size * 0.25).Background(bg).Shrink(0).Center().
 		Children(func() { ui.Text(c, string(abbr)).TextColor(fg).FontSize(size * 0.35).Bold() })
 }
+
+// LabelWidth 是表单标签列的统一宽度（DIP）。此前各页 80/96/110/112/120/150
+// 混用，导致同一产品内标签与输入件对不齐；新代码一律用它，复杂行可另用
+// FormRowRaw 自行布局。
+const LabelWidth float32 = 112
+
+// PageHeaderOpts 是统一页头的入参：标题/副标题、可选返回动作与右侧动作区。
+// 返回按钮与主操作由调用方以闭包注入，页头只负责布局与层级。
+type PageHeaderOpts struct {
+	Title     string
+	Subtitle  string
+	BackLabel string
+	OnBack    func()
+	Meta      func() // 标题后的徽章/状态（如「使用中」）
+	Actions   func()
+}
+
+// PageHeader 渲染页面唯一标题行：可选「← 返回列表」+ 标题（FontSize+3，
+// 随 textScale）+ 副标题 + 弹性空白 + 右侧动作区（通常放一个主操作）。
+func PageHeader(c *ui.Context, t *ui.Theme, o PageHeaderOpts) {
+	ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
+		if o.BackLabel != "" && o.OnBack != nil {
+			if ui.Button(c, o.BackLabel).Clicked() {
+				o.OnBack()
+			}
+		}
+		if o.Title != "" {
+			ui.Text(c, o.Title).Bold().FontSize(t.FontSize + 3).SingleLine()
+		}
+		if o.Subtitle != "" {
+			ui.Text(c, o.Subtitle).TextColor(t.TextMuted).SingleLine()
+		}
+		if o.Meta != nil {
+			o.Meta()
+		}
+		ui.Box(c).Grow(1)
+		if o.Actions != nil {
+			o.Actions()
+		}
+	})
+}
+
+// SectionTitle 渲染卡片内区块标题 + 可选说明（说明用 TextMuted）。
+func SectionTitle(c *ui.Context, t *ui.Theme, title, hint string) {
+	ui.Column(c).Gap(4).Children(func() {
+		ui.Text(c, title).Bold()
+		if hint != "" {
+			ui.Text(c, hint).TextColor(t.TextMuted)
+		}
+	})
+}
+
+// FormRow 渲染统一表单行：固定宽标签 + 输入件，并把标签关联到输入件
+// （供读屏器使用）。输入件以闭包返回，便于调用方决定宽度/绑定。
+func FormRow(c *ui.Context, t *ui.Theme, label string, field func() ui.Element) {
+	ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, label).Width(LabelWidth).TextColor(t.TextMuted)
+		field().Label(label)
+	})
+}
+
+// FormRowRaw 是 FormRow 的多控件版本：标签只做视觉对齐，不强行关联某一个
+// 控件（用于「启用 + 允许私网」这类一行多开关）。
+func FormRowRaw(c *ui.Context, t *ui.Theme, label string, field func()) {
+	ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
+		if label != "" {
+			ui.Text(c, label).Width(LabelWidth).TextColor(t.TextMuted)
+		} else {
+			ui.Box(c).Width(LabelWidth)
+		}
+		field()
+	})
+}
+
+// BusyRow 渲染进行中状态：Spinner + 进行中文案 + 可选「取消」按钮。
+// Spinner 只在任务进行中挂载（MyGo 只重绘该控件，不重建整视图）。
+func BusyRow(c *ui.Context, t *ui.Theme, label string, onCancel func()) {
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		ui.Spinner(c).Label(label)
+		ui.Text(c, label).TextColor(t.TextMuted)
+		if onCancel != nil {
+			if SoftButton(c, t, Softs(t), "gray", "取消").Clicked() {
+				onCancel()
+			}
+		}
+	})
+}
+
+// FeedbackKind 是统一反馈的语义：成功/警告/错误/中性。
+type FeedbackKind int
+
+const (
+	FeedbackNeutral FeedbackKind = iota
+	FeedbackSuccess
+	FeedbackWarning
+	FeedbackError
+)
+
+// Feedback 渲染软底反馈条：成功=软绿、警告=软琥珀、错误=软红、中性=软灰。
+// 空白文本不渲染；成功/失败不再共用同一 muted 文本样式。
+func Feedback(c *ui.Context, t *ui.Theme, kind FeedbackKind, text string) {
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	s := Softs(t)
+	var bg, fg ui.Color
+	switch kind {
+	case FeedbackSuccess:
+		bg, fg = s.Ok, s.OkText
+	case FeedbackWarning:
+		bg, fg = s.Warn, s.WarnText
+	case FeedbackError:
+		bg, fg = s.Danger, s.DangerText
+	default:
+		bg, fg = s.Gray, s.GrayText
+	}
+	ui.Box(c).Radius(8).Background(bg).Padding(8, 10).Children(func() {
+		ui.Text(c, text).TextColor(fg)
+	})
+}
+
+// InferFeedback 把既有字符串消息过渡性地归到反馈语义：错误关键词优先，
+// 其次警告、成功，其余中性。新代码应直接传 FeedbackKind；此函数用于逐步
+// 迁移历史 Msg 字段，避免一次性改遍所有状态结构。
+func InferFeedback(text string) FeedbackKind {
+	for _, k := range []string{"失败", "错误", "无法", "不存在", "无效", "非法", "冲突"} {
+		if strings.Contains(text, k) {
+			return FeedbackError
+		}
+	}
+	for _, k := range []string{"警告", "过期", "未运行", "请先", "需要", "未生效", "未应用"} {
+		if strings.Contains(text, k) {
+			return FeedbackWarning
+		}
+	}
+	for _, k := range []string{"已保存", "已应用", "已复制", "已删除", "已还原", "成功", "正常"} {
+		if strings.Contains(text, k) {
+			return FeedbackSuccess
+		}
+	}
+	return FeedbackNeutral
+}
+
+// EmptyStateOpts 是统一空态入参：标题、说明、可选主操作与身份 tile 文本。
+type EmptyStateOpts struct {
+	Title       string
+	Hint        string
+	ActionLabel string
+	OnAction    func()
+	Tile        string
+}
+
+// EmptyState 渲染统一空态：Card 内居中（不套第二层 Card），一个标题、一句
+// 下一步说明、最多一个主操作。列表页与设置页共用，避免「卡中卡 / 无卡 /
+// 纯文本」三种空态并存。
+func EmptyState(c *ui.Context, t *ui.Theme, o EmptyStateOpts) {
+	Card(c, t, func() { EmptyStateBare(c, t, o) })
+}
+
+// EmptyStateBare 是空态的无卡片版本：已处在卡片内的区域（如接入页的
+// 「实际配置」卡）使用它，避免卡中卡的双层留白。
+func EmptyStateBare(c *ui.Context, t *ui.Theme, o EmptyStateOpts) {
+	ui.Column(c).Gap(10).AlignItems(ui.Center).Children(func() {
+		if o.Tile != "" {
+			Tile(c, t, Softs(t), o.Tile, 40)
+		}
+		if o.Title != "" {
+			ui.Text(c, o.Title).Bold()
+		}
+		if o.Hint != "" {
+			ui.Text(c, o.Hint).TextColor(t.TextMuted)
+		}
+		if o.ActionLabel != "" && o.OnAction != nil {
+			if PillButton(c, t, o.ActionLabel).Clicked() {
+				o.OnAction()
+			}
+		}
+	})
+}
+
+// ConfirmOpts 是统一确认框入参。Danger 为真时确认按钮用软红底，不再使用
+// 品牌橙主样式；取消按钮恒居末位并自动聚焦，Enter 只会触发取消。
+type ConfirmOpts struct {
+	Open         *bool
+	Title        string
+	Message      string
+	CancelLabel  string
+	ConfirmLabel string
+	Danger       bool
+	OnConfirm    func()
+}
+
+// ConfirmDialog 是安全默认的确认框：自绘 DialogBase（卡片同款 Radius 12），
+// 取消在视觉末端且 AutoFocus，危险动作必须显式点击。取代各处直接调用
+// ui.AlertDialog 的写法——后者把末位按钮设为 Accent + AutoFocus + Enter，
+// 会让「删除/停止」成为默认动作。
+func ConfirmDialog(c *ui.Context, t *ui.Theme, o ConfirmOpts) {
+	if o.Open == nil || !*o.Open {
+		return
+	}
+	s := Softs(t)
+	cancelLabel := o.CancelLabel
+	if cancelLabel == "" {
+		cancelLabel = "取消"
+	}
+	confirmLabel := o.ConfirmLabel
+	if confirmLabel == "" {
+		confirmLabel = "确定"
+	}
+	ui.DialogBase(c, o.Open, func(backdrop, panel ui.Element) {
+		backdrop.Background(ui.RGBA(0, 0, 0, 0.45))
+		panel.Width(420).Radius(12).Background(t.Surface).Border(1, t.Border).
+			Padding(t.Space(5)).Children(func() {
+			ui.Column(c).Gap(t.Space(3)).Children(func() {
+				ui.Text(c, o.Title).Bold().FontSize(t.FontSize + 2)
+				if o.Message != "" {
+					ui.Text(c, o.Message).TextColor(t.TextMuted)
+				}
+				ui.Row(c).Gap(t.Space(2)).Justify(ui.End).Children(func() {
+					var confirm ui.Element
+					if o.Danger {
+						confirm = SoftButton(c, t, s, "danger", confirmLabel)
+					} else {
+						confirm = PillButton(c, t, confirmLabel)
+					}
+					cancel := SoftButton(c, t, s, "gray", cancelLabel).AutoFocus()
+					if confirm.Clicked() {
+						*o.Open = false
+						if o.OnConfirm != nil {
+							o.OnConfirm()
+						}
+					}
+					if cancel.Clicked() {
+						*o.Open = false
+					}
+				})
+			})
+		})
+	})
+}

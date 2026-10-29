@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"AgentSwitch/internal/router"
+	"AgentSwitch/internal/telemetry"
 )
 
 // failoverOutcome 报告目标链转移循环的结局（docx §6.3 可解释记录）。
@@ -28,42 +29,92 @@ func allCooling(filtered []router.FilteredCandidate) bool {
 	return true
 }
 
-// coolingExhaustedMsg 构造 503 终局正文：含 all targets cooling 与滤因清单
+// coolingExhaustedMsg 构造 503 终局正文：中文冷却说明 + 渠道/原因清单
 // （docx §6.3 可解释记录）。
 func coolingExhaustedMsg(filtered []router.FilteredCandidate) string {
 	if len(filtered) == 0 {
-		return "all targets cooling"
+		return "所有目标渠道都在冷却中，请稍后重试"
 	}
 	reasons := make([]string, 0, len(filtered))
 	for _, f := range filtered {
-		reasons = append(reasons, f.Candidate.ChannelName+":"+f.Reason)
+		reason := strings.TrimPrefix(f.Reason, "cooling:")
+		reasons = append(reasons, f.Candidate.ChannelName+"（"+cooldownReasonWord(reason)+"）")
 	}
-	return "all targets cooling (filtered: " + strings.Join(reasons, "; ") + ")"
+	return "所有目标渠道都在冷却中：" + strings.Join(reasons, "；") + "。请稍后重试"
+}
+
+// cooldownReasonWord 把内部错误分类译成 Agent 可读中文（错误正文用）。
+func cooldownReasonWord(reason string) string {
+	switch reason {
+	case "rate_limited":
+		return "上游限流"
+	case "quota_exhausted":
+		return "额度耗尽"
+	case "server":
+		return "上游 5xx"
+	case "connect":
+		return "连接失败"
+	case "auth":
+		return "鉴权失败"
+	case "endpoint":
+		return "端点错误"
+	default:
+		return reason
+	}
 }
 
 // 终局 502/503 由调用方据 outcome 写出（错误 envelope 形状随入站协议而异）。
-func (s *Server) failover(ctx context.Context, decision router.Decision,
+func (s *Server) failover(ctx context.Context, decision router.Decision, rec *telemetry.RequestRecord,
 	run func(c router.Candidate) (bool, error)) (failoverOutcome, error) {
 	var out failoverOutcome
+	record := func(a telemetry.AttemptRecord) {
+		if rec != nil {
+			rec.Attempts = append(rec.Attempts, a)
+		}
+	}
+	// 先记 Router 已过滤的候选（原因如 cooling / disabled / no-key）。
+	for _, f := range decision.Filtered {
+		record(telemetry.AttemptRecord{
+			Channel: f.Candidate.ChannelName, Model: f.Candidate.UpstreamModel,
+			Outcome: "filtered", Reason: f.Reason,
+		})
+	}
 	for _, c := range decision.Ordered {
 		if ctx.Err() != nil { // 客户端已走：不再发任何上游请求（docx §6.3 取消不转移）
+			record(telemetry.AttemptRecord{Channel: c.ChannelName, Model: c.UpstreamModel, Outcome: "canceled"})
 			return out, ctx.Err()
 		}
 		// 发送前二次校验（docx §7；TryAcquire 锁内原子，不写状态）
 		if s.deps.Cooldowns != nil {
-			if _, ok := s.deps.Cooldowns.TryAcquire(c.ChannelID, time.Now()); !ok {
+			if ce, ok := s.deps.Cooldowns.TryAcquire(c.ChannelID, time.Now()); !ok {
 				out.CoolSkips++
 				out.Switches++
+				record(telemetry.AttemptRecord{
+					Channel: c.ChannelName, Model: c.UpstreamModel,
+					Outcome: "cooling_skip", Reason: "cooling:" + ce.Reason,
+				})
 				continue
 			}
 		}
 		out.Attempted = true
+		start := time.Now()
 		committed, err := run(c)
+		outcome := "failed"
+		if committed {
+			outcome = "ok"
+		}
+		record(telemetry.AttemptRecord{
+			Channel: c.ChannelName, Model: c.UpstreamModel,
+			Outcome: outcome, DurationMs: time.Since(start).Milliseconds(),
+		})
 		if err != nil {
 			return out, err
 		}
 		if committed {
 			out.Committed = true
+			if s.deps.Cooldowns != nil {
+				s.deps.Cooldowns.MarkSuccess(c.ChannelID)
+			}
 			return out, nil
 		}
 		out.Switches++

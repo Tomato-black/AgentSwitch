@@ -132,14 +132,8 @@ func refreshPreview(st *state.State, acc bridge.AccessConfigs, report bool) {
 func EditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, acc bridge.AccessConfigs, gateOK bool) {
 	uikit.Card(c, t, func() {
 		ui.Column(c).Gap(10).Children(func() {
-			title := "新建配置"
-			if st.Access.DesktopForm.EditID != "" {
-				title = "编辑配置"
-			}
-			ui.Text(c, title).Bold()
-			ui.Row(c).Gap(12).Children(func() {
-				ui.Text(c, "名称:").Width(96).TextColor(t.TextMuted)
-				ui.TextInput(c, &st.Access.DesktopForm.Name).Grow(1)
+			uikit.FormRow(c, t, "名称:", func() ui.Element {
+				return ui.TextInput(c, &st.Access.DesktopForm.Name).Grow(1)
 			})
 
 			var models []bridge.ModelView
@@ -168,14 +162,12 @@ func EditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State
 					refreshPreview(st, acc, true)
 				}
 			})
-			ui.TextArea(c, &st.Access.DesktopForm.Preview).Height(200).ReadOnly(true)
+			ui.TextArea(c, &st.Access.DesktopForm.Preview).Height(200).ReadOnly(true).Font(uikit.MonoFont)
 
 			gs := st.Svc.Gateway.Status()
 			ui.Text(c, fmt.Sprintf("「应用」写入 Desktop 配置（网关 http://127.0.0.1:%d）；改后需重启 Claude Desktop 生效", gs.Port)).TextColor(t.TextMuted)
 
-			if st.Access.DesktopForm.Msg != "" {
-				ui.Text(c, st.Access.DesktopForm.Msg).TextColor(t.Danger)
-			}
+			uikit.Feedback(c, t, uikit.InferFeedback(st.Access.DesktopForm.Msg), st.Access.DesktopForm.Msg)
 			ui.Row(c).Gap(8).Children(func() {
 				if !gateOK {
 					ui.Text(c, "网关未运行——保存后需启动网关才能「应用」").TextColor(t.TextMuted)
@@ -184,7 +176,7 @@ func EditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State
 					desktopSaveForm(st, acc, models)
 				}
 				if uikit.SoftButton(c, t, s, "gray", "取消").Clicked() {
-					st.Access.DesktopForm = state.DesktopForm{}
+					accesskit.CloseEditor(st)
 				}
 			})
 		})
@@ -227,48 +219,65 @@ func desktopSaveForm(st *state.State, acc bridge.AccessConfigs, models []bridge.
 		}
 	}
 	st.Access.Msg = "已保存「" + f.Name + "」"
+	if f.EditID != "" {
+		for _, v := range acc.List("claude_desktop") {
+			if v.ID == f.EditID && v.IsCurrent && v.NeedsApply {
+				st.Access.Msg = "已保存「" + f.Name + "」；点击「应用」后才会写入 Claude Desktop 配置"
+				break
+			}
+		}
+	}
 	st.Access.DesktopForm = state.DesktopForm{}
 }
 
-// accessDesktopConfigRow 渲染 Desktop 配置行：应用/编辑/删除（无启动命令与
-// 终端——Desktop 是 GUI，重启其应用生效）。逻辑模型摘要展示角色映射。
+// ConfigRow 渲染 Desktop 配置行：角色摘要与操作分两行，长名称单行截断。
 func ConfigRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, acc bridge.AccessConfigs, v bridge.AccessConfigView, gateOK bool) {
-	ui.Row(c).Gap(10).Children(func() {
-		ui.Text(c, v.Name).Width(140)
-		if badge := accesskit.RowBadge(v.IsCurrent); badge != "" {
-			uikit.SoftBadge(c, t, s, "ok", badge)
-		}
-		ui.Text(c, "→ "+desktopRolesSummary(v.Settings)).TextColor(t.TextMuted).Grow(1)
-		if gateOK {
-			label := "应用"
-			if v.IsCurrent {
-				label = "重新应用"
+	ui.Column(c).Gap(6).Children(func() {
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, v.Name).Bold().Width(180).SingleLine()
+			if badge := accesskit.RowBadge(v.IsCurrent); badge != "" {
+				uikit.SoftBadge(c, t, s, "ok", badge)
 			}
-			if uikit.SoftButton(c, t, s, "act", label).Clicked() {
-				if err := acc.Apply(v.ID); err != nil {
-					st.Access.Msg = "应用失败：" + err.Error()
-				} else {
-					st.Access.Msg = "已应用「" + v.Name + "」——重启 Claude Desktop 生效"
+			if v.NeedsApply {
+				uikit.SoftBadge(c, t, s, "warn", "待应用")
+			}
+			ui.Text(c, "→ "+desktopRolesSummary(v.Settings)).TextColor(t.TextMuted).Grow(1).SingleLine()
+		})
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			if gateOK {
+				label := "应用"
+				if v.IsCurrent && !v.NeedsApply {
+					label = "重新应用"
+				}
+				switch {
+				case st.Access.ApplyTask.Running && st.Access.ApplyID == v.ID:
+					uikit.BusyRow(c, t, st.Access.ApplyTask.Label, nil)
+				case st.Access.ApplyTask.Running:
+					uikit.SoftButton(c, t, s, "gray", label).Disabled(true)
+				default:
+					if uikit.SoftButton(c, t, s, "act", label).Clicked() {
+						accesskit.ApplyAsync(st, acc, v)
+					}
 				}
 			}
-		}
-		if uikit.SoftButton(c, t, s, "gray", "编辑").Clicked() {
-			st.Access.DesktopForm = state.DesktopForm{Open: true, EditID: v.ID}
-			preloadForm(st, acc)
-		}
-		moreLabel := "更多"
-		if st.Access.RowMore == v.ID {
-			moreLabel = "收起"
-		}
-		if uikit.SoftButton(c, t, s, "gray", moreLabel).Clicked() {
-			if st.Access.RowMore == v.ID {
-				st.Access.RowMore = ""
-			} else {
-				st.Access.RowMore = v.ID
+			if uikit.SoftButton(c, t, s, "gray", "编辑").Clicked() {
+				st.Access.DesktopForm = state.DesktopForm{Open: true, EditID: v.ID}
+				preloadForm(st, acc)
 			}
-		}
+			moreLabel := "更多"
+			if st.Access.RowMore == v.ID {
+				moreLabel = "收起"
+			}
+			if uikit.SoftButton(c, t, s, "gray", moreLabel).Clicked() {
+				if st.Access.RowMore == v.ID {
+					st.Access.RowMore = ""
+				} else {
+					st.Access.RowMore = v.ID
+				}
+			}
+		})
 		if st.Access.RowMore == v.ID {
-			ui.Row(c).Gap(10).Children(func() {
+			ui.Row(c).Gap(8).Wrap().Children(func() {
 				if uikit.SoftButton(c, t, s, "danger", "删除").Clicked() {
 					st.Access.DeleteArm = true
 					st.Access.DeleteID = v.ID

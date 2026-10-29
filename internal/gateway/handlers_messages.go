@@ -3,6 +3,7 @@ package gateway
 import (
 	"AgentSwitch/internal/modelid"
 	"AgentSwitch/internal/provider"
+	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -51,7 +52,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	cr, err := protocol.ParseChatRequest(body)
 	if err != nil {
 		rec.Status, rec.ErrorClass = 400, protocol.ErrTypeInvalidRequest
-		writeErr(w, 400, protocol.ErrTypeInvalidRequest, "invalid body: model and valid JSON required")
+		writeErr(w, 400, protocol.ErrTypeInvalidRequest, "请求体无效：需要 model 与合法 JSON")
 		return
 	}
 	cr.Model, _ = modelid.SplitOneM(cr.Model)
@@ -71,7 +72,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		}
 		rec.Status, rec.ErrorClass = 404, protocol.ErrTypeNotFound
 		writeErr(w, 404, protocol.ErrTypeNotFound,
-			"unknown model "+cr.Model+"; models: "+strings.Join(s.deps.ListPublicModels(), ", "))
+			"模型「"+cr.Model+"」未在 AgentSwitch 登记；可用模型："+strings.Join(s.deps.ListPublicModels(), ", "))
 		return
 	}
 	decision := s.deps.Router.Resolve(cr.Model, cands)
@@ -101,7 +102,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	lastClass := provider.ClassUnknown
-	out, ferr := s.failover(ctx, decision, func(c router.Candidate) (bool, error) {
+	out, ferr := s.failover(ctx, decision, &rec, func(c router.Candidate) (bool, error) {
 		apiKey, err := s.deps.Cred.Get(c.SecretKey)
 		if err != nil {
 			// 凭据失效（被吊销/钥匙环删除）= 死密钥：按上游 401 同口径冷却
@@ -122,7 +123,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		rewritten, err := protocol.RewriteModel(body, c.UpstreamModel)
 		if err != nil {
 			rec.Status, rec.ErrorClass = 400, protocol.ErrTypeInvalidRequest
-			writeErr(w, 400, protocol.ErrTypeInvalidRequest, "invalid body")
+			writeErr(w, 400, protocol.ErrTypeInvalidRequest, "请求体无效")
 			return true, nil // 已写终态响应，不换候选
 		}
 		res, err := adapter.Do(ctx, provider.DoRequest{
@@ -130,6 +131,31 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 			UpstreamModel: c.UpstreamModel, RawBody: rewritten, Stream: cr.Stream,
 			UserAgent: r.Header.Get("User-Agent"),
 		})
+		// 兼容部分 Anthropic 兼容上游：thinking 模式历史不完整时返回 400
+		// 「content[].thinking must be passed back」。去掉本次 thinking 声明与
+		// thinking 块后重试一次（响应尚未提交，仍属可转移窗口），避免整次会话卡死。
+		if err == nil && res.StatusCode == http.StatusBadRequest && c.Protocol == "anthropic" {
+			snippet, _ := io.ReadAll(io.LimitReader(res.Body, 64<<10))
+			res.Body.Close()
+			res.Body = io.NopCloser(bytes.NewReader(snippet))
+			if strings.Contains(string(snippet), "content[].thinking") {
+				if stripped, changed, serr := protocol.StripThinking(rewritten); serr == nil && changed {
+					if s.deps.Log != nil {
+						s.deps.Log.Info("retry without thinking", "request_id", rec.ID, "channel", c.ChannelName)
+					}
+					res2, err2 := adapter.Do(ctx, provider.DoRequest{
+						BaseURL: c.BaseURL, AllowPrivate: c.AllowPrivate, APIKey: string(apiKey),
+						UpstreamModel: c.UpstreamModel, RawBody: stripped, Stream: cr.Stream,
+						UserAgent: r.Header.Get("User-Agent"),
+					})
+					if err2 == nil {
+						res, err = res2, nil
+					} else {
+						err = err2
+					}
+				}
+			}
+		}
 		if err != nil {
 			// 客户端已取消：对候选零状态副作用，直接收尾（docx §6.3 取消即停）。
 			// 循环顶的守卫只挡「下一候选」，挡不住本分支的标记动作——取消引发的
@@ -180,12 +206,19 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(res.StatusCode)
 		if cr.Stream {
 			onIdle := protocol.AnthropicErrorEvent("upstream stream idle timeout")
-			if copyStream(w, res.Body, lim.RequestTimeout, onIdle) {
+			uw, ut := trackedWriter(w)
+			if copyStream(uw, res.Body, lim.RequestTimeout, onIdle) {
 				rec.ErrorClass = "stream"
 				s.logIdleTimeout(rec.ID, lim.RequestTimeout)
 			}
+			ut.Flush()
+			rec.InputTokens, rec.OutputTokens = ut.Usage()
 		} else {
-			io.Copy(w, res.Body)
+			full, _ := io.ReadAll(io.LimitReader(res.Body, 64<<20))
+			w.Write(full)
+			if in, out, ok := protocol.ExtractUsage(full); ok {
+				rec.InputTokens, rec.OutputTokens = in, out
+			}
 		}
 		res.Body.Close()
 		return true, nil
@@ -200,7 +233,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		}
 		return // 客户端已断 / 响应已写：不再写终局错误
 	}
-	// 耗尽且可区分（简报 Task 6）：全部仅因冷却不可用 → 503 all targets cooling；
+	// 耗尽且可区分（简报 Task 6）：全部仅因冷却不可用 → 503 中文冷却说明；
 	// 至少一个目标实际失败过 → 502 all targets failed。
 	if !out.Attempted && (out.CoolSkips > 0 || len(decision.Filtered) > 0) && allCooling(decision.Filtered) {
 		rec.Status, rec.ErrorClass = 503, "no_candidate"

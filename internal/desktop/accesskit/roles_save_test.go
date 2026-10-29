@@ -1,10 +1,17 @@
 package accesskit
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/egoist/mygo/ui"
 
 	"AgentSwitch/internal/bridge"
 	"AgentSwitch/internal/desktop/state"
+	"AgentSwitch/internal/desktop/uikit"
 	"AgentSwitch/internal/desktop/uitest"
 	"AgentSwitch/internal/modelid"
 	"AgentSwitch/internal/storage"
@@ -130,5 +137,125 @@ func TestAccessSaveFormCodexRejectsEmptyList(t *testing.T) {
 	}
 	if len(acc.List("codex")) != 0 {
 		t.Fatal("空列表不得落库")
+	}
+}
+
+// TestSaveFormAndApplyWritesLive 覆盖 P1-1：主按钮「保存并应用」保存后
+// 异步写 Agent live 文件，完成提示为「已应用」；仅保存不写 live。
+func TestSaveFormAndApplyWritesLive(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".claude", "settings.json"), []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st, a := uitest.New(t)
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	st.Access.App = "claude"
+	st.Access.Form = state.AccessForm{
+		Open: true, Name: "cfg", ModelLabel: "my-code", DocJSON: `{"env":{}}`,
+	}
+	done := make(chan struct{})
+	st.Dispatch = func(fn func()) { fn(); close(done) }
+	saveFormWithApply(st, bridge.AccessConfigs{A: a}, true)
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("save+apply did not finish")
+	}
+	if !strings.Contains(st.Access.Msg, "已应用") {
+		t.Fatalf("msg = %q", st.Access.Msg)
+	}
+	b, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "my-code") {
+		t.Fatalf("live file not written: %s", b)
+	}
+}
+
+// TestInvalidDocJSONBlocksSave 覆盖 P1-11：JSON 非法时编辑器显示错误、
+// 保存被拒绝且不落库（避免「表单行变了、文档没变」的静默失同步）。
+func TestInvalidDocJSONBlocksSave(t *testing.T) {
+	st, a := uitest.New(t)
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	st.Access.App = "claude"
+	st.Access.Form = state.AccessForm{
+		Open: true, Name: "cfg", ModelLabel: "my-code", DocJSON: `{bad`,
+	}
+	tt := ui.NewTester(func(c *ui.Context) {
+		EditorCard(c, c.Theme(), uikit.Softs(c.Theme()), st, bridge.AccessConfigs{A: a}, true, EditorHooks{})
+	}, 1000, 1200)
+	if !tt.HasText("配置 JSON 无效") {
+		t.Fatalf("invalid JSON error missing: %v", tt.Texts())
+	}
+	saveForm(st, bridge.AccessConfigs{A: a})
+	if !strings.Contains(st.Access.Form.Msg, "配置 JSON 无效") {
+		t.Fatalf("save must be rejected: %q", st.Access.Form.Msg)
+	}
+	if got := (bridge.AccessConfigs{A: a}).List("claude"); len(got) != 0 {
+		t.Fatalf("invalid JSON must not be saved: %+v", got)
+	}
+}
+
+func TestSaveOnlyOnCurrentShowsApplyHint(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	livePath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.WriteFile(livePath, []byte(`{"old":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st, a := uitest.New(t)
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	acc := bridge.AccessConfigs{A: a, Home: home}
+	v, err := acc.Create("claude", "cfg", "lm1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := acc.Apply(v.ID); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(livePath)
+
+	st.Access.App = "claude"
+	st.Access.Form = state.AccessForm{
+		Open: true, EditID: v.ID, Name: "cfg", ModelLabel: "my-code",
+		DocJSON: `{"env":{"CUSTOM":"x"}}`,
+	}
+	saveFormWithApply(st, acc, false)
+	if !strings.Contains(st.Access.Msg, "点击「应用」") {
+		t.Fatalf("仅保存应提示点击应用：%q", st.Access.Msg)
+	}
+	after, _ := os.ReadFile(livePath)
+	if string(before) != string(after) {
+		t.Fatal("仅保存不得改写 live")
+	}
+}
+
+func TestEditorShowsDocDiff(t *testing.T) {
+	st, a := uitest.New(t)
+	st.Access.App = "claude"
+	st.Access.Form = state.AccessForm{
+		Open: true, EditID: "x", Name: "cfg", ModelLabel: "my-code",
+		OriginalDoc: `{"env":{"A":"1"}}`,
+		DocJSON:     `{"env":{"A":"2"}}`,
+	}
+	tt := ui.NewTester(func(c *ui.Context) {
+		EditorCard(c, c.Theme(), uikit.Softs(c.Theme()), st, bridge.AccessConfigs{A: a}, true, EditorHooks{})
+	}, 1000, 1400)
+	if !tt.HasText("变更对比") || !tt.HasText("env.A") {
+		t.Fatalf("diff missing: %v", tt.Texts())
 	}
 }

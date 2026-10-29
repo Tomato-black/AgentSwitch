@@ -247,3 +247,15 @@ func TestStopGatewayConfirm(t *testing.T) {
 		t.Fatal("cancel must close the dialog")
 	}
 }
+
+// TestCloseModalTrayFallback 覆盖托盘不可用的关窗文案：提示再次启动应用
+// 唤回窗口（配合 OnSecondInstance），而不是让用户去找不存在的托盘图标。
+func TestCloseModalTrayFallback(t *testing.T) {
+	u, _ := testUI(t)
+	u.CloseNotice = true
+	u.TrayUnavailable = true
+	tt := ui.NewTester(u.view, 900, 700)
+	if !tt.HasText("再次启动 AgentSwitch") {
+		t.Fatalf("tray fallback text missing: %v", tt.Texts())
+	}
+}

@@ -1,6 +1,8 @@
 package bridge
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -214,5 +216,74 @@ func TestLogicalRemoveModel(t *testing.T) {
 	if _, err := s.Create("my-code", "", ModelMeta{}, []TargetSpec{{ChannelID: ch.ID, ModelName: "m2", Priority: 0}}); err == nil ||
 		!strings.Contains(err.Error(), "已存在") {
 		t.Fatalf("duplicate name: %v", err)
+	}
+}
+
+// TestRenameRefreshesAppliedLiveFile 覆盖 P0-3：逻辑模型改名后，已应用的
+// Claude live settings.json 必须自动刷新为新的 ANTHROPIC_MODEL；否则 Agent
+// 继续请求旧名得到 404。测试用临时 HOME，不触碰真实用户文件。
+func TestRenameRefreshesAppliedLiveFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	a := tempApp(t)
+	lm, err := a.Store().LogicalModels().Save(storage.LogicalModel{Name: "old-name", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	acc := AccessConfigs{A: a}
+	v, err := acc.Create("claude", "工作", lm.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".claude", "settings.json"), []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := acc.Apply(v.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := (LogicalModels{A: a}).Update(lm.ID, "new-name", "", ModelMeta{}, true, nil); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "new-name") {
+		t.Fatalf("live file not refreshed with new model name: %s", b)
+	}
+	if strings.Contains(string(b), "old-name") {
+		t.Fatalf("live file still has old model name: %s", b)
+	}
+}
+
+func TestAddCopyToReferencing(t *testing.T) {
+	a := tempApp(t)
+	c1, err := (Channels{A: a}).Create("", "主", "https://api.example.com", "anthropic", "k", true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lm, err := (LogicalModels{A: a}).Create("my-code", "", ModelMeta{},
+		[]TargetSpec{{ChannelID: c1.ID, ModelName: "m1", Priority: 0}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c2, err := (Channels{A: a}).Copy(c1.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names, err := (LogicalModels{A: a}).AddCopyToReferencing(c1.ID, c2.ID)
+	if err != nil || len(names) != 1 || names[0] != lm.Name {
+		t.Fatalf("names = %v, %v", names, err)
+	}
+	got, _ := a.Store().LogicalModelTargets().ListByModel(lm.ID)
+	if len(got) != 2 || got[1].ChannelID != c2.ID || got[1].ModelName != "m1" {
+		t.Fatalf("targets = %+v", got)
+	}
+	names, _ = (LogicalModels{A: a}).AddCopyToReferencing(c1.ID, c2.ID)
+	if len(names) != 0 {
+		t.Fatalf("second call = %v", names)
 	}
 }

@@ -463,10 +463,65 @@ func (s AccessConfigs) liveSlots(home, appType string) []liveSlot {
 	return nil
 }
 
-// RestoreLatestBackup 把该 appType 最近一份备份集写回 live 文件——「应用」
-// 的撤销逃生口。恢复前先对当前 live 再做一次备份（恢复本身可再次恢复）。
-// 无任何备份时报「没有可恢复的备份」。备份内容含令牌，不写日志。
-func (s AccessConfigs) RestoreLatestBackup(appType string) error {
+// BackupInfo 是一组同一时间戳的备份集（一次备份 = 一个 ts 组）。
+type BackupInfo struct {
+	Timestamp int64
+	Files     []string
+	SizeBytes int64
+}
+
+// ListBackups 按时间倒序列出该 Agent 的备份集；目录不存在返回空列表。
+func (s AccessConfigs) ListBackups(appType string) ([]BackupInfo, error) {
+	if err := validateAccessAppType(appType); err != nil {
+		return nil, err
+	}
+	home := s.Home
+	if home == "" {
+		var err error
+		if home, err = os.UserHomeDir(); err != nil {
+			return nil, err
+		}
+	}
+	bdir := filepath.Join(home, ".agentswitch", "backups", appType)
+	ents, err := os.ReadDir(bdir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	byTS := map[int64]*BackupInfo{}
+	for _, e := range ents {
+		if e.IsDir() {
+			continue
+		}
+		ts, slot, ok := parseBackupName(e.Name())
+		if !ok {
+			continue
+		}
+		fi, err := e.Info()
+		if err != nil {
+			return nil, err
+		}
+		info := byTS[ts]
+		if info == nil {
+			info = &BackupInfo{Timestamp: ts}
+			byTS[ts] = info
+		}
+		info.Files = append(info.Files, slot)
+		info.SizeBytes += fi.Size()
+	}
+	out := make([]BackupInfo, 0, len(byTS))
+	for _, info := range byTS {
+		out = append(out, *info)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Timestamp > out[j].Timestamp })
+	return out, nil
+}
+
+// RestoreBackup 恢复指定时间戳的备份集；恢复前先快照当前 live，确保恢复
+// 本身可再次撤销。备份内容含令牌，不写日志。
+func (s AccessConfigs) RestoreBackup(appType string, ts int64) error {
 	if err := validateAccessAppType(appType); err != nil {
 		return err
 	}
@@ -485,47 +540,27 @@ func (s AccessConfigs) RestoreLatestBackup(appType string) error {
 		}
 		return err
 	}
-	type backupFile struct {
-		ts   int64
-		slot string
-		name string
-	}
-	var files []backupFile
-	var latest int64 = -1
-	for _, e := range ents {
-		if e.IsDir() {
-			continue
-		}
-		ts, slot, ok := parseBackupName(e.Name())
-		if !ok {
-			continue
-		}
-		files = append(files, backupFile{ts: ts, slot: slot, name: e.Name()})
-		if ts > latest {
-			latest = ts
-		}
-	}
-	if latest < 0 {
-		return fmt.Errorf("没有可恢复的备份")
-	}
 	paths := map[string]string{}
 	for _, slot := range s.liveSlots(home, appType) {
 		paths[slot.name] = slot.path
 	}
-	// 先快照当前 live：让恢复动作本身可撤销。
 	if err := s.backupLive(appType); err != nil {
 		return err
 	}
 	restored := false
-	for _, f := range files {
-		if f.ts != latest {
+	for _, e := range ents {
+		if e.IsDir() {
 			continue
 		}
-		dst, ok := paths[f.slot]
+		fileTS, slot, ok := parseBackupName(e.Name())
+		if !ok || fileTS != ts {
+			continue
+		}
+		dst, ok := paths[slot]
 		if !ok {
 			continue // 未知槽位（旧命名备份）跳过
 		}
-		data, err := os.ReadFile(filepath.Join(bdir, f.name))
+		data, err := os.ReadFile(filepath.Join(bdir, e.Name()))
 		if err != nil {
 			return err
 		}
@@ -538,9 +573,23 @@ func (s AccessConfigs) RestoreLatestBackup(appType string) error {
 		restored = true
 	}
 	if !restored {
-		return fmt.Errorf("没有可恢复的备份")
+		return fmt.Errorf("备份不存在或没有可恢复的文件")
 	}
 	return nil
+}
+
+// RestoreLatestBackup 把该 appType 最近一份备份集写回 live 文件——「应用」
+// 的撤销逃生口。恢复前先对当前 live 再做一次备份（恢复本身可再次恢复）。
+// 无任何备份时报「没有可恢复的备份」。备份内容含令牌，不写日志。
+func (s AccessConfigs) RestoreLatestBackup(appType string) error {
+	backups, err := s.ListBackups(appType)
+	if err != nil {
+		return err
+	}
+	if len(backups) == 0 {
+		return fmt.Errorf("没有可恢复的备份")
+	}
+	return s.RestoreBackup(appType, backups[0].Timestamp)
 }
 
 // parseBackupName 解析备份文件名「<unixms>[-<n>]-<slot>」：返回时间戳与

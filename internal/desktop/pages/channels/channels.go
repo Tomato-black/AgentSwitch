@@ -36,11 +36,22 @@ func fetchConfirm(c *ui.Context, st *state.State) {
 	ids := st.Channels.FetchIDs
 	target := st.Channels.FetchTarget
 	msg := fmt.Sprintf("上游返回 %d 个模型。追加到现有建议文本末尾，还是整体替换？", len(ids))
-	choice := ui.AlertDialog(c, &st.Channels.FetchArm, "拉取模型", msg, "取消", "追加", "替换")
+	// 取消居末位：AlertDialog 的末位按钮自动聚焦且 Enter 触发，取消必须是
+	// 默认动作（P0-1）；非破坏性选择也遵循同一安全顺序。
+	choice := ui.AlertDialog(c, &st.Channels.FetchArm, "拉取模型", msg, "替换", "追加", "取消")
 	if choice == -1 { // 仍在等待选择：保留暂存结果
 		return
 	}
 	switch choice {
+	case 0:
+		if target == "detail" {
+			st.Channels.SuggText = strings.Join(ids, "\n")
+			st.Channels.TestMsg = fmt.Sprintf("已替换为上游 %d 个模型（保存后生效）", len(ids))
+		} else {
+			f := &st.Channels.Form
+			f.Suggestions = strings.Join(ids, "\n")
+			f.Msg = fmt.Sprintf("已替换为上游 %d 个模型（创建后生效）", len(ids))
+		}
 	case 1:
 		if target == "detail" {
 			st.Channels.SuggText = appendModelIDs(st.Channels.SuggText, ids)
@@ -50,16 +61,7 @@ func fetchConfirm(c *ui.Context, st *state.State) {
 			f.Suggestions = appendModelIDs(f.Suggestions, ids)
 			f.Msg = fmt.Sprintf("已追加 %d 个模型（创建后生效）", len(ids))
 		}
-	case 2:
-		if target == "detail" {
-			st.Channels.SuggText = strings.Join(ids, "\n")
-			st.Channels.TestMsg = fmt.Sprintf("已替换为上游 %d 个模型（保存后生效）", len(ids))
-		} else {
-			f := &st.Channels.Form
-			f.Suggestions = strings.Join(ids, "\n")
-			f.Msg = fmt.Sprintf("已替换为上游 %d 个模型（创建后生效）", len(ids))
-		}
-	case 0, ui.AlertDismissed:
+	case 2, ui.AlertDismissed:
 	}
 	st.Channels.FetchIDs = nil
 	st.Channels.FetchTarget = ""

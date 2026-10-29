@@ -1,6 +1,7 @@
 package logical
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -9,6 +10,7 @@ import (
 	"AgentSwitch/internal/bridge"
 	"AgentSwitch/internal/desktop/state"
 	"AgentSwitch/internal/desktop/uitest"
+	"AgentSwitch/internal/storage"
 )
 
 // TestLogicalCardShowsTargetChain 覆盖目标链摘要纯函数：两目标按序拼成
@@ -241,5 +243,82 @@ func TestLogicalEmptyStateCTA(t *testing.T) {
 	}
 	if st.Page != "channels" || st.Channels.View != "" {
 		t.Fatalf("page=%q view=%q", st.Page, st.Channels.View)
+	}
+}
+
+// TestTargetIssue 覆盖 P1-10：渠道被删 → 目标失效；渠道存在但停用/无 Key
+// → 渠道不可用；健康目标不提示。
+func TestTargetIssue(t *testing.T) {
+	if got := targetIssue(bridge.ModelView{Targets: []bridge.TargetView{{ChannelID: "c1", ChannelName: "A", Healthy: true}}}); got != "" {
+		t.Fatalf("healthy target issue = %q", got)
+	}
+	if got := targetIssue(bridge.ModelView{Targets: []bridge.TargetView{{ChannelID: "c1", ChannelName: "", Healthy: false}}}); got != "目标失效" {
+		t.Fatalf("deleted channel issue = %q", got)
+	}
+	if got := targetIssue(bridge.ModelView{Targets: []bridge.TargetView{{ChannelID: "c1", ChannelName: "A", Healthy: false}}}); got != "渠道不可用" {
+		t.Fatalf("unhealthy channel issue = %q", got)
+	}
+}
+
+// TestModelCooling 覆盖冷却徽章：任一目标渠道在冷却中即为 true。
+func TestModelCooling(t *testing.T) {
+	m := bridge.ModelView{Targets: []bridge.TargetView{{ChannelID: "c1"}, {ChannelID: "c2"}}}
+	if modelCooling(m, map[string]int{"c2": 20}) != true {
+		t.Fatal("c2 cooling must flag model")
+	}
+	if modelCooling(m, map[string]int{"c3": 20}) {
+		t.Fatal("unrelated cooling must not flag model")
+	}
+}
+
+func TestLogicalPageShowsProbeResult(t *testing.T) {
+	st, a := uitest.New(t)
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	st.Logical.TestResults = map[string]bridge.ModelProbeResult{
+		"lm1": {
+			Model: "my-code", OK: true, Hit: "main·m1",
+			Summary: "至少一个目标可用；首次命中 main·m1",
+			Targets: []bridge.ModelProbeTarget{{ChannelName: "main", Model: "m1", OK: true, Status: 200, DurationMs: 12}},
+		},
+	}
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1200, 900)
+	if !tt.HasText("至少一个目标可用") || !tt.HasText("✓") {
+		t.Fatalf("probe result missing: %v", tt.Texts())
+	}
+}
+
+func TestLogicalEmptyStateWithChannelsOffersCreate(t *testing.T) {
+	st, a := uitest.New(t)
+	if _, err := (bridge.Channels{A: a}).Create("", "主渠道", "https://api.example.com", "anthropic", "", true, false); err != nil {
+		t.Fatal(err)
+	}
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1200, 900)
+	if !tt.HasText("把已建渠道挂进逻辑模型") {
+		t.Fatalf("dynamic empty state missing: %v", tt.Texts())
+	}
+}
+
+func TestLogicalEmptyStateWithoutChannelsOffersChannel(t *testing.T) {
+	st, _ := uitest.New(t)
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1200, 900)
+	if !tt.HasText("去添加渠道") {
+		t.Fatalf("channel action missing: %v", tt.Texts())
+	}
+}
+
+func TestLogicalListSearchFilters(t *testing.T) {
+	st, a := uitest.New(t)
+	for i := 1; i <= 9; i++ {
+		name := fmt.Sprintf("model-%d", i)
+		if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{Name: name, Enabled: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st.Logical.Filter = "model-9"
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1200, 900)
+	if !tt.HasText("model-9") || tt.HasText("model-1") {
+		t.Fatalf("logical filter failed: %v", tt.Texts())
 	}
 }

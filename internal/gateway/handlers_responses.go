@@ -73,7 +73,7 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		// 未登记模型：列出公开模型名便于客户端纠错（错误体仍为 OpenAI 形状）。
 		rec.Status, rec.ErrorClass = 404, protocol.ErrTypeNotFound
 		writeErrOpenAI(w, 404, protocol.ErrTypeNotFound,
-			"unknown model "+req.Model+"; models: "+strings.Join(s.deps.ListPublicModels(), ", "))
+			"模型「"+req.Model+"」未在 AgentSwitch 登记；可用模型："+strings.Join(s.deps.ListPublicModels(), ", "))
 		return
 	}
 	decision := s.deps.Router.Resolve(req.Model, cands)
@@ -111,7 +111,7 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	}
 
 	lastClass := provider.ClassUnknown
-	out, ferr := s.failover(ctx, decision, func(c router.Candidate) (bool, error) {
+	out, ferr := s.failover(ctx, decision, &rec, func(c router.Candidate) (bool, error) {
 		apiKey, err := s.deps.Cred.Get(c.SecretKey)
 		if err != nil {
 			// 死密钥：按上游 401 同口径冷却后换下一候选（同 handleChatCompletions）。
@@ -129,23 +129,27 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		chatBody, err := protocol.ResponsesRequestToChat(req, tc, c.UpstreamModel)
 		if err != nil {
 			rec.Status, rec.ErrorClass = 400, protocol.ErrTypeInvalidRequest
-			writeErrOpenAI(w, 400, protocol.ErrTypeInvalidRequest, "invalid body")
+			writeErrOpenAI(w, 400, protocol.ErrTypeInvalidRequest, "请求体无效")
 			return true, nil // 已写终态响应，不换候选
 		}
 		switch c.Protocol {
 		case "openai":
-			rawBody, adapter = chatBody, newOpenAIPassthrough()
+			rawBody = chatBody
+			if req.Stream {
+				rawBody = protocol.EnableChatStreamUsage(rawBody)
+			}
+			adapter = newOpenAIPassthrough()
 		case "anthropic":
 			oa, perr := protocol.ParseOpenAIChatRequest(chatBody)
 			if perr != nil {
 				rec.Status, rec.ErrorClass = 400, protocol.ErrTypeInvalidRequest
-				writeErrOpenAI(w, 400, protocol.ErrTypeInvalidRequest, "invalid body")
+				writeErrOpenAI(w, 400, protocol.ErrTypeInvalidRequest, "请求体无效")
 				return true, nil
 			}
 			rawBody, err = protocol.OpenAIRequestToAnthropic(oa, c.UpstreamModel)
 			if err != nil {
 				rec.Status, rec.ErrorClass = 400, protocol.ErrTypeInvalidRequest
-				writeErrOpenAI(w, 400, protocol.ErrTypeInvalidRequest, "invalid body")
+				writeErrOpenAI(w, 400, protocol.ErrTypeInvalidRequest, "请求体无效")
 				return true, nil
 			}
 			adapter, err = s.deps.AdapterFor("anthropic")
@@ -218,7 +222,10 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 				src = protocol.ChatStreamToResponsesStream(ctx, res.Body, req.Model, tc)
 			}
 			onIdle := protocol.ResponsesFailedEvent("upstream stream idle timeout")
-			timedOut := copyStream(w, src, lim.RequestTimeout, onIdle)
+			uw, ut := trackedWriter(w)
+			timedOut := copyStream(uw, src, lim.RequestTimeout, onIdle)
+			ut.Flush()
+			rec.InputTokens, rec.OutputTokens = ut.Usage()
 			if timedOut {
 				rec.ErrorClass = "stream"
 				s.logIdleTimeout(rec.ID, lim.RequestTimeout)
@@ -241,6 +248,9 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		if rerr != nil {
 			lastClass = provider.ClassConnect
 			return false, nil
+		}
+		if in, out, ok := protocol.ExtractUsage(full); ok {
+			rec.InputTokens, rec.OutputTokens = in, out
 		}
 		chatJSON := full
 		if c.Protocol == "anthropic" {

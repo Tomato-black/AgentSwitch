@@ -3,6 +3,7 @@
 package logical
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -20,61 +21,126 @@ import (
 func listView(c *ui.Context, st *state.State) {
 	t := c.Theme()
 	s := uikit.Softs(t)
-	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, "逻辑模型").Bold().FontSize(16).Grow(1)
-		if uikit.PillButton(c, t, "＋ 新建逻辑模型").Clicked() {
-			openNew(st)
-		}
-	})
 	var models []bridge.ModelView
 	if st.Svc.Logical != nil {
 		models = st.Svc.Logical.List()
 	}
-	if len(models) == 0 {
-		uikit.Card(c, t, func() {
-			ui.Column(c).Gap(10).AlignItems(ui.Center).Padding(24).Children(func() {
-				ui.Text(c, "还没有逻辑模型").Bold()
-				ui.Text(c, "先建渠道，再把渠道挂进逻辑模型").TextColor(t.TextMuted)
-				if uikit.PillButton(c, t, "去添加渠道").Clicked() {
-					st.Page = "channels"
-					st.Channels.View = ""
+	chans := st.Svc.Channels.List()
+	cool := coolingChannels(st)
+	ui.Column(c).Gap(12).Grow(1).Children(func() {
+		uikit.PageHeader(c, t, uikit.PageHeaderOpts{
+			Title: "逻辑模型", Subtitle: fmt.Sprintf("%d 个", len(models)),
+			Actions: func() {
+				if uikit.PillButton(c, t, "＋ 新建逻辑模型").Clicked() {
+					openNew(st)
+				}
+			},
+		})
+		ui.Scroll(c).Grow(1).Children(func() {
+			ui.Column(c).Gap(12).Children(func() {
+				ui.Text(c, "「测试模型」会按目标链发送最小请求，可能产生少量费用；不会修改冷却或请求统计").TextColor(t.TextMuted)
+				uikit.Feedback(c, t, uikit.InferFeedback(st.Logical.TestMsg), st.Logical.TestMsg)
+				if len(models) == 0 {
+					if len(chans) > 0 {
+						uikit.EmptyState(c, t, uikit.EmptyStateOpts{
+							Title: "还没有逻辑模型", Hint: "把已建渠道挂进逻辑模型",
+							ActionLabel: "＋ 新建逻辑模型", OnAction: func() { openNew(st) },
+						})
+					} else {
+						uikit.EmptyState(c, t, uikit.EmptyStateOpts{
+							Title: "还没有逻辑模型", Hint: "先建渠道，再把渠道挂进逻辑模型",
+							ActionLabel: "去添加渠道",
+							OnAction: func() {
+								st.Go("channels", nil)
+							},
+						})
+					}
+				}
+				if len(models) > 8 {
+					ui.TextInput(c, &st.Logical.Filter).Grow(1).
+						Placeholder("搜索逻辑模型：名称 / 描述 / 目标链")
+				}
+				filter := strings.ToLower(strings.TrimSpace(st.Logical.Filter))
+				visible := make([]bridge.ModelView, 0, len(models))
+				for _, m := range models {
+					if filter == "" || strings.Contains(strings.ToLower(
+						m.Name+" "+m.Description+" "+formatTargetChain(m)), filter) {
+						visible = append(visible, m)
+					}
+				}
+				if filter != "" && len(visible) == 0 {
+					ui.Text(c, "没有匹配的逻辑模型").TextColor(t.TextMuted)
+				}
+				for _, m := range visible {
+					model := m
+					uikit.Card(c, t, func() {
+						ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+							ui.Text(c, model.Name).Bold().Grow(1).SingleLine()
+							if model.Enabled {
+								uikit.SoftBadge(c, t, s, "ok", "启用")
+							} else {
+								uikit.SoftBadge(c, t, s, "gray", "停用")
+							}
+							if issue := targetIssue(model); issue != "" {
+								uikit.SoftBadge(c, t, s, "warn", issue)
+							}
+							if modelCooling(model, cool) {
+								uikit.SoftBadge(c, t, s, "warn", "冷却中")
+							}
+							switch {
+							case st.Logical.TestTask.Running && st.Logical.TestModelID == model.ID:
+								uikit.BusyRow(c, t, st.Logical.TestTask.Label, nil)
+							case st.Logical.TestTask.Running:
+								uikit.SoftButton(c, t, s, "gray", "测试模型").Disabled(true)
+							default:
+								if uikit.SoftButton(c, t, s, "gray", "测试模型").Clicked() {
+									id, name := model.ID, model.Name
+									st.Logical.TestModelID = id
+									state.RunAsync(st, &st.Logical.TestTask,
+										"正在测试（会发送最小请求，可能产生少量费用）…",
+										func(ctx context.Context) (bridge.ModelProbeResult, error) {
+											return st.Svc.Gateway.TestLogicalModel(ctx, name)
+										}, func(res bridge.ModelProbeResult, err error) {
+											st.Logical.TestModelID = ""
+											if err != nil {
+												st.Logical.TestMsg = "测试失败：" + err.Error()
+												return
+											}
+											if st.Logical.TestResults == nil {
+												st.Logical.TestResults = map[string]bridge.ModelProbeResult{}
+											}
+											st.Logical.TestResults[id] = res
+											st.Logical.TestMsg = ""
+										})
+								}
+							}
+							if uikit.SoftButton(c, t, s, "gray", "编辑").Clicked() {
+								openEdit(st, model.ID)
+							}
+							if uikit.SoftButton(c, t, s, "danger", "删除").Clicked() {
+								st.Logical.DeleteArm = true
+								st.Logical.DeleteID = model.ID
+								st.Logical.DeleteRefs = accessRefNames(st, model.ID)
+							}
+							toggleLabel := "停用"
+							if !model.Enabled {
+								toggleLabel = "启用"
+							}
+							if uikit.SoftButton(c, t, s, "act", toggleLabel).Clicked() && st.Svc.Logical != nil {
+								st.Svc.Logical.SetEnabled(model.ID, !model.Enabled)
+							}
+						})
+						ui.Text(c, formatTargetChain(model)).TextColor(t.TextMuted)
+						if res, ok := st.Logical.TestResults[model.ID]; ok {
+							probeResultView(c, t, res)
+						}
+					})
 				}
 			})
 		})
-	}
-	for _, m := range models {
-		uikit.Card(c, t, func() {
-			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, m.Name).Bold().Grow(1).SingleLine()
-				if m.Enabled {
-					uikit.SoftBadge(c, t, s, "ok", "启用")
-				} else {
-					uikit.SoftBadge(c, t, s, "gray", "停用")
-				}
-				if hasDanglingTarget(m) {
-					uikit.SoftBadge(c, t, s, "warn", "目标失效")
-				}
-				if uikit.SoftButton(c, t, s, "gray", "编辑").Clicked() {
-					openEdit(st, m.ID)
-				}
-				if uikit.SoftButton(c, t, s, "danger", "删除").Clicked() {
-					st.Logical.DeleteArm = true
-					st.Logical.DeleteID = m.ID
-					st.Logical.DeleteRefs = accessRefNames(st, m.ID)
-				}
-				toggleLabel := "停用"
-				if !m.Enabled {
-					toggleLabel = "启用"
-				}
-				if uikit.SoftButton(c, t, s, "act", toggleLabel).Clicked() && st.Svc.Logical != nil {
-					st.Svc.Logical.SetEnabled(m.ID, !m.Enabled)
-				}
-			})
-			ui.Text(c, formatTargetChain(m)).TextColor(t.TextMuted)
-		})
-	}
+	})
 	// 删除二次确认（复用渠道页两段式删除确认交互）：armed 位跨帧保留，
-	// 弹窗标题带模型名、确认（下标 1）才 Remove。
+	// 弹窗标题带模型名、确认才 Remove。
 	armedName := ""
 	for _, m := range models {
 		if m.ID == st.Logical.DeleteID {
@@ -84,13 +150,9 @@ func listView(c *ui.Context, st *state.State) {
 	deleteConfirm(c, st, armedName)
 }
 
-// logicalDeleteConfirm 是删除逻辑模型的 AlertDialog 二次确认：open 位
-// lmDeleteArm、对象 lmDeleteID；框架在选定后自关 open 位，Escape 走
-// AlertDismissed 同样收场。按钮序「取消, 删除」——末位是主钮。
+// deleteConfirm 是删除逻辑模型的安全确认：取消居末位并自动聚焦，危险动作
+// 必须显式点击；标题带模型名，被接入配置引用时列出引用者。
 func deleteConfirm(c *ui.Context, st *state.State, name string) {
-	if !st.Logical.DeleteArm {
-		return
-	}
 	msg := "确定删除该逻辑模型？"
 	if name != "" {
 		msg = fmt.Sprintf("确定删除逻辑模型「%s」？", name)
@@ -99,14 +161,18 @@ func deleteConfirm(c *ui.Context, st *state.State, name string) {
 		msg += "\n仍被接入配置引用：" + strings.Join(st.Logical.DeleteRefs, "、") +
 			"。删除后这些配置需改绑或重建。"
 	}
-	switch ui.AlertDialog(c, &st.Logical.DeleteArm, "删除逻辑模型", msg, "取消", "删除") {
-	case 1:
-		if st.Svc.Logical != nil {
-			st.Svc.Logical.Remove(st.Logical.DeleteID)
-		}
-		st.Logical.DeleteID = ""
-		st.Logical.DeleteRefs = nil
-	case 0, ui.AlertDismissed:
+	uikit.ConfirmDialog(c, c.Theme(), uikit.ConfirmOpts{
+		Open: &st.Logical.DeleteArm, Title: "删除逻辑模型", Message: msg,
+		CancelLabel: "取消", ConfirmLabel: "删除", Danger: true,
+		OnConfirm: func() {
+			if st.Svc.Logical != nil {
+				st.Svc.Logical.Remove(st.Logical.DeleteID)
+			}
+			st.Logical.DeleteID = ""
+			st.Logical.DeleteRefs = nil
+		},
+	})
+	if !st.Logical.DeleteArm {
 		st.Logical.DeleteID = ""
 		st.Logical.DeleteRefs = nil
 	}
@@ -121,67 +187,70 @@ func editView(c *ui.Context, st *state.State) {
 	s := uikit.Softs(t)
 	chans := st.Svc.Channels.List()
 	title := "新建逻辑模型"
+	subtitle := ""
 	if st.Logical.EditModelID != "" {
 		title = "编辑逻辑模型"
+		subtitle = st.Logical.Edit.Name
 	}
-	ui.Scroll(c).Grow(1).Children(func() {
-		ui.Column(c).Gap(12).Children(func() {
-			ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
-				if ui.Button(c, "返回列表").Clicked() {
-					st.Page = "logical"
-				}
-				ui.Text(c, title).Bold().FontSize(t.FontSize + 2)
-			})
-			uikit.Card(c, t, func() {
-				ui.Column(c).Gap(12).Children(func() {
-					ui.Text(c, "基本信息").Bold()
-					ui.Row(c).Gap(12).Children(func() {
-						ui.Text(c, "名称:").Width(112).TextColor(t.TextMuted)
-						ui.TextInput(c, &st.Logical.Edit.Name).Grow(1).Placeholder("网关对外模型名，如 my-code")
-					})
-					ui.Row(c).Gap(12).Children(func() {
-						ui.Text(c, "描述:").Width(112).TextColor(t.TextMuted)
-						ui.TextInput(c, &st.Logical.Edit.Description).Grow(1)
+	ui.Column(c).Gap(12).Grow(1).Children(func() {
+		uikit.PageHeader(c, t, uikit.PageHeaderOpts{
+			Title: title, Subtitle: subtitle, BackLabel: "← 返回列表",
+			OnBack: func() { st.Go("logical", nil) },
+		})
+		ui.Scroll(c).Grow(1).Children(func() {
+			ui.Column(c).Gap(12).Children(func() {
+				uikit.Card(c, t, func() {
+					ui.Column(c).Gap(12).Children(func() {
+						uikit.SectionTitle(c, t, "基本信息", "")
+						uikit.FormRow(c, t, "名称:", func() ui.Element {
+							return ui.TextInput(c, &st.Logical.Edit.Name).Grow(1).
+								Placeholder("网关对外模型名，如 my-code")
+						})
+						uikit.FormRow(c, t, "描述:", func() ui.Element {
+							return ui.TextInput(c, &st.Logical.Edit.Description).Grow(1)
+						})
 					})
 				})
-			})
-			uikit.Card(c, t, func() {
-				ui.Column(c).Gap(12).Children(func() {
-					ui.Text(c, "目标链").Bold()
-					ui.Text(c, "按序故障转移：靠前的目标优先").TextColor(t.TextMuted)
-					if len(chans) == 0 {
-						ui.Text(c, "还没有渠道——先在「渠道」页添加").TextColor(t.TextMuted)
-					}
-					// 行内按钮只记动作，循环结束后统一应用：构建中改切片会
-					// 让 range 跳行/越界。
-					act, actI := "", -1
-					for i := range st.Logical.Edit.Targets {
-						if a := targetRow(c, t, s, st, i, chans); a != "" {
-							act, actI = a, i
+				uikit.Card(c, t, func() {
+					ui.Column(c).Gap(12).Children(func() {
+						uikit.SectionTitle(c, t, "目标链", "按序故障转移：靠前的目标优先")
+						if len(chans) == 0 {
+							ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+								ui.Text(c, "还没有渠道——先在「渠道」页添加").TextColor(t.TextMuted)
+								if uikit.SoftButton(c, t, s, "gray", "去添加渠道").Clicked() {
+									st.Go("channels", nil)
+								}
+							})
 						}
-					}
-					switch act {
-					case "up":
-						moveTarget(st.Logical.Edit.Targets, actI, -1)
-					case "down":
-						moveTarget(st.Logical.Edit.Targets, actI, +1)
-					case "del":
-						st.Logical.Edit.Targets = append(st.Logical.Edit.Targets[:actI], st.Logical.Edit.Targets[actI+1:]...)
-					}
-					if uikit.SoftButton(c, t, s, "act", "＋ 添加目标").Clicked() {
-						st.Logical.Edit.Targets = append(st.Logical.Edit.Targets, bridge.TargetSpec{})
-					}
+						// 行内按钮只记动作，循环结束后统一应用：构建中改切片会
+						// 让 range 跳行/越界。
+						act, actI := "", -1
+						for i := range st.Logical.Edit.Targets {
+							if a := targetRow(c, t, s, st, i, chans); a != "" {
+								act, actI = a, i
+							}
+						}
+						switch act {
+						case "up":
+							moveTarget(st.Logical.Edit.Targets, actI, -1)
+						case "down":
+							moveTarget(st.Logical.Edit.Targets, actI, +1)
+						case "del":
+							st.Logical.Edit.Targets = append(st.Logical.Edit.Targets[:actI], st.Logical.Edit.Targets[actI+1:]...)
+						}
+						if uikit.SoftButton(c, t, s, "act", "＋ 添加目标").Clicked() {
+							st.Logical.Edit.Targets = append(st.Logical.Edit.Targets, bridge.TargetSpec{})
+						}
+					})
 				})
+				ui.Row(c).Gap(8).Children(func() {
+					if uikit.PillButton(c, t, "保存").Clicked() {
+						save(st)
+					}
+					ui.Box(c).Grow(1)
+				})
+				uikit.Feedback(c, t, uikit.FeedbackError, st.Logical.Edit.Msg)
 			})
-			ui.Row(c).Gap(8).Children(func() {
-				if uikit.PillButton(c, t, "保存").Clicked() {
-					save(st)
-				}
-				ui.Box(c).Grow(1)
-			})
-			if st.Logical.Edit.Msg != "" {
-				ui.Text(c, st.Logical.Edit.Msg).TextColor(t.Danger)
-			}
 		})
 	})
 }
@@ -274,4 +343,33 @@ func appLabel(app string) string {
 		return "Claude Desktop"
 	}
 	return app
+}
+
+// probeResultView 渲染一次「测试模型」结果：摘要 + 每个目标的成功/失败、
+// 耗时、错误分类与下一步。错误不包含密钥或上游正文。
+func probeResultView(c *ui.Context, t *ui.Theme, res bridge.ModelProbeResult) {
+	ui.Column(c).Gap(2).Children(func() {
+		color := t.Danger
+		if res.OK {
+			color = t.Success
+		}
+		ui.Text(c, res.Summary).TextColor(color).SingleLine()
+		for _, tg := range res.Targets {
+			prefix, col := "✗", t.Danger
+			if tg.OK {
+				prefix, col = "✓", t.Success
+			}
+			line := fmt.Sprintf("%s %s·%s %dms", prefix, tg.ChannelName, tg.Model, tg.DurationMs)
+			if tg.ErrorClass != "" {
+				line += " · " + tg.ErrorClass
+			}
+			if tg.NextStep != "" {
+				line += " · " + tg.NextStep
+			}
+			if tg.Cooling {
+				line += " · 冷却中"
+			}
+			ui.Text(c, line).TextColor(col).SingleLine()
+		}
+	})
 }

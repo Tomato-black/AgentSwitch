@@ -12,6 +12,14 @@ import (
 	"AgentSwitch/internal/bridge"
 )
 
+// ValidateDocJSON 校验编辑器文本是否为 JSON 对象；空文本视为空对象。
+func ValidateDocJSON(raw string) error {
+	if _, err := DocObject(raw); err != nil {
+		return fmt.Errorf("配置 JSON 无效：%w", err)
+	}
+	return nil
+}
+
 // DocObject 解析接入文档为通用 JSON 对象（空文本视为空对象；null/
 // 非对象报错）。各文档补丁/回填函数共用的解析入口。
 func DocObject(raw string) (map[string]any, error) {

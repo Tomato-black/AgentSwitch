@@ -18,7 +18,7 @@ func (u *uiState) closeModal(c *ui.Context) {
 	s := uikit.Softs(t)
 	ui.DialogBase(c, &u.CloseNotice, func(backdrop, panel ui.Element) {
 		backdrop.Background(ui.RGBA(0, 0, 0, 0.45))
-		panel.Width(420).Radius(14).Background(t.Surface).Border(1, t.Border).
+		panel.Width(420).Radius(12).Background(t.Surface).Border(1, t.Border).
 			Padding(t.Space(6)).Children(func() {
 			ui.Column(c).Gap(t.Space(4)).Children(func() {
 				ui.Row(c).Gap(t.Space(3.5)).AlignItems(ui.Center).Children(func() {
@@ -34,8 +34,13 @@ func (u *uiState) closeModal(c *ui.Context) {
 				// 拆成两行，避免 CJK 自动换行把「窗口」拆在行首行尾。
 				ui.Column(c).Gap(2).Children(func() {
 					ui.Text(c, "关闭窗口不会中断 Agent 请求。").TextColor(t.TextMuted)
-					ui.Text(c, "可从系统托盘重新打开窗口，或在托盘中退出应用。").
-						TextColor(t.TextMuted)
+					if u.TrayUnavailable {
+						ui.Text(c, "当前系统托盘不可用；再次启动 AgentSwitch 即可唤回窗口。").
+							TextColor(t.TextMuted)
+					} else {
+						ui.Text(c, "可从系统托盘重新打开窗口，或在托盘中退出应用。").
+							TextColor(t.TextMuted)
+					}
 				})
 				ui.Row(c).Gap(t.Space(2)).AlignItems(ui.Center).Children(func() {
 					ui.Box(c).Grow(1)

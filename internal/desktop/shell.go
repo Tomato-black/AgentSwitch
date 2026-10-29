@@ -5,6 +5,8 @@
 package desktop
 
 import (
+	"fmt"
+
 	"github.com/egoist/mygo/ui"
 
 	"AgentSwitch/internal/desktop/pages/access"
@@ -30,10 +32,12 @@ var navItems = []struct {
 // 逻辑模型列表（spec §6.1）。已知 id 原样返回，未知 id 由 pageView 的
 // default 分支兜底到逻辑模型页。
 func (u *uiState) normalizedPage() string {
-	if u.Page == "" {
-		return "logical"
+	switch u.Page {
+	case "", "logical-edit":
+		return "logical" // 编辑态仍高亮「逻辑模型」，不丢位置感
+	default:
+		return u.Page
 	}
-	return u.Page
 }
 
 // navItem 是一枚自绘导航项：ButtonBase 底（可聚焦，指针/Enter/Space 报
@@ -56,10 +60,13 @@ func (u *uiState) navItem(c *ui.Context, t *ui.Theme, id, label string, icon *ui
 		if on {
 			ic.TextColor(t.Accent)
 		}
-		ui.Text(c, label).Grow(1).SingleLine()
+		txt := ui.Text(c, label).Grow(1).SingleLine()
+		if on {
+			txt.Bold()
+		}
 	})
 	if b.Clicked() {
-		u.Page = id
+		u.Go(id, nil)
 	}
 }
 
@@ -83,12 +90,18 @@ func gatewayStatusBar(c *ui.Context, u *uiState) {
 			addr = "未监听"
 		}
 		ui.Text(c, addr).Font(uikit.MonoFont).TextColor(t.TextMuted)
+		if cool := u.Svc.Gateway.Cooldowns(); len(cool) > 0 {
+			ui.Text(c, fmt.Sprintf("冷却 %d 个渠道", len(cool))).TextColor(t.Warning)
+		}
 		if reason := uikit.ReasonWord(gs.DegradedReason); reason != "" {
 			color := t.Warning
 			if state == "failed" {
 				color = t.Danger
 			}
 			ui.Text(c, reason).SingleLine().TextColor(color)
+		}
+		if u.AlertMsg != "" {
+			ui.Text(c, u.AlertMsg).SingleLine().TextColor(t.Warning)
 		}
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			if state == "stopped" || state == "failed" {
@@ -101,6 +114,40 @@ func gatewayStatusBar(c *ui.Context, u *uiState) {
 					u.StopArm = true
 				}
 			}
+		})
+	})
+}
+
+// setupChecklist 是首次上手三步清单：渠道 → 逻辑模型 → 接入。三步都完成
+// 后自动消失；不持久化「已读」，也不做强制向导。
+func setupChecklist(c *ui.Context, u *uiState) {
+	s := u.Svc.Gateway.Setup()
+	if s.Channels > 0 && s.LogicalModels > 0 && s.AppliedAccess > 0 {
+		return
+	}
+	t := c.Theme()
+	uikit.Card(c, t, func() {
+		ui.Column(c).Gap(8).Children(func() {
+			ui.Text(c, "开始使用").Bold()
+			ui.Text(c, "按顺序完成三步；完成后此卡片自动消失").TextColor(t.TextMuted)
+			step := func(done bool, label, page string) {
+				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+					mark := "○"
+					if done {
+						mark = "✓"
+					}
+					ui.Text(c, mark+" "+label)
+					ui.Box(c).Grow(1)
+					if !done {
+						if uikit.SoftButton(c, t, uikit.Softs(t), "gray", "去完成").Clicked() {
+							u.Go(page, nil)
+						}
+					}
+				})
+			}
+			step(s.Channels > 0, "渠道", "channels")
+			step(s.LogicalModels > 0, "逻辑模型", "logical")
+			step(s.AppliedAccess > 0, "接入", "access")
 		})
 	})
 }
@@ -122,11 +169,30 @@ func (u *uiState) pageView(c *ui.Context) {
 // stopConfirm 是停止网关的二次确认：停止后所有已接入 Agent 将无法调用模型，
 // 直到重新启动网关。确认后才异步执行停止。
 func stopConfirm(c *ui.Context, u *uiState) {
-	if !u.StopArm {
+	uikit.ConfirmDialog(c, c.Theme(), uikit.ConfirmOpts{
+		Open: &u.StopArm, Title: "停止网关",
+		Message:      "停止后所有已接入的 Agent 将无法调用模型，直到重新启动网关。确定停止？",
+		CancelLabel:  "取消",
+		ConfirmLabel: "停止网关", Danger: true,
+		OnConfirm: func() { go func() { _ = u.Svc.Gateway.Stop() }() },
+	})
+}
+
+// navConfirm 是未保存编辑的切页确认：取消/继续编辑保留草稿，确认才丢弃
+// 并执行待切换页面（NavAction 可为返回列表等子视图动作）。
+func (u *uiState) navConfirm(c *ui.Context) {
+	if !u.NavArm {
+		u.NavTo = ""
+		u.NavAction = nil
 		return
 	}
-	switch ui.AlertDialog(c, &u.StopArm, "停止网关", "停止后所有已接入的 Agent 将无法调用模型，直到重新启动网关。确定停止？", "取消", "停止网关") {
-	case 1:
-		go func() { _ = u.Svc.Gateway.Stop() }()
-	}
+	uikit.ConfirmDialog(c, c.Theme(), uikit.ConfirmOpts{
+		Open: &u.NavArm, Title: "未保存的编辑",
+		Message:      "离开当前页面将丢弃未保存的修改。",
+		CancelLabel:  "继续编辑",
+		ConfirmLabel: "放弃并离开", Danger: true,
+		OnConfirm: func() {
+			u.Navigate(u.NavTo, nil)
+		},
+	})
 }

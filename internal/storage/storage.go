@@ -71,9 +71,58 @@ type AccessConfig struct {
 	LogicalModelID string
 	Settings       string // 整份 JSON 文档（spec 2026-10-19）；空读写归一化为 "{}"
 	IsCurrent      bool
+	NeedsApply     bool // current 配置有未投影到 Agent live 文件的修改
 	SortOrder      int
 	CreatedAt      int64
 	UpdatedAt      int64
+}
+
+// RequestAttempt 是请求历史中的一次故障转移尝试/跳过记录（脱敏元数据）。
+type RequestAttempt struct {
+	Channel, Model, Outcome, Reason string
+	DurationMs                      int64
+}
+
+// RequestHistoryRecord 是持久化的请求记录：只含脱敏元数据，不含
+// prompt/response 正文、Authorization 或密钥。
+type RequestHistoryRecord struct {
+	ID            string
+	StartedAt     int64 // Unix 毫秒
+	Model         string
+	UpstreamModel string
+	Channel       string
+	Account       string
+	Status        int
+	DurationMs    int64
+	FailoverCount int
+	Streaming     bool
+	InputTokens   int
+	OutputTokens  int
+	ErrorClass    string
+	Attempts      []RequestAttempt
+}
+
+// UsageAggregate 是按渠道·模型聚合的 token 用量。
+type UsageAggregate struct {
+	Channel, Model            string
+	Requests                  int64
+	InputTokens, OutputTokens int64
+}
+
+// DailyUsage 是按本地日期聚合的 token 用量。
+type DailyUsage struct {
+	Day                       string // YYYY-MM-DD（本地时区）
+	Requests                  int64
+	InputTokens, OutputTokens int64
+}
+
+// RequestHistoryRepo 读写 request_history 表；ListRecent 按时间新→旧。
+type RequestHistoryRepo interface {
+	Add(rec RequestHistoryRecord) error
+	ListRecent(limit int) ([]RequestHistoryRecord, error)
+	DeleteOlderThan(cutoffMs int64) (int64, error)
+	UsageByChannelModel(sinceMs int64) ([]UsageAggregate, error)
+	UsageByDay(sinceMs int64) ([]DailyUsage, error)
 }
 
 // Store 是持久层入口。
@@ -83,6 +132,7 @@ type Store interface {
 	LogicalModels() LogicalModelRepo
 	LogicalModelTargets() LogicalModelTargetRepo
 	AccessConfigs() AccessConfigRepo
+	RequestHistory() RequestHistoryRepo
 	Secrets() SecretRepo
 	Settings() SettingsRepo
 

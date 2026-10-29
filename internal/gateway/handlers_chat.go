@@ -56,7 +56,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	oar, err := protocol.ParseOpenAIChatRequest(body)
 	if err != nil {
 		rec.Status, rec.ErrorClass = 400, protocol.ErrTypeInvalidRequest
-		writeErrOpenAI(w, 400, protocol.ErrTypeInvalidRequest, "invalid body: model and valid JSON required")
+		writeErrOpenAI(w, 400, protocol.ErrTypeInvalidRequest, "请求体无效：需要 model 与合法 JSON")
 		return
 	}
 	oar.Model, _ = modelid.SplitOneM(oar.Model)
@@ -75,7 +75,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 		rec.Status, rec.ErrorClass = 404, protocol.ErrTypeNotFound
 		writeErrOpenAI(w, 404, protocol.ErrTypeNotFound,
-			"unknown model "+oar.Model+"; models: "+strings.Join(s.deps.ListPublicModels(), ", "))
+			"模型「"+oar.Model+"」未在 AgentSwitch 登记；可用模型："+strings.Join(s.deps.ListPublicModels(), ", "))
 		return
 	}
 	decision := s.deps.Router.Resolve(oar.Model, cands)
@@ -106,7 +106,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	lastClass := provider.ClassUnknown
-	out, ferr := s.failover(ctx, decision, func(c router.Candidate) (bool, error) {
+	out, ferr := s.failover(ctx, decision, &rec, func(c router.Candidate) (bool, error) {
 		apiKey, err := s.deps.Cred.Get(c.SecretKey)
 		if err != nil {
 			// 死密钥：按上游 401 同口径冷却后换下一候选（同 handleMessages）。
@@ -126,15 +126,18 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			rawBody, err = protocol.RewriteModel(body, c.UpstreamModel)
 			if err != nil {
 				rec.Status, rec.ErrorClass = 400, protocol.ErrTypeInvalidRequest
-				writeErrOpenAI(w, 400, protocol.ErrTypeInvalidRequest, "invalid body")
+				writeErrOpenAI(w, 400, protocol.ErrTypeInvalidRequest, "请求体无效")
 				return true, nil // 已写终态响应，不换候选
+			}
+			if oar.Stream {
+				rawBody = protocol.EnableChatStreamUsage(rawBody)
 			}
 			adapter = newOpenAIPassthrough()
 		case "anthropic":
 			rawBody, err = protocol.OpenAIRequestToAnthropic(oar, c.UpstreamModel)
 			if err != nil {
 				rec.Status, rec.ErrorClass = 400, protocol.ErrTypeInvalidRequest
-				writeErrOpenAI(w, 400, protocol.ErrTypeInvalidRequest, "invalid body")
+				writeErrOpenAI(w, 400, protocol.ErrTypeInvalidRequest, "请求体无效")
 				return true, nil
 			}
 			adapter, err = s.deps.AdapterFor("anthropic")
@@ -200,14 +203,21 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "text/event-stream")
 				w.WriteHeader(res.StatusCode)
 				onIdle := protocol.OpenAIStreamErrorChunk("upstream stream idle timeout")
-				if copyStream(w, res.Body, lim.RequestTimeout, onIdle) {
+				uw, ut := trackedWriter(w)
+				if copyStream(uw, res.Body, lim.RequestTimeout, onIdle) {
 					rec.ErrorClass = "stream"
 					s.logIdleTimeout(rec.ID, lim.RequestTimeout)
 				}
+				ut.Flush()
+				rec.InputTokens, rec.OutputTokens = ut.Usage()
 			} else {
+				full, _ := io.ReadAll(io.LimitReader(res.Body, 64<<20))
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(res.StatusCode)
-				io.Copy(w, res.Body)
+				w.Write(full)
+				if in, out, ok := protocol.ExtractUsage(full); ok {
+					rec.InputTokens, rec.OutputTokens = in, out
+				}
 			}
 			res.Body.Close()
 		case oar.Stream:
@@ -215,10 +225,13 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.WriteHeader(res.StatusCode)
 			onIdle := protocol.OpenAIStreamErrorChunk("upstream stream idle timeout")
-			if copyStream(w, protocol.AnthropicStreamToOpenAIStream(ctx, res.Body, oar.Model), lim.RequestTimeout, onIdle) {
+			uw, ut := trackedWriter(w)
+			if copyStream(uw, protocol.AnthropicStreamToOpenAIStream(ctx, res.Body, oar.Model), lim.RequestTimeout, onIdle) {
 				rec.ErrorClass = "stream"
 				s.logIdleTimeout(rec.ID, lim.RequestTimeout)
 			}
+			ut.Flush()
+			rec.InputTokens, rec.OutputTokens = ut.Usage()
 			res.Body.Close()
 		default:
 			// anthropic 非流：整体读出转 chat.completion。转换失败仍可转移——
@@ -228,6 +241,9 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			if rerr != nil {
 				lastClass = provider.ClassConnect
 				return false, nil
+			}
+			if in, out, ok := protocol.ExtractUsage(full); ok {
+				rec.InputTokens, rec.OutputTokens = in, out
 			}
 			converted, cerr := protocol.AnthropicResponseToOpenAI(full, oar.Model)
 			if cerr != nil {

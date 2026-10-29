@@ -300,7 +300,7 @@ func metaLevelSelect(c *ui.Context, t *ui.Theme, level *string, levels []string)
 	}
 	sel := ui.SelectBase(c, level)
 	sel.Trigger.Padding(6, 10).Border(1, t.Border).Radius(t.Radius).
-		Background(t.Surface).MinWidth(120).Children(func() {
+		Background(t.Surface).MinWidth(120 * (t.FontSize / 13)).Children(func() {
 		ui.Text(c, label).SingleLine()
 	})
 	sel.Popup(func(panel ui.Element) {
@@ -347,26 +347,27 @@ func modelMetaSection(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state
 		if ed == nil {
 			continue
 		}
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, modelName).Width(150).Bold().SingleLine()
-			if ui.TextInput(c, &ed.DisplayName).Width(150).Placeholder("显示名").Changed() {
-				changed = applyMetaEdit(f, modelName, ed) || changed
-			}
-			if ui.TextInput(c, &ed.ContextWindow).Width(120).Placeholder("上下文窗口").Changed() {
-				changed = applyMetaEdit(f, modelName, ed) || changed
-			}
+		scale := t.FontSize / 13
+		ui.Column(c).Gap(6).Children(func() {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Wrap().Children(func() {
+				ui.Text(c, modelName).Bold().MinWidth(120 * scale).SingleLine()
+				if ui.TextInput(c, &ed.DisplayName).MinWidth(140 * scale).Placeholder("显示名").Changed() {
+					changed = applyMetaEdit(f, modelName, ed) || changed
+				}
+				if ui.TextInput(c, &ed.ContextWindow).MinWidth(110 * scale).Placeholder("上下文窗口").Changed() {
+					changed = applyMetaEdit(f, modelName, ed) || changed
+				}
+				beforeLevel := ed.DefaultReasoningLevel
+				metaLevelSelect(c, t, &ed.DefaultReasoningLevel, parsedLevels(ed.ReasoningLevels))
+				if ed.DefaultReasoningLevel != beforeLevel {
+					changed = applyMetaEdit(f, modelName, ed) || changed
+				}
+			})
 			if ui.TextInput(c, &ed.ReasoningLevels).Grow(1).Placeholder("思考等级：low,medium,high").Changed() {
 				changed = applyMetaEdit(f, modelName, ed) || changed
 			}
-			beforeLevel := ed.DefaultReasoningLevel
-			metaLevelSelect(c, t, &ed.DefaultReasoningLevel, parsedLevels(ed.ReasoningLevels))
-			if ed.DefaultReasoningLevel != beforeLevel {
-				changed = applyMetaEdit(f, modelName, ed) || changed
-			}
+			uikit.Feedback(c, t, uikit.InferFeedback(ed.Msg), ed.Msg)
 		})
-		if ed.Msg != "" {
-			ui.Text(c, ed.Msg).TextColor(t.TextMuted)
-		}
 	}
 	if changed {
 		RefreshPreview(st, acc)
@@ -407,7 +408,7 @@ func advancedSection(c *ui.Context, t *ui.Theme, st *state.State) bool {
 	ui.Text(c, "子代理与自动审批为可选配置，默认跟随主模型").TextColor(t.TextMuted)
 	changed := false
 	ui.Row(c).Gap(12).Children(func() {
-		ui.Text(c, "子代理模型:").Width(120).TextColor(t.TextMuted)
+		ui.Text(c, "子代理模型:").Width(uikit.LabelWidth).TextColor(t.TextMuted)
 		label := selectLabel(f.SubagentModel, accessCodexSubagentFollow)
 		before := label
 		sel := ui.Select(c, &label,
@@ -418,7 +419,7 @@ func advancedSection(c *ui.Context, t *ui.Theme, st *state.State) bool {
 		}
 	})
 	ui.Row(c).Gap(12).Children(func() {
-		ui.Text(c, "子代理推理强度:").Width(120).TextColor(t.TextMuted)
+		ui.Text(c, "子代理推理强度:").Width(uikit.LabelWidth).TextColor(t.TextMuted)
 		label := selectLabel(f.SubagentEffort, accessCodexEffortDefault)
 		before := label
 		sel := ui.Select(c, &label, effortOptions(f.SubagentEffort))
@@ -428,7 +429,7 @@ func advancedSection(c *ui.Context, t *ui.Theme, st *state.State) bool {
 		}
 	})
 	ui.Row(c).Gap(12).Children(func() {
-		ui.Text(c, "自动审批模型:").Width(120).TextColor(t.TextMuted)
+		ui.Text(c, "自动审批模型:").Width(uikit.LabelWidth).TextColor(t.TextMuted)
 		label := selectLabel(f.AutoReviewModel, accessCodexAutoReviewDefault)
 		before := label
 		sel := ui.Select(c, &label,
@@ -471,7 +472,7 @@ func EditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State
 					RefreshPreview(st, acc)
 				}
 			})
-			ui.TextArea(c, &st.Access.Form.CodexPreview).Height(240).ReadOnly(true)
+			ui.TextArea(c, &st.Access.Form.CodexPreview).Height(240).ReadOnly(true).Font(uikit.MonoFont)
 		},
 	})
 }

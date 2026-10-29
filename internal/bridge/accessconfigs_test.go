@@ -1713,3 +1713,192 @@ func TestProjectCodexContextWindowZeroPreservesExisting(t *testing.T) {
 		t.Fatalf("%v", cfg)
 	}
 }
+
+func TestUpdateCurrentMarksNeedsApplyAndKeepsLive(t *testing.T) {
+	a := tempApp(t)
+	home := t.TempDir()
+	acc := AccessConfigs{A: a, Home: home}
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	v, err := acc.Create("claude", "工作", "lm1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	livePath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.WriteFile(livePath, []byte(`{"old":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := acc.Apply(v.ID); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(livePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := acc.Update(v.ID, "工作", "lm1", `{"env":{"CUSTOM":"x"}}`); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(livePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("仅保存不得改写 live：before=%s after=%s", before, after)
+	}
+	list := acc.List("claude")
+	if len(list) != 1 || !list[0].NeedsApply {
+		t.Fatalf("current 配置内容变化后应标记待应用：%+v", list)
+	}
+}
+
+func TestRegenerateDerivedSkipsLiveWhenPending(t *testing.T) {
+	a := tempApp(t)
+	home := t.TempDir()
+	acc := AccessConfigs{A: a, Home: home}
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	v, _ := acc.Create("claude", "工作", "lm1", "")
+	os.MkdirAll(filepath.Join(home, ".claude"), 0o755)
+	livePath := filepath.Join(home, ".claude", "settings.json")
+	os.WriteFile(livePath, []byte(`{"old":1}`), 0o600)
+	if err := acc.Apply(v.ID); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(livePath)
+	if err := acc.Update(v.ID, "工作", "lm1", `{"env":{"CUSTOM":"x"}}`); err != nil {
+		t.Fatal(err)
+	}
+	errs := acc.RegenerateDerived()
+	if len(errs) == 0 || !strings.Contains(errs[0].Error(), "未应用") {
+		t.Fatalf("应返回待应用警告：%v", errs)
+	}
+	after, _ := os.ReadFile(livePath)
+	if string(before) != string(after) {
+		t.Fatal("待应用时 RegenerateDerived 不得改写 live")
+	}
+}
+
+func TestRegenerateDerivedBacksUpBeforeLive(t *testing.T) {
+	a := tempApp(t)
+	home := t.TempDir()
+	acc := AccessConfigs{A: a, Home: home}
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "old-name", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	v, _ := acc.Create("claude", "工作", "lm1", "")
+	os.MkdirAll(filepath.Join(home, ".claude"), 0o755)
+	livePath := filepath.Join(home, ".claude", "settings.json")
+	os.WriteFile(livePath, []byte(`{"old":1}`), 0o600)
+	if err := acc.Apply(v.ID); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(livePath)
+
+	lm, _ := a.Store().LogicalModels().Get("lm1")
+	lm.Name = "new-name"
+	if _, err := a.Store().LogicalModels().Save(lm); err != nil {
+		t.Fatal(err)
+	}
+	if errs := acc.RegenerateDerived(); len(errs) != 0 {
+		t.Fatalf("系统级刷新不应失败：%v", errs)
+	}
+	after, _ := os.ReadFile(livePath)
+	if !strings.Contains(string(after), "new-name") {
+		t.Fatalf("live 应包含新模型名：%s", after)
+	}
+
+	backupDir := filepath.Join(home, ".agentswitch", "backups", "claude")
+	ents, err := os.ReadDir(backupDir)
+	if err != nil || len(ents) == 0 {
+		t.Fatalf("应产生备份：%v", err)
+	}
+	latest := ents[len(ents)-1].Name()
+	b, _ := os.ReadFile(filepath.Join(backupDir, latest))
+	if string(b) != string(before) {
+		t.Fatalf("最新备份应等于写入前 live：backup=%s before=%s", b, before)
+	}
+}
+
+func TestApplyClearsNeedsApplyAndBackupIsPreSave(t *testing.T) {
+	a := tempApp(t)
+	home := t.TempDir()
+	acc := AccessConfigs{A: a, Home: home}
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	v, _ := acc.Create("claude", "工作", "lm1", "")
+	os.MkdirAll(filepath.Join(home, ".claude"), 0o755)
+	livePath := filepath.Join(home, ".claude", "settings.json")
+	os.WriteFile(livePath, []byte(`{"old":1}`), 0o600)
+	if err := acc.Apply(v.ID); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(livePath)
+
+	if err := acc.Update(v.ID, "工作", "lm1", `{"env":{"CUSTOM":"x"}}`); err != nil {
+		t.Fatal(err)
+	}
+	if got := acc.List("claude"); len(got) != 1 || !got[0].NeedsApply {
+		t.Fatalf("保存后应待应用：%+v", got)
+	}
+	if err := acc.Apply(v.ID); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.ReadFile(livePath)
+	if !strings.Contains(string(after), "CUSTOM") {
+		t.Fatalf("应用后 live 应包含新值：%s", after)
+	}
+	if got := acc.List("claude"); len(got) != 1 || got[0].NeedsApply {
+		t.Fatalf("应用后不应待应用：%+v", got)
+	}
+	backupDir := filepath.Join(home, ".agentswitch", "backups", "claude")
+	ents, err := os.ReadDir(backupDir)
+	if err != nil || len(ents) == 0 {
+		t.Fatalf("应有备份：%v", err)
+	}
+	latest := ents[len(ents)-1].Name()
+	b, _ := os.ReadFile(filepath.Join(backupDir, latest))
+	if string(b) != string(before) {
+		t.Fatalf("最新备份应等于保存并应用前的 live：backup=%s before=%s", b, before)
+	}
+}
+
+func TestListBackupsAndRestoreSelected(t *testing.T) {
+	a := tempApp(t)
+	home := t.TempDir()
+	acc := AccessConfigs{A: a, Home: home}
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	v, _ := acc.Create("claude", "工作", "lm1", "")
+	os.MkdirAll(filepath.Join(home, ".claude"), 0o755)
+	livePath := filepath.Join(home, ".claude", "settings.json")
+	os.WriteFile(livePath, []byte(`{"v":1}`), 0o600)
+	if err := acc.Apply(v.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := acc.Apply(v.ID); err != nil {
+		t.Fatal(err)
+	}
+	backups, err := acc.ListBackups("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) < 2 {
+		t.Fatalf("backups = %+v", backups)
+	}
+	oldest := backups[len(backups)-1]
+	if err := acc.RestoreBackup("claude", oldest.Timestamp); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(livePath)
+	if !strings.Contains(string(b), `"v":1`) {
+		t.Fatalf("restored live = %s", b)
+	}
+}

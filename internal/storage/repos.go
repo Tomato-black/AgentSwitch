@@ -71,7 +71,7 @@ const targetCols = `id,logical_model_id,channel_id,model_name,priority`
 
 type accessConfigRepo struct{ db *sql.DB }
 
-const accessConfigCols = `id,app_type,name,logical_model_id,settings,is_current,sort_order,created_at,updated_at`
+const accessConfigCols = `id,app_type,name,logical_model_id,settings,is_current,needs_apply,sort_order,created_at,updated_at`
 
 // SetCurrent 在事务内原子切换该 app_type 的 current：先清同 app 全部
 // is_current，再置目标 id（id 必须已存在，否则回滚报错）；id=="" 仅清空。

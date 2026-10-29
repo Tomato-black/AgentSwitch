@@ -4,6 +4,7 @@
 package bridge
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"time"
 
 	"AgentSwitch/internal/provider"
 )
@@ -26,6 +28,12 @@ var fetchModelsClient = &http.Client{
 
 // FetchModels 拉上游 GET /v1/models（两种协议同形，鉴权头按协议区分）。
 func (s Channels) FetchModels(id string) ([]string, error) {
+	return s.FetchModelsContext(context15(), id)
+}
+
+// FetchModelsContext 是 FetchModels 的可取消版本：整个拉取（含候选端点与
+// 分页）共享 30s 上限，ctx 取消立即中止（UI 异步任务用）。
+func (s Channels) FetchModelsContext(ctx context.Context, id string) ([]string, error) {
 	c, err := s.A.Store().Channels().Get(id)
 	if err != nil {
 		return nil, err
@@ -34,20 +42,25 @@ func (s Channels) FetchModels(id string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("渠道无可用密钥，无法从上游获取模型: %w", err)
 	}
-	return fetchModelsHTTP(c.BaseURL, c.Protocol, key, c.AllowPrivateUpstream)
+	return fetchModelsHTTP(ctx, c.BaseURL, c.Protocol, key, c.AllowPrivateUpstream)
 }
 
 // FetchModelsFromDraft 用未保存渠道的表单值直接拉模型（新建表单「拉取模型」
 // 用；渠道尚未入库，无 Key 可读）。协议与 Key 在此校验——Create/Update 侧
 // 对 Key 只在 Create 时必填，草稿拉取则必须显式提供。
 func (s Channels) FetchModelsFromDraft(baseURL, protocol, apiKey string, allowPrivate bool) ([]string, error) {
+	return s.FetchModelsFromDraftContext(context15(), baseURL, protocol, apiKey, allowPrivate)
+}
+
+// FetchModelsFromDraftContext 是 FetchModelsFromDraft 的可取消版本。
+func (s Channels) FetchModelsFromDraftContext(ctx context.Context, baseURL, protocol, apiKey string, allowPrivate bool) ([]string, error) {
 	if protocol != "anthropic" && protocol != "openai" {
 		return nil, fmt.Errorf("协议必须是 anthropic 或 openai")
 	}
 	if strings.TrimSpace(apiKey) == "" {
 		return nil, fmt.Errorf("需要填写 API Key 后才能拉取模型")
 	}
-	return fetchModelsHTTP(baseURL, protocol, apiKey, allowPrivate)
+	return fetchModelsHTTP(ctx, baseURL, protocol, apiKey, allowPrivate)
 }
 
 // 分页上限：页数与总条数都封顶，防止上游无限 has_more 把 UI 卡死
@@ -162,7 +175,9 @@ var errModelsEndpointMissing = errors.New("模型列表端点不存在")
 // 响应同时兼容 OpenAI 形态 data[].id 与智谱目录形态 models[].slug|id。
 // 跨页按 id 去重保序；单页超过 fetchModelsMaxTotal 条或页数达到
 // fetchModelsMaxPages 即停。不跟随 3xx。
-func fetchModelsHTTP(baseURL, protocol, apiKey string, allowPrivate bool) ([]string, error) {
+func fetchModelsHTTP(ctx context.Context, baseURL, protocol, apiKey string, allowPrivate bool) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	if err := provider.ValidateBaseURL(baseURL, allowPrivate); err != nil {
 		return nil, fmt.Errorf("Base URL 校验失败: %w", err)
 	}
@@ -173,7 +188,7 @@ func fetchModelsHTTP(baseURL, protocol, apiKey string, allowPrivate bool) ([]str
 	}
 	var lastErr error
 	for _, endpoint := range candidates {
-		ids, err := fetchModelsFromEndpoint(endpoint, protocol, key)
+		ids, err := fetchModelsFromEndpoint(ctx, endpoint, protocol, key)
 		if err == nil {
 			return ids, nil
 		}
@@ -187,12 +202,12 @@ func fetchModelsHTTP(baseURL, protocol, apiKey string, allowPrivate bool) ([]str
 
 // fetchModelsFromEndpoint 对单个端点做分页拉取；404/405 包成
 // errModelsEndpointMissing 交给上层切换候选，其余错误原样上抛。
-func fetchModelsFromEndpoint(endpoint, protocol, key string) ([]string, error) {
+func fetchModelsFromEndpoint(ctx context.Context, endpoint, protocol, key string) ([]string, error) {
 	seen := map[string]bool{}
 	var out []string
 	cursor := ""
 	for page := 0; page < fetchModelsMaxPages; page++ {
-		req, err := http.NewRequestWithContext(context15(), http.MethodGet,
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 			endpoint+cursor, nil)
 		if err != nil {
 			return out, err

@@ -1,11 +1,50 @@
 package uikit
 
 import (
+	"math"
 	"strings"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
 )
+
+// contrast 返回两色的 WCAG 对比度（1..21），用于可访问性回归。
+func contrast(a, b ui.Color) float64 {
+	lin := func(v uint8) float64 {
+		s := float64(v) / 255
+		if s <= 0.03928 {
+			return s / 12.92
+		}
+		return math.Pow((s+0.055)/1.055, 2.4)
+	}
+	lum := func(c ui.Color) float64 {
+		return 0.2126*lin(c.R) + 0.7152*lin(c.G) + 0.0722*lin(c.B)
+	}
+	la, lb := lum(a), lum(b)
+	if la < lb {
+		la, lb = lb, la
+	}
+	return (la + 0.05) / (lb + 0.05)
+}
+
+// TestAccentButtonContrast 覆盖 2026-10-29 决策：主按钮橙底深字，对比度
+// 达到 WCAG AA（13px 正文 ≥4.5:1）。
+func TestAccentButtonContrast(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		th := BuildTheme(dark, 1)
+		if got := contrast(th.AccentText, th.Accent); got < 4.5 {
+			t.Fatalf("dark=%v accent contrast %.2f < 4.5", dark, got)
+		}
+	}
+}
+
+// TestMonoFontHasFallback 覆盖跨平台等宽：族列表必须带 monospace 回退，
+// 否则 Linux/Windows 缺 Menlo 时退化成比例字体。
+func TestMonoFontHasFallback(t *testing.T) {
+	if !strings.Contains(MonoFont, "monospace") {
+		t.Fatalf("MonoFont = %q, want a monospace fallback", MonoFont)
+	}
+}
 
 // TestBuildThemeTokens 覆盖 cc-switch 重设计 spec §3.2/§3.3：橙主操作锚点
 // （双外观同值）、Success 与 Accent 分离（绿=链路健康、橙=品牌操作，不再
@@ -118,6 +157,46 @@ func TestSelectionStillVisible(t *testing.T) {
 	}
 }
 
+// TestChartPalette 覆盖图表分类色板：两套外观均 8 槽且互异、不复用状态
+// 语义色、与卡片 Surface 对比 ≥3:1；色块上的标签墨色也 ≥3:1；ChartSlots
+// 按名称稳定取色（传入顺序变化不换色）。
+func TestChartPalette(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		th := BuildTheme(dark, 1)
+		cols := ChartColors(th)
+		if len(cols) != 8 {
+			t.Fatalf("dark=%v palette has %d slots, want 8", dark, len(cols))
+		}
+		seen := map[ui.Color]bool{}
+		for _, c := range cols {
+			if c == th.Success || c == th.Warning || c == th.Danger {
+				t.Fatalf("dark=%v series color %v reuses a status color", dark, c)
+			}
+			if seen[c] {
+				t.Fatalf("dark=%v duplicate series color %v", dark, c)
+			}
+			seen[c] = true
+			if got := contrast(c, th.Surface); got < 3 {
+				t.Fatalf("dark=%v series %v contrast %.2f < 3", dark, c, got)
+			}
+			if got := contrast(ChartInkOn(c), c); got < 3 {
+				t.Fatalf("dark=%v label ink on %v contrast %.2f < 3", dark, c, got)
+			}
+		}
+		if contrast(ChartAxis(th), th.Surface) < 4.5 {
+			t.Fatalf("dark=%v axis text contrast < 4.5", dark)
+		}
+	}
+	th := BuildTheme(false, 1)
+	a, b := ChartSlots(th, []string{"beta", "alpha"}), ChartSlots(th, []string{"alpha", "beta"})
+	if a["alpha"] != b["alpha"] || a["beta"] != b["beta"] {
+		t.Fatal("ChartSlots must follow the name, not input order")
+	}
+	if a["alpha"] == a["beta"] {
+		t.Fatal("distinct names need distinct slots within the first 8")
+	}
+}
+
 // TestLedDotRenders 冒烟：LED 组件在 Tester 帧内可构建不 panic（点本身
 // 无文本，Texts 为空即正常）。
 func TestLedDotRenders(t *testing.T) {
@@ -136,5 +215,18 @@ func TestReasonWord(t *testing.T) {
 	}
 	if got := ReasonWord(""); got != "" {
 		t.Fatalf("empty reason = %q", got)
+	}
+}
+
+// TestCooldownWords 覆盖冷却文案：错误分类中文、剩余秒数分档。
+func TestCooldownWords(t *testing.T) {
+	if CooldownReasonWord("rate_limited") != "上游限流" || CooldownReasonWord("quota_exhausted") != "额度耗尽" {
+		t.Fatal("reason words")
+	}
+	if CooldownReasonWord("weird") != "weird" {
+		t.Fatal("unknown reason must pass through")
+	}
+	if CooldownRemainingWord(45) != "45 秒" || CooldownRemainingWord(180) != "3 分" {
+		t.Fatal("remaining words")
 	}
 }

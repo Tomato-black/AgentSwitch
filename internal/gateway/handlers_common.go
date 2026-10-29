@@ -22,6 +22,28 @@ import (
 // responseHeaderWhitelist：回传给客户端的上游响应头。
 var responseHeaderWhitelist = []string{"Content-Type", "Retry-After", "Anthropic-Request-Id"}
 
+// usageWriter 在写出 SSE 的同时扫描 usage，供流式请求结束记录 token。
+type usageWriter struct {
+	http.ResponseWriter
+	tracker *protocol.StreamUsageTracker
+}
+
+func (w usageWriter) Write(p []byte) (int, error) {
+	_, _ = w.tracker.Write(p)
+	return w.ResponseWriter.Write(p)
+}
+
+func (w usageWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func trackedWriter(w http.ResponseWriter) (http.ResponseWriter, *protocol.StreamUsageTracker) {
+	tr := &protocol.StreamUsageTracker{}
+	return usageWriter{ResponseWriter: w, tracker: tr}, tr
+}
+
 // copyStream 逐块转发并 flush；idle>0 时监控客户端可见输出的空闲间隔，
 // 超时关闭上游并写出 onIdle。返回是否因空闲超时结束。src 由本函数拥有并在
 // 所有退出路径关闭：客户端写失败时必须关闭转换器 pipe 的读端，否则其泵

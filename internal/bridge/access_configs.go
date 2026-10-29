@@ -32,11 +32,13 @@ type AccessConfigView struct {
 	ID, Name, AppType, LogicalModelID, LogicalModelName string
 	Settings                                            string
 	IsCurrent                                           bool
+	NeedsApply                                          bool // current 配置有未应用的修改
 }
 
 func (s AccessConfigs) view(c storage.AccessConfig) AccessConfigView {
 	v := AccessConfigView{ID: c.ID, Name: c.Name, AppType: c.AppType,
-		LogicalModelID: c.LogicalModelID, Settings: c.Settings, IsCurrent: c.IsCurrent}
+		LogicalModelID: c.LogicalModelID, Settings: c.Settings, IsCurrent: c.IsCurrent,
+		NeedsApply: c.IsCurrent && c.NeedsApply}
 	// 逐条解析逻辑模型名；Get 失败（如已删模型）留空串即可。
 	if lm, err := s.A.Store().LogicalModels().Get(c.LogicalModelID); err == nil {
 		v.LogicalModelName = lm.Name
@@ -91,7 +93,8 @@ func (s AccessConfigs) Create(appType, name, logicalModelID, settingsJSON string
 		return AccessConfigView{}, uniqueErr(err, "配置名已存在")
 	}
 	s.A.Log().Info("access config created", "id", id, "app", appType, "actor", "ui", "result", "ok")
-	s.RegenerateDerived() // 新配置即落持久文件，其余派生文件同步刷新（spec「保存/更新时同步生成」）
+	// 新配置不是 current，只落持久文件；live 只在「应用」时写。
+	s.RegeneratePersistOnly()
 	return s.view(saved), nil
 }
 
@@ -118,13 +121,21 @@ func (s AccessConfigs) Update(id, name, logicalModelID, settingsJSON string) err
 	if err != nil {
 		return err
 	}
+	oldSettings, oldModel := c.Settings, c.LogicalModelID
 	c.Name, c.LogicalModelID = name, logicalModelID
 	c.Settings = raw
+	changed := oldSettings != raw || oldModel != logicalModelID
+	if c.IsCurrent {
+		c.NeedsApply = c.NeedsApply || changed
+	} else {
+		c.NeedsApply = false
+	}
 	if _, err := s.A.Store().AccessConfigs().Save(c); err != nil {
 		return uniqueErr(err, "配置名已存在")
 	}
 	s.A.Log().Info("access config updated", "id", id, "app", c.AppType, "actor", "ui", "result", "ok")
-	s.RegenerateDerived() // 覆盖项/模型变了，全部派生文件同步刷新（spec「保存/更新时同步生成」）
+	// 仅保存只落库与持久文件；live 由「应用」显式写入（P0-0）。
+	s.RegeneratePersistOnly()
 	return nil
 }
 
@@ -138,7 +149,7 @@ func (s AccessConfigs) Remove(id string) error {
 		return err
 	}
 	s.A.Log().Info("access config removed", "id", id, "actor", "ui", "result", "ok")
-	s.RegenerateDerived()
+	s.RegeneratePersistOnly()
 	return nil
 }
 
@@ -230,7 +241,9 @@ func (s AccessConfigs) SaveGlobalConfig(appType string, env map[string]string) e
 		return err
 	}
 	s.A.Log().Info("access global config saved", "app", appType, "actor", "ui", "result", "ok")
-	s.RegenerateDerived() // 全局配置变了，全部派生文件同步刷新（spec 验收场景④）
+	if errs := s.RegenerateDerived(); len(errs) > 0 { // 全局配置变了，全部派生文件同步刷新
+		return fmt.Errorf("已保存全局配置，但刷新 Agent 配置文件失败：%v", errs[0])
+	}
 	return nil
 }
 
@@ -248,48 +261,76 @@ type persistFiles struct {
 //	claude → claude --settings "<json>" %*
 //	codex  → set "KEY=VALUE"（字典序）+ codex -m "<model>" %*
 //
-// RegenerateDerived 端口变更后的联动重写（spec「派生文件联动」）：
-// 遍历两个 appType 的全部配置重写持久文件；对 Current(appType) 命中的
-// 配置额外重写 live 文件。任一配置失败只记 Error 日志并继续其余
-// （err 可能含路径，不回显 env/令牌值）；无任何配置时零写入、零日志
-// （既有 Gateway 测试不触碰用户目录的前提）。在 SaveSettings（端口变更）
-// 成功后调用；本地网关令牌不轮换（2026-10-28 决策）。
-func (s AccessConfigs) RegenerateDerived() {
+// RegenerateDerived 刷新全部派生文件：遍历两个 appType 的全部配置重写
+// 持久文件；对 Current(appType) 命中的配置额外重写 live 文件。端口变更、
+// 全局配置变更、逻辑模型增删改/启停后调用（2026-10-29 P0-3）。
+// 返回失败摘要供 UI 提示；日志/错误只含阶段与路径，不回显 env/令牌值。
+// 无任何配置时零写入、零日志（既有 Gateway 测试不触碰用户目录的前提）。
+// RegeneratePersistOnly 只重写全部配置的持久文件（供「仅保存」使用），
+// 不触碰 Agent live 文件。
+func (s AccessConfigs) RegeneratePersistOnly() []error { return s.regenerate(false) }
+
+// RegenerateDerived 重写持久文件，并在备份后刷新 current 的 live 文件；
+// 系统级变更（端口/令牌/全局配置/逻辑模型改名）使用。
+func (s AccessConfigs) RegenerateDerived() []error { return s.regenerate(true) }
+
+func (s AccessConfigs) regenerate(writeLive bool) []error {
+	var errs []error
+	fail := func(appType, stage string, err error) {
+		if err == nil {
+			return
+		}
+		errs = append(errs, fmt.Errorf("%s/%s: %w", appType, stage, err))
+		s.A.Log().Error("access derived refresh failed", "app", appType, "stage", stage, "err", err)
+	}
 	for _, appType := range []string{"claude", "codex"} {
 		cfgs, err := s.A.Store().AccessConfigs().ListByApp(appType)
 		if err != nil {
-			s.A.Log().Error("access derived refresh failed", "app", appType, "stage", "list", "err", err)
+			fail(appType, "list", err)
 			continue
 		}
 		if len(cfgs) == 0 {
 			continue
 		}
 		cur, _ := s.A.Store().AccessConfigs().Current(appType)
+		liveBackedUp := false
 		for _, c := range cfgs {
 			env, doc, model, err := s.composeFor(c)
 			if err != nil {
-				s.A.Log().Error("access derived refresh failed", "app", appType, "stage", "compose", "err", err)
+				fail(appType, "compose", err)
 				continue
 			}
 			// 持久文件失败不跳过 current 的 live 重写——令牌轮换后 live
 			// 仍是 Agent 实际使用的文件，陈旧令牌比持久文件缺失更糟
 			// （评审 Minor#8）。
 			if _, perr := s.writePersistEnv(c, env, doc, model); perr != nil {
-				s.A.Log().Error("access derived refresh failed", "app", appType, "stage", "persist", "err", perr)
+				fail(appType, "persist", perr)
 			}
-			if cur.ID != c.ID {
+			if !writeLive || cur.ID != c.ID {
 				continue
+			}
+			if c.NeedsApply {
+				fail(appType, "live", fmt.Errorf("配置「%s」有未应用的修改，未刷新 Agent 文件；请点击应用", c.Name))
+				continue
+			}
+			// 任何 live 写入前先备份；同一轮同一 appType 只备份一次，
+			// 避免多次写入产生多份同一状态快照。
+			if !liveBackedUp {
+				if berr := s.backupLive(appType); berr != nil {
+					fail(appType, "backup", berr)
+					continue
+				}
+				liveBackedUp = true
 			}
 			if appType == "claude" {
 				err = s.writeClaudeLive(doc, env)
 			} else {
 				err = s.writeCodexLive(env, model, doc)
 			}
-			if err != nil {
-				s.A.Log().Error("access derived refresh failed", "app", appType, "stage", "live", "err", err)
-			}
+			fail(appType, "live", err)
 		}
 	}
+	return errs
 }
 
 // openTerminalExec 是 OpenTerminal 的终端拉起注入点（测试替换断言参数，

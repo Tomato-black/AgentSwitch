@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -17,6 +18,9 @@ type Channels struct {
 	A     *app.App
 	Creds credential.Store
 }
+
+// BalanceResult 是渠道上游余额查询结果（provider 类型别名，桌面层无需 import provider）。
+type BalanceResult = provider.BalanceResult
 
 func (s Channels) creds() credential.Store {
 	if s.Creds != nil {
@@ -138,6 +142,43 @@ func (s Channels) Update(id, name, baseURL, protocol, apiKey string, enabled, al
 	return nil
 }
 
+// Copy 复制渠道的连接配置与建议模型；copyKey 为 false 时不复制 Key（默认
+// 安全），新渠道需由用户重新填写 Key。名称冲突自动追加「2/3…」。
+func (s Channels) Copy(id string, copyKey bool) (ChannelView, error) {
+	src, err := s.A.Store().Channels().Get(id)
+	if err != nil {
+		return ChannelView{}, fmt.Errorf("渠道不存在")
+	}
+	key := ""
+	if copyKey {
+		if k, err := s.secret(src); err == nil {
+			key = k
+		}
+	}
+	names := map[string]bool{}
+	if chs, err := s.A.Store().Channels().List(); err == nil {
+		for _, c := range chs {
+			names[c.Name] = true
+		}
+	}
+	base := src.Name + " 副本"
+	name := base
+	for i := 2; names[name]; i++ {
+		name = fmt.Sprintf("%s %d", base, i)
+	}
+	v, err := s.Create(src.PresetID, name, src.BaseURL, src.Protocol, key, src.Enabled, src.AllowPrivateUpstream)
+	if err != nil {
+		return ChannelView{}, err
+	}
+	if sugg, err := s.A.Store().ChannelModels().Suggestions(src.ID); err == nil && len(sugg) > 0 {
+		if err := s.SetSuggestions(v.ID, sugg); err != nil {
+			return v, err
+		}
+	}
+	s.A.Log().Info("channel copied", "from", id, "to", v.ID, "with_key", copyKey, "actor", "ui", "result", "ok")
+	return v, nil
+}
+
 // Remove 删渠道：先清密钥本体，再删行（channel_models 由 FK CASCADE）。
 func (s Channels) Remove(id string) {
 	if c, err := s.A.Store().Channels().Get(id); err == nil && c.CredentialRef != "" {
@@ -171,6 +212,12 @@ func (s Channels) secret(c storage.Channel) (string, error) {
 }
 
 func (s Channels) Test(id string) provider.ProbeResult {
+	return s.TestContext(context15(), id)
+}
+
+// TestContext 是 Test 的可取消版本（UI 异步任务用）：ctx 取消后立刻返回
+// 取消错误，不再等待上游。
+func (s Channels) TestContext(ctx context.Context, id string) provider.ProbeResult {
 	c, err := s.A.Store().Channels().Get(id)
 	if err != nil {
 		return provider.ProbeResult{Stage: "lookup", Error: err.Error()}
@@ -179,7 +226,33 @@ func (s Channels) Test(id string) provider.ProbeResult {
 	if err != nil {
 		return provider.ProbeResult{Stage: "credential", Error: err.Error()}
 	}
-	return provider.Probe(context15(), c.Protocol, c.BaseURL, key, c.AllowPrivateUpstream)
+	res := provider.Probe(ctx, c.Protocol, c.BaseURL, key, c.AllowPrivateUpstream)
+	if ctx.Err() != nil {
+		return provider.ProbeResult{Stage: "canceled", Error: ctx.Err().Error()}
+	}
+	return res
+}
+
+// Balance 查询渠道上游余额（可取消版本见 BalanceContext）。
+func (s Channels) Balance(id string) provider.BalanceResult {
+	return s.BalanceContext(context15(), id)
+}
+
+// BalanceContext 查询渠道上游余额；只支持有公开余额 API 的供应商。
+func (s Channels) BalanceContext(ctx context.Context, id string) provider.BalanceResult {
+	c, err := s.A.Store().Channels().Get(id)
+	if err != nil {
+		return provider.BalanceResult{Message: "渠道不存在"}
+	}
+	key, err := s.secret(c)
+	if err != nil {
+		return provider.BalanceResult{Message: err.Error()}
+	}
+	res := provider.ProbeBalance(ctx, c.PresetID, c.BaseURL, key, c.AllowPrivateUpstream)
+	if ctx.Err() != nil {
+		res.Message = "已取消"
+	}
+	return res
 }
 
 // SetSuggestions 全量替换渠道的模型建议列表（空白/空串/重复项剔除）。

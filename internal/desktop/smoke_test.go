@@ -61,7 +61,9 @@ func TestRootSmokeAccessTabs(t *testing.T) {
 		t.Fatalf("desktop tab missing 角色映射: %v", tt.Texts())
 	}
 
-	// 连接指南：通用连接信息卡。
+	// 连接指南：通用连接信息卡（先关闭编辑器，模拟从列表切页签）。
+	u.Access.DesktopForm = state.DesktopForm{}
+	u.Access.Form = state.AccessForm{}
 	u.Access.App = "guide"
 	if tt := ui.NewTester(u.view, 1000, 900); !tt.HasText("通用连接信息") {
 		t.Fatalf("guide tab missing 通用连接信息: %v", tt.Texts())

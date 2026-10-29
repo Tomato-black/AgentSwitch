@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"AgentSwitch/internal/storage"
@@ -183,10 +184,45 @@ func codexCatalogEntryHasInstructions(entry map[string]any) bool {
 	return false
 }
 
-// loadCodexModelCatalogTemplate 先找 Codex 可执行文件取内置模型，再退回
-// 本地已有目录（cc-switch 或上一次 AgentSwitch 生成的）——迁移用户即使
-// 暂时找不到 Codex 二进制也能生成目录。
+var (
+	codexTemplateMu    sync.Mutex
+	codexTemplate      map[string]any
+	codexTemplateCalls int // 实际加载次数（测试用）
+	// codexTemplateSource 是缓存未命中时的实际加载入口（测试可替换）。
+	codexTemplateSource = loadCodexModelCatalogTemplateUncached
+)
+
+// loadCodexModelCatalogTemplate 返回缓存的 Codex 模型模板：首次加载可能运行
+// `codex debug models --bundled`（最长 10s），此后进程内复用；返回深拷贝，
+// 调用方修改不会污染缓存（2026-10-29 P0-2）。缓存未命中时仍可能阻塞，故
+// UI 侧首次生成目录应异步执行。
 func loadCodexModelCatalogTemplate() (map[string]any, error) {
+	codexTemplateMu.Lock()
+	defer codexTemplateMu.Unlock()
+	if codexTemplate != nil {
+		return cloneCodexCatalogEntry(codexTemplate)
+	}
+	entry, err := codexTemplateSource()
+	if err != nil {
+		return nil, err
+	}
+	codexTemplate = entry
+	codexTemplateCalls++
+	return cloneCodexCatalogEntry(entry)
+}
+
+// resetCodexTemplateCache 清空缓存（测试用；生产路径不调用）。
+func resetCodexTemplateCache() {
+	codexTemplateMu.Lock()
+	codexTemplate = nil
+	codexTemplateCalls = 0
+	codexTemplateMu.Unlock()
+}
+
+// loadCodexModelCatalogTemplateUncached 先找 Codex 可执行文件取内置模型，再
+// 退回本地已有目录（cc-switch 或上一次 AgentSwitch 生成的）——迁移用户即使
+// 暂时找不到 Codex 二进制也能生成目录。
+func loadCodexModelCatalogTemplateUncached() (map[string]any, error) {
 	var lastErr error
 	for _, bin := range codexBinaryCandidates() {
 		entry, err := readBundledCodexModelTemplate(bin)

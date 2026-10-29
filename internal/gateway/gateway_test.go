@@ -718,7 +718,7 @@ func TestPassthroughReservedStill404(t *testing.T) {
 }
 
 // TestAllCooling503：候选全 cooling（Resolve 滤光且 Filtered 非空）→ 503，
-// body 含 all targets cooling，上游 0 调用。
+// body 含中文冷却说明，上游 0 调用。
 func TestAllCooling503(t *testing.T) {
 	var calls int
 	up := fakeUpstream(t, 200, `{"id":"ok"}`, &calls)
@@ -739,8 +739,8 @@ func TestAllCooling503(t *testing.T) {
 	if resp.StatusCode != 503 {
 		t.Fatalf("all-cooling must 503, got %d: %s", resp.StatusCode, b)
 	}
-	if !strings.Contains(string(b), "all targets cooling") {
-		t.Fatalf("503 body must say all targets cooling: %s", b)
+	if !strings.Contains(string(b), "冷却") {
+		t.Fatalf("503 body must say 冷却: %s", b)
 	}
 	var env struct {
 		Type string `json:"type"`
@@ -754,7 +754,7 @@ func TestAllCooling503(t *testing.T) {
 }
 
 // TestSecondCheckAllCooling503：候选未带冷却快照但发送前二次校验全部命中冷却
-// （TryAcquire 失败）→ 亦503 all targets cooling（「全部仅因冷却」含此路径）。
+// （TryAcquire 失败）→ 亦 503 中文冷却说明（「全部仅因冷却」含此路径）。
 func TestSecondCheckAllCooling503(t *testing.T) {
 	var calls int
 	up := fakeUpstream(t, 200, `{"id":"ok"}`, &calls)
@@ -774,7 +774,7 @@ func TestSecondCheckAllCooling503(t *testing.T) {
 	resp := post(t, s, `{"model":"pub-1","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`, "tok")
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 503 || !strings.Contains(string(b), "all targets cooling") {
+	if resp.StatusCode != 503 || !strings.Contains(string(b), "冷却") {
 		t.Fatalf("second-check all-cooling must 503 all targets cooling, got %d: %s",
 			resp.StatusCode, b)
 	}
@@ -2210,5 +2210,115 @@ func TestGatewayUserAgentEndToEnd(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("calls = %d, want 2", calls)
+	}
+}
+
+func TestNonStreamUsageRecorded(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"id":"m","type":"message","usage":{"input_tokens":3,"output_tokens":2}}`))
+	}))
+	defer up.Close()
+	var recs []telemetry.RequestRecord
+	s := newGW(t, up.URL, func(d *Deps) {
+		d.OnRecord = func(rec telemetry.RequestRecord) { recs = append(recs, rec) }
+	})
+	resp := post(t, s, `{"model":"pub-1","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`, "tok")
+	defer resp.Body.Close()
+	io.ReadAll(resp.Body)
+	if len(recs) != 1 {
+		t.Fatalf("records = %d", len(recs))
+	}
+	if recs[0].InputTokens != 3 || recs[0].OutputTokens != 2 {
+		t.Fatalf("usage = %d/%d", recs[0].InputTokens, recs[0].OutputTokens)
+	}
+}
+
+func TestStreamUsageRecordedMessages(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		w.Write([]byte("event: message_start\n" +
+			"data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":3}}}\n\n" +
+			"event: message_delta\n" +
+			"data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":2}}\n\n"))
+	}))
+	defer up.Close()
+	var recs []telemetry.RequestRecord
+	s := newGW(t, up.URL, func(d *Deps) {
+		d.OnRecord = func(rec telemetry.RequestRecord) { recs = append(recs, rec) }
+	})
+	resp := post(t, s, `{"model":"pub-1","max_tokens":8,"stream":true,"messages":[{"role":"user","content":"hi"}]}`, "tok")
+	defer resp.Body.Close()
+	io.ReadAll(resp.Body)
+	if len(recs) != 1 {
+		t.Fatalf("records = %d", len(recs))
+	}
+	if recs[0].InputTokens != 3 || recs[0].OutputTokens != 2 {
+		t.Fatalf("usage = %d/%d", recs[0].InputTokens, recs[0].OutputTokens)
+	}
+}
+
+func TestStreamUsageRecordsOpenAIAndInjectsIncludeUsage(t *testing.T) {
+	var sawIncludeUsage bool
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		sawIncludeUsage = strings.Contains(string(b), `"include_usage":true`)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		w.Write([]byte("data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":3}}\n\n"))
+	}))
+	defer up.Close()
+	var recs []telemetry.RequestRecord
+	s := newGW(t, up.URL, func(d *Deps) {
+		d.OnRecord = func(rec telemetry.RequestRecord) { recs = append(recs, rec) }
+		d.Candidates = func(name string) ([]router.Candidate, error) {
+			if name != "pub-1" {
+				return nil, nil
+			}
+			return []router.Candidate{{
+				TargetID: "t1", LogicalModel: "pub-1", ChannelID: "c1", ChannelName: "main",
+				SecretKey: "account:k1", Protocol: "openai", BaseURL: up.URL,
+				AllowPrivate: true, UpstreamModel: "up-1", Priority: 10,
+			}}, nil
+		}
+	})
+	resp := postChat(t, s, `{"model":"pub-1","stream":true,"messages":[{"role":"user","content":"hi"}]}`, "tok")
+	defer resp.Body.Close()
+	io.ReadAll(resp.Body)
+	if !sawIncludeUsage {
+		t.Fatal("stream_options.include_usage must be injected")
+	}
+	if len(recs) != 1 || recs[0].InputTokens != 5 || recs[0].OutputTokens != 3 {
+		t.Fatalf("records = %+v", recs)
+	}
+}
+
+func TestMessagesRetriesWithoutThinkingOnUpstream400(t *testing.T) {
+	calls := 0
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		b, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(b), `"thinking"`) {
+			w.WriteHeader(400)
+			w.Write([]byte(`{"error":{"message":"The ` + "`content[].thinking`" + ` in the thinking mode must be passed back to the API.","type":"invalid_request_error"}}`))
+			return
+		}
+		w.Write([]byte(`{"id":"m","type":"message"}`))
+	}))
+	defer up.Close()
+	var recs []telemetry.RequestRecord
+	s := newGW(t, up.URL, func(d *Deps) {
+		d.OnRecord = func(rec telemetry.RequestRecord) { recs = append(recs, rec) }
+	})
+	body := `{"model":"pub-1","max_tokens":8,"stream":true,"thinking":{"type":"enabled","budget_tokens":1024},"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":"s"},{"type":"text","text":"ok"}]}]}`
+	resp := post(t, s, body, "tok")
+	defer resp.Body.Close()
+	io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 || calls != 2 {
+		t.Fatalf("status=%d calls=%d recs=%+v", resp.StatusCode, calls, recs)
+	}
+	if len(recs) != 1 || recs[0].Status != 200 {
+		t.Fatalf("recs = %+v", recs)
 	}
 }

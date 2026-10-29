@@ -1,7 +1,10 @@
 package bridge
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -95,4 +98,124 @@ func TestGatewayStatusShape(t *testing.T) {
 		t.Fatalf("settings echo: port=%d timeout=%d", st.Port, st.TimeoutSeconds)
 	}
 	_ = storage.NewID
+}
+
+func TestGatewayHistoryAndExport(t *testing.T) {
+	a := tempApp(t)
+	g := Gateway{A: a}
+	if err := a.Store().RequestHistory().Add(storage.RequestHistoryRecord{
+		ID: "r1", StartedAt: 123, Model: "m", Channel: "c", Status: 200,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := g.History(10)
+	if len(got) != 1 || got[0].ID != "r1" {
+		t.Fatalf("History = %+v", got)
+	}
+	t.Setenv("HOME", t.TempDir())
+	path, err := g.ExportHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"r1"`) {
+		t.Fatalf("export = %s", b)
+	}
+	if strings.Contains(string(b), "Authorization") || strings.Contains(string(b), "sk-") {
+		t.Fatal("export must not contain secrets")
+	}
+}
+
+func TestGatewayTestLogicalModel(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(`{}`))
+	}))
+	defer up.Close()
+	a := tempApp(t)
+	if _, err := a.Store().Channels().Save(storage.Channel{
+		ID: "c1", Name: "up", Protocol: "anthropic", BaseURL: up.URL,
+		CredentialRef: "ref", Enabled: true, AllowPrivateUpstream: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Creds().Set("ref", []byte("sk-test")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Store().LogicalModelTargets().Save(storage.LogicalModelTarget{
+		ID: "t1", LogicalModelID: "lm1", ChannelID: "c1", ModelName: "m1", Priority: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := (Gateway{A: a}).TestLogicalModel(context.Background(), "my-code")
+	if err != nil || !res.OK || len(res.Targets) != 1 {
+		t.Fatalf("probe = %+v, %v", res, err)
+	}
+}
+
+func TestGatewaySetup(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	a := tempApp(t)
+	g := Gateway{A: a}
+	if s := g.Setup(); s.Channels != 0 || s.LogicalModels != 0 || s.AppliedAccess != 0 {
+		t.Fatalf("empty setup = %+v", s)
+	}
+	ch, err := (Channels{A: a}).Create("", "主渠道", "https://api.example.com", "anthropic", "", true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lm, err := (LogicalModels{A: a}).Create("my-code", "", ModelMeta{}, []TargetSpec{{ChannelID: ch.ID, ModelName: "m1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := (AccessConfigs{A: a}).Create("claude", "工作", lm.ID, "{}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (AccessConfigs{A: a}).Apply(v.ID); err != nil {
+		t.Fatal(err)
+	}
+	s := g.Setup()
+	if s.Channels != 1 || s.LogicalModels != 1 || s.AppliedAccess != 1 {
+		t.Fatalf("setup = %+v", s)
+	}
+}
+
+func TestGatewayAlertsEnabled(t *testing.T) {
+	g := Gateway{A: tempApp(t)}
+	if !g.AlertsEnabled() {
+		t.Fatal("alerts must default on")
+	}
+	if err := g.SetAlertsEnabled(false); err != nil {
+		t.Fatal(err)
+	}
+	if g.AlertsEnabled() {
+		t.Fatal("alerts must be off after disable")
+	}
+	if err := g.SetAlertsEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	if !g.AlertsEnabled() {
+		t.Fatal("alerts must be on after enable")
+	}
+}
+
+func TestOpenLogDir(t *testing.T) {
+	old := openPath
+	var got string
+	openPath = func(path string) error { got = path; return nil }
+	defer func() { openPath = old }()
+	a := tempApp(t)
+	if err := (Gateway{A: a}).OpenLogDir(); err != nil {
+		t.Fatal(err)
+	}
+	if got != filepath.Dir(a.LogPath()) {
+		t.Fatalf("opened %q, want %q", got, filepath.Dir(a.LogPath()))
+	}
 }

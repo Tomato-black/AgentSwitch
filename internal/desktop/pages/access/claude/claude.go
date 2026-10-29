@@ -27,7 +27,7 @@ func EditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State
 					refreshPreview(st, acc, true)
 				}
 			})
-			ui.TextArea(c, &st.Access.Form.ClaudePreview).Height(220).ReadOnly(true)
+			ui.TextArea(c, &st.Access.Form.ClaudePreview).Height(200).ReadOnly(true).Font(uikit.MonoFont)
 		},
 	})
 }

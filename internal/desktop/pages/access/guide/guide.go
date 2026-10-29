@@ -81,19 +81,18 @@ func Card(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State) {
 			for _, r := range rows {
 				row := r
 				ui.Row(c).Gap(8).Children(func() {
-					ui.Text(c, row.label).TextColor(t.TextMuted).Width(110)
-					ui.Text(c, row.value).Grow(1)
+					ui.Text(c, row.label).TextColor(t.TextMuted).Width(uikit.LabelWidth)
+					ui.Text(c, row.value).Grow(1).Font(uikit.MonoFont).SingleLine()
 					if row.copyValue != "" {
 						if uikit.SoftButton(c, t, s, "gray", "复制").Clicked() {
 							mygo.Clipboard.Write(transfer.TextData(row.copyValue))
 							st.Access.GuideMsg = "已复制：" + row.label
+							c.Toast(st.Access.GuideMsg)
 						}
 					}
 				})
 			}
-			if st.Access.GuideMsg != "" {
-				ui.Text(c, st.Access.GuideMsg).TextColor(t.TextMuted)
-			}
+			uikit.Feedback(c, t, uikit.InferFeedback(st.Access.GuideMsg), st.Access.GuideMsg)
 		})
 	})
 }
