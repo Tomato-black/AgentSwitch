@@ -2,7 +2,7 @@
 
 日期：2026-10-23
 状态：待评审
-参考：cc-switch（/Users/caozhang/work/java_work/cc/cc-switch-main）——其预设同样硬编码于
+参考：cc-switch（本地克隆路径略）——其预设同样硬编码于
 TS 源码（`src/config/*ProviderPresets.ts`），无用户可扩展机制；本设计是明确的进一步做法。
 
 ## 1. 背景与动机

@@ -4,7 +4,7 @@
 - 状态：已评审通过的设计方向（用户逐屏确认 mockup），待实现
 - 决策人：仓库所有者（zhang.cao）
 - 范围：`internal/desktop`（UI 层）+ `CLAUDE.md`；不触碰 gateway/protocol/router/provider 数据面与 bridge 语义
-- 参照物：cc-switch（https://github.com/farion1231/cc-switch ，本地源码 `/Users/caozhang/work/java_work/cc/cc-switch-main`）v7 设计语言；其设计 token 见该仓库 `src/index.css`
+- 参照物：cc-switch（https://github.com/farion1231/cc-switch ，本地克隆路径略）v7 设计语言；其设计 token 见该仓库 `src/index.css`
 
 ## 1. 决策记录与同旧档的关系
 

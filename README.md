@@ -1,6 +1,6 @@
 # AgentSwitch
 
-[![CI](https://img.shields.io/badge/CI-github--actions-blue)](.github/workflows/ci.yml)
+[![CI](https://github.com/Tomato-black/AgentSwitch/actions/workflows/ci.yml/badge.svg)](https://github.com/Tomato-black/AgentSwitch/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)](#平台支持)
 
