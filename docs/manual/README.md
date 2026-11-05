@@ -89,7 +89,7 @@ my-code
 |-------|---------|
 | Claude Code | `~/.claude/settings.json`（只改受管 env 键） |
 | Codex | `~/.codex/config.toml` + `~/.codex/agentswitch-model-catalog.json`（不改 `auth.json`） |
-| Claude Desktop | `~/.config/Claude/claude_desktop_config.json`（inferenceGateway profile + 角色别名） |
+| Claude Desktop | macOS `~/Library/Application Support/Claude[-3p]/claude_desktop_config.json`；Linux `~/.config/Claude[-3p]/`；Windows `%LOCALAPPDATA%\Claude[-3p]\`（inferenceGateway profile + 角色别名） |
 
 非默认配置会生成持久启动文件；可以复制启动命令或点「打开终端」，用该配置启动 Agent，
 不影响已应用的默认配置。端口或令牌变化时，派生文件会自动刷新。

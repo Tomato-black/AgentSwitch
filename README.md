@@ -85,7 +85,7 @@ go tool mygo build -platform windows/amd64
 |-------|---------|---------|
 | Claude Code | `~/.claude/settings.json`（env） | `/v1/messages` |
 | Codex（CLI / 桌面版） | `~/.codex/config.toml`（`wire_api="responses"`、`experimental_bearer_token`、`model_catalog_json`、`disable_response_storage`、`web_search`、窗口/压缩阈值、`[agents]` 子代理）+ `~/.codex/agentswitch-model-catalog.json`；`auth.json` 不改写 | `/v1/responses` |
-| Claude Desktop | `~/.config/Claude/claude_desktop_config.json`（inferenceGateway profile + 角色别名） | `/v1/messages` |
+| Claude Desktop | macOS：`~/Library/Application Support/Claude/` 与 `Claude-3p/`；Linux：`~/.config/Claude/`；Windows：`%LOCALAPPDATA%\Claude/`（均为 `claude_desktop_config.json` + profile + 角色别名） | `/v1/messages` |
 | 连接指南（第三方 Agent） | 不写入文件；展示网关地址、三协议端点、Bearer 认证与启用模型，供人工填写 | 三入站均可 |
 
 Codex 接入页还提供只读的**完整 `config.toml` 预览**（应用后的受管键 + 用户原有键）与**模型元数据编辑**（显示名、上下文窗口、思考等级；按配置覆盖，保存并「应用」后生效）。Codex 桌面版的模型选择器只读 `~/.codex/agentswitch-model-catalog.json`（「应用」时用 Codex 自带模型模板生成，目录条目来自有序模型列表与模型元数据）；旧对话保留创建时的 provider，重新应用后请新建对话。
