@@ -4,6 +4,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)](#平台支持)
 
+[官网](https://tomato-black.github.io/AgentSwitch/) · [文档](README.md) · [Releases](../../releases) · [Discussions](../../discussions)
+
 **本地 AI Agent 模型网关**——为 Claude Code / Codex（CLI / 桌面版）/ Claude Desktop 等本地 Agent 提供统一的模型入口：集中管理多供应商渠道与密钥，按「逻辑模型」做优先级故障转移，Agent 无需重启即可切换上游。Go 单二进制 + MyGo 原生 UI 桌面应用。
 
 ```
