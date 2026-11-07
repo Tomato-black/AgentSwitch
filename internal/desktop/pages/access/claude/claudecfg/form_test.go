@@ -69,7 +69,7 @@ func TestFormSectionRendersSevenGroups(t *testing.T) {
 
 	tt := renderForm(st, 1200, 4000)
 	for _, want := range []string{
-		"模型与响应", "环境变量", "权限", "状态栏", "MCP 与插件", "Skills", "记忆与上下文",
+		"推理与响应", "环境变量", "权限", "状态栏", "MCP 与插件", "Skills", "记忆与上下文",
 		"ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL",
 		"由 AgentSwitch 接入管理", "危险模式确认", "启用全部项目 MCP 服务器",
 		"foo@market", "清理周期",
@@ -116,27 +116,28 @@ func TestFormSectionProjectSharedDisablesDangerMode(t *testing.T) {
 func TestFormInheritedKeyShowsSourceAndOverrideDoesNotCopy(t *testing.T) {
 	st := formTestState(t)
 	cf := &st.ClaudeCfg
+	// model/fallbackModel 已归接入抽屉（2026-11-07），继承语义用 effortLevel 钉。
 	cf.MergeEntries = map[string]corecfg.MergedEntry{
-		"model": {Path: "model", Value: "opus", Source: corecfg.ScopeManaged},
+		"effortLevel": {Path: "effortLevel", Value: "high", Source: corecfg.ScopeManaged},
 	}
 	tt := renderForm(st, 1200, 4000)
 	if !tt.HasText("继承自下层") || !tt.HasText("来源：企业托管") {
 		t.Fatalf("inherited source missing: %v", tt.Texts())
 	}
-	if !tt.HasText("opus") {
+	if !tt.HasText("high") {
 		t.Fatalf("inherited value missing: %v", tt.Texts())
 	}
 	if err := tt.Click("覆盖"); err != nil {
 		t.Fatalf("click override: %v", err)
 	}
 	tt.Frame()
-	if v, ok := cf.Doc["model"]; ok {
+	if v, ok := cf.Doc["effortLevel"]; ok {
 		t.Fatalf("override must not write inherited value, got %v", v)
 	}
 	if cf.Dirty {
 		t.Fatal("override alone must not dirty the document")
 	}
-	if !cf.Overrides["model"] {
+	if !cf.Overrides["effortLevel"] {
 		t.Fatalf("override marker missing: %v", cf.Overrides)
 	}
 }
@@ -444,14 +445,12 @@ func TestInheritedRowsShowFieldLabels(t *testing.T) {
 			t.Fatalf("缺键继承行缺标签 %q: %v", want, tt.Texts())
 		}
 	}
-	// 模型组同样（回退模型/推理强度是 listField/enumField 的继承行）。
+	// 状态栏组同样（statusLineGroup 的继承行带「状态栏」标签）。
 	tt = ui.NewTester(func(c *ui.Context) {
-		modelGroup(c, c.Theme(), uikit.Softs(c.Theme()), &st.ClaudeCfg)
+		statusLineGroup(c, c.Theme(), uikit.Softs(c.Theme()), &st.ClaudeCfg)
 	}, 1000, 600)
-	for _, want := range []string{"主模型", "回退模型", "推理强度"} {
-		if !tt.HasText(want) {
-			t.Fatalf("缺键继承行缺标签 %q: %v", want, tt.Texts())
-		}
+	if !tt.HasText("状态栏") {
+		t.Fatalf("缺键继承行缺标签 %q: %v", "状态栏", tt.Texts())
 	}
 }
 
@@ -507,5 +506,25 @@ func TestPermissionRuleAddViaUI(t *testing.T) {
 	}
 	if !st.ClaudeCfg.Dirty {
 		t.Fatal("添加后应变脏")
+	}
+}
+
+// TestModelGroupDropsModelKeys（2026-11-07 用户裁定）：主模型/回退模型归接入
+// 抽屉设置，设置页模型卡只剩推理强度与思考开关。
+func TestModelGroupDropsModelKeys(t *testing.T) {
+	st := formTestState(t)
+	ensureFormState(&st.ClaudeCfg)
+	tt := ui.NewTester(func(c *ui.Context) {
+		modelGroup(c, c.Theme(), uikit.Softs(c.Theme()), &st.ClaudeCfg)
+	}, 1000, 600)
+	for _, want := range []string{"推理强度", "始终开启思考"} {
+		if !tt.HasText(want) {
+			t.Fatalf("missing %q: %v", want, tt.Texts())
+		}
+	}
+	for _, unwanted := range []string{"主模型", "回退模型"} {
+		if tt.HasText(unwanted) {
+			t.Fatalf("不应再出现 %q: %v", unwanted, tt.Texts())
+		}
 	}
 }

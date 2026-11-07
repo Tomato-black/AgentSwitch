@@ -85,10 +85,11 @@ func groupCard(c *ui.Context, t *ui.Theme, title, hint string, body func()) {
 // 1. 模型与响应
 // ---------------------------------------------------------------------------
 
+// modelGroup 只保留推理强度与思考开关——主模型/回退模型归接入抽屉设置
+//（2026-11-07 用户裁定「接入只配置模型和网关」；写入接入文档顶层键经投影
+// 进 settings.json，且被受管集合自动只读）。
 func modelGroup(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.ClaudeCfgState) {
-	groupCard(c, t, "模型与响应", "主模型、回退模型、推理强度与常驻思考", func() {
-		stringField(c, t, s, cf, "model", "主模型", "例如 my-code / sonnet / opus")
-		listField(c, t, s, cf, "fallbackModel", "回退模型", "逗号分隔，按顺序尝试")
+	groupCard(c, t, "推理与响应", "推理强度与思考开关；模型选择在「接入」抽屉设置", func() {
 		enumField(c, t, s, cf, "effortLevel", "推理强度",
 			[]string{"low", "medium", "high", "xhigh"}, "继承（未设置）")
 		boolField(c, t, s, cf, "alwaysThinkingEnabled", "始终开启思考", "")

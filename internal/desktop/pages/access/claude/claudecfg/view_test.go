@@ -31,7 +31,7 @@ func TestSectionRendersClaudeSettings(t *testing.T) {
 	}, 1000, 1600)
 	for _, want := range []string{
 		"Claude Code 设置", "受管 13 键", "用户级", "项目级", "企业托管",
-		"表单", "JSON", "合并预览", "模型与响应", "权限", "Skills",
+		"表单", "JSON", "合并预览", "推理与响应", "权限", "Skills",
 		"危险模式确认",
 		// 2026-11-07 用户裁定：刷新/保存设置是设置区（Claude 专属）动作，
 		// 收回区块头渲染，不进全页签共享的页头。
