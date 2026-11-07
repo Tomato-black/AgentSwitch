@@ -18,32 +18,17 @@ import (
 	"AgentSwitch/internal/storage"
 )
 
-// TestTabDirtyIncludesClaudeCfg 回归（I1）：Claude 页签的 Claude Code 设置区
-// 有未保存修改时页签切换也要确认；确认切换后该区草稿被丢弃。
+// TestTabDirtyExcludesClaudeCfg（2026-11-07 拆页）：设置区拆独立页后，
+// ClaudeCfg 脏不再阻断接入页页签切换（由设置页的侧栏守卫承担）。
 func TestTabDirtyIncludesClaudeCfg(t *testing.T) {
 	st, _ := uitest.New(t)
 	st.Access.App = "claude"
 	if tabDirty(st) {
 		t.Fatal("clean claude config must not block tab switch")
 	}
-	st.ClaudeCfg.Home = "/tmp/home"
 	st.ClaudeCfg.Dirty = true
-	if !tabDirty(st) {
-		t.Fatal("dirty claude config must block tab switch")
-	}
-	requestTab(st, configs(st), "codex")
-	if !st.Access.SwitchArm || st.Access.SwitchTo != "codex" {
-		t.Fatalf("dirty switch must arm confirm: %+v", st.Access)
-	}
-	if st.Access.App != "claude" {
-		t.Fatal("tab must not change before confirm")
-	}
-	switchTab(st, configs(st), "codex")
-	if st.Access.App != "codex" || st.ClaudeCfg.Dirty {
-		t.Fatalf("confirmed switch must discard draft: app=%q cfg=%+v", st.Access.App, st.ClaudeCfg)
-	}
-	if st.ClaudeCfg.Home != "/tmp/home" {
-		t.Fatalf("injected Home must survive: %q", st.ClaudeCfg.Home)
+	if tabDirty(st) {
+		t.Fatal("拆页后 ClaudeCfg 脏不应计入接入页签切换（侧栏守卫承担）")
 	}
 }
 
@@ -417,9 +402,14 @@ func TestPageHeaderAgentAccess(t *testing.T) {
 	st.Page = "access"
 	st.Access.App = "claude"
 	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
-	for _, want := range []string{"Agent 接入", "并在同一页管理它的设置", "Claude Code 设置", "刷新", "保存设置"} {
+	for _, want := range []string{"Agent 接入", "并在同一页管理它的设置", "打开设置页"} {
 		if !tt.HasText(want) {
 			t.Fatalf("missing %q: %v", want, tt.Texts())
+		}
+	}
+	for _, unwanted := range []string{"保存设置", "用户级"} {
+		if tt.HasText(unwanted) {
+			t.Fatalf("claude 页签不应再含设置区 %q: %v", unwanted, tt.Texts())
 		}
 	}
 	st.Access.App = "codex"
@@ -534,9 +524,6 @@ func TestClaudeTabDropsConfigListCard(t *testing.T) {
 			t.Fatalf("claude 页签不应再渲染 %q: %v", unwanted, tt.Texts())
 		}
 	}
-	if !tt.HasText("打开接入") {
-		t.Fatalf("受管键行缺「打开接入」: %v", tt.Texts())
-	}
 	st.Access.App = "codex"
 	tt = ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
 	if !tt.HasText("实际配置") || !tt.HasText("＋ 新建配置") {
@@ -638,5 +625,31 @@ func TestCodexConfigFilterSearchField(t *testing.T) {
 	tt = ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1200, 900)
 	if !tt.HasText("没有匹配的配置") {
 		t.Fatalf("无匹配提示缺失: %v", tt.Texts())
+	}
+}
+
+// TestClaudeTabSlimmedAfterSplit（2026-11-07 拆页）：claude 页签不再渲染设置区
+// 主体（用户级/视图切换等），摘要卡提供「打开设置页」跨页入口；ClaudeCfg
+// 脏不再阻断接入页页签切换（脏守卫由设置页承担）。
+func TestClaudeTabSlimmedAfterSplit(t *testing.T) {
+	st, a := uitest.New(t)
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	st.Page = "access"
+	st.Access.App = "claude"
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
+	if !tt.HasText("Claude Code 接入") || !tt.HasText("打开设置页") {
+		t.Fatalf("摘要卡应提供设置页入口: %v", tt.Texts())
+	}
+	for _, unwanted := range []string{"用户级", "项目级", "企业托管", "合并预览", "模型与响应"} {
+		if tt.HasText(unwanted) {
+			t.Fatalf("claude 页签不应再含设置区 %q: %v", unwanted, tt.Texts())
+		}
+	}
+	// 页签切换脏守卫不再计入 ClaudeCfg（设置页离开时由侧栏守卫确认）。
+	st.ClaudeCfg.Dirty = true
+	if tabDirty(st) {
+		t.Fatal("ClaudeCfg 脏不应阻断接入页签切换")
 	}
 }

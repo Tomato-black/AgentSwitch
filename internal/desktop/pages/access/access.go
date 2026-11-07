@@ -23,7 +23,6 @@ import (
 	"AgentSwitch/internal/bridge"
 	"AgentSwitch/internal/desktop/accesskit"
 	"AgentSwitch/internal/desktop/pages/access/claude"
-	claudeclaudecfg "AgentSwitch/internal/desktop/pages/access/claude/claudecfg"
 	"AgentSwitch/internal/desktop/pages/access/claudedesktop"
 	"AgentSwitch/internal/desktop/pages/access/codex"
 	"AgentSwitch/internal/desktop/pages/access/guide"
@@ -262,11 +261,6 @@ func Page(c *ui.Context, st *state.State) {
 					})
 				}
 
-				if st.Access.App == "claude" {
-					claudeOpenAccess(st, acc)
-					claudeclaudecfg.Page(c, st) // 过渡挂载：Task 6 摘除（设置区拆独立页）
-				}
-
 				// 删除二次确认（行内「删除」只武装，弹窗确认才执行）
 				deleteConfirm(c, st, acc)
 				// 还原备份确认（覆盖 live 文件前先备份当前状态，可再次恢复）
@@ -293,6 +287,22 @@ func Page(c *ui.Context, st *state.State) {
 	}
 }
 
+// OpenAccessDrawer 从其他页跳回接入页并打开当前配置的接入抽屉（设置页受管
+// 键行「打开接入」的跨页入口；dirty 草稿保护经 openAccessEditor 生效）。
+func OpenAccessDrawer(st *state.State) {
+	st.Go("access", func() {
+		acc := bridge.AccessConfigs{A: st.Svc.Gateway.A}
+		id := ""
+		for _, v := range acc.List("claude") {
+			if v.IsCurrent {
+				id = v.ID
+				break
+			}
+		}
+		openAccessEditor(st, acc, id)
+	})
+}
+
 // openAccessEditor 打开 Claude 接入抽屉的编辑目标（终审 Important#3）：
 // 同目标的保留草稿直接恢复不清表单；不同目标（含新建草稿）有未保存修改时
 // 武装切换确认（确认框在 Page 层渲染，抽屉关闭态也可达），确认后才切换。
@@ -308,20 +318,6 @@ func openAccessEditor(st *state.State, acc bridge.AccessConfigs, id string) {
 	}
 	st.Access.Form = state.AccessForm{Open: true, EditID: id}
 	preloadForm(st, acc)
-}
-
-// claudeOpenAccess 注入设置区受管键行的「打开接入」回调：打开当前应用配置
-// 的抽屉（无已应用配置时打开新建草稿）。
-func claudeOpenAccess(st *state.State, acc bridge.AccessConfigs) {
-	st.ClaudeCfg.OpenAccess = func() {
-		for _, v := range acc.List("claude") {
-			if v.IsCurrent {
-				openAccessEditor(st, acc, v.ID)
-				return
-			}
-		}
-		openAccessEditor(st, acc, "")
-	}
 }
 
 // drawerSwitchConfirm 是抽屉配置切换/新建的确认框（抽屉开/关两态都渲染；
@@ -526,8 +522,13 @@ func claudeSummaryCard(c *ui.Context, st *state.State, acc bridge.AccessConfigs,
 					}
 				}
 			})
-			ui.Text(c, "接入只管理网关与受管键；权限、状态栏、Skills 在下方「Claude Code 设置」中编辑").
-				TextColor(t.TextMuted)
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "接入只配置模型与网关；权限、状态栏、Skills 在侧栏「Claude Code 设置」页编辑").
+					TextColor(t.TextMuted).Grow(1)
+				if uikit.SoftButton(c, t, s, "gray", "打开设置页").Clicked() {
+					st.Go("claude-settings", nil)
+				}
+			})
 			// 无逻辑模型的空态引导（列表卡移除后由摘要卡承接，2026-11-07）。
 			if st.Svc.Logical != nil && len(st.Svc.Logical.List()) == 0 {
 				ui.Text(c, "还没有逻辑模型——先在「逻辑模型」页创建一个，再回来配置接入").TextColor(t.TextMuted)
@@ -658,11 +659,10 @@ func deleteConfirm(c *ui.Context, st *state.State, acc bridge.AccessConfigs) {
 	})
 }
 
-// tabDirty 报告接入页是否存在未保存的编辑器内容（两套表单任一；Claude
-// 页签还计入 Claude Code 设置区的未保存修改，I1）。
+// tabDirty 报告接入页是否存在未保存的编辑器内容（两套表单任一）。Claude
+// Code 设置已拆独立页，其脏态由侧栏切页守卫承担（2026-11-07）。
 func tabDirty(st *state.State) bool {
-	return st.Access.Form.Dirty(st.Access.App) || st.Access.DesktopForm.Dirty() ||
-		(st.Access.App == "claude" && st.ClaudeCfg.Dirty)
+	return st.Access.Form.Dirty(st.Access.App) || st.Access.DesktopForm.Dirty()
 }
 
 // requestTab 处理页签点击：干净则立即切换；有未保存编辑则武装确认弹窗。
