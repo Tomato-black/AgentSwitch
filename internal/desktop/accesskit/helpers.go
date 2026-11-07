@@ -150,6 +150,22 @@ func GatewayGate(gw bridge.Gateway) (bool, string) {
 	return true, ""
 }
 
+// MainOneMDeclared 报告接入文档 env 的 ANTHROPIC_MODEL 是否带 [1M] 上下文
+// 声明后缀（大小写不敏感，与网关路由的剥离口径一致）。解析失败或无该键
+// 视为未声明。
+func MainOneMDeclared(settingsJSON string) bool {
+	doc, err := DocObject(settingsJSON)
+	if err != nil {
+		return false
+	}
+	env, _ := doc["env"].(map[string]any)
+	if env == nil {
+		return false
+	}
+	model, _ := env["ANTHROPIC_MODEL"].(string)
+	return strings.HasSuffix(strings.ToLower(model), "[1m]")
+}
+
 // ModelSummary 返回接入配置行的模型摘要：Codex 且文档声明多个模型时显示
 // 「首模型 等 N 个」（默认模型即首项），其余情况回退绑定的逻辑模型名。
 func ModelSummary(app, settingsJSON, fallback string) string {

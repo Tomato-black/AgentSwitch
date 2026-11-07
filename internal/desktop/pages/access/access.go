@@ -390,13 +390,20 @@ func claudeSummaryCard(c *ui.Context, st *state.State, acc bridge.AccessConfigs,
 	stt := st.Svc.Gateway.Status()
 	uikit.Card(c, t, func() {
 		ui.Column(c).Gap(8).Children(func() {
+			// 第一行：标题 + 状态徽章（优先级：网关停止 > 未保存接入更改 >
+			// 待应用 > 已应用/尚未应用）+ 右侧操作。
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 				ui.Text(c, "Claude Code 接入").Bold()
-				if cur == nil {
+				switch {
+				case !gateOK:
+					uikit.SoftBadge(c, t, s, "danger", "网关已停止")
+				case st.Access.Form.Dirty("claude"):
+					uikit.SoftBadge(c, t, s, "warn", "有未保存的接入更改")
+				case cur == nil:
 					uikit.SoftBadge(c, t, s, "gray", "尚未应用")
-				} else if cur.NeedsApply {
+				case cur.NeedsApply:
 					uikit.SoftBadge(c, t, s, "warn", "待应用")
-				} else {
+				default:
 					uikit.SoftBadge(c, t, s, "ok", "已应用")
 				}
 				ui.Box(c).Grow(1)
@@ -423,21 +430,24 @@ func claudeSummaryCard(c *ui.Context, st *state.State, acc bridge.AccessConfigs,
 					}
 				}
 			})
-			status := "网关未运行"
-			switch stt.State {
-			case "running":
-				status = "网关运行中 · " + stt.Addr
-			case "degraded":
-				status = "网关降级 · " + stt.Addr
-			case "starting":
-				status = "网关启动中"
-			}
-			if cur == nil {
-				ui.Text(c, status+" · 尚未选择接入配置").TextColor(t.TextMuted)
-			} else {
-				ui.Text(c, status+" · 配置 "+cur.Name+" · 模型 "+accesskit.ModelSummary("claude", cur.Settings, cur.LogicalModelName)).
-					TextColor(t.TextMuted)
-			}
+			// 第二行 meta（原型 2026-11-07 §6.2.1）：LED + 状态词 + 等宽地址 +
+			// 配置名 + 模型 + 1M 徽章。
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				uikit.LedDot(c, t, stt.State)
+				ui.Text(c, gatewayStateWord(stt.State))
+				if (stt.State == "running" || stt.State == "degraded") && stt.Addr != "" {
+					ui.Text(c, stt.Addr).Font(uikit.MonoFont)
+				}
+				if cur == nil {
+					ui.Text(c, "尚未选择接入配置").TextColor(t.TextMuted)
+				} else {
+					ui.Text(c, "配置 "+cur.Name)
+					ui.Text(c, "模型 "+accesskit.ModelSummary("claude", cur.Settings, cur.LogicalModelName))
+					if accesskit.MainOneMDeclared(cur.Settings) {
+						uikit.SoftBadge(c, t, s, "act", "1M 上下文")
+					}
+				}
+			})
 			ui.Text(c, "接入只管理网关与受管键；权限、状态栏、Skills 在下方「Claude Code 设置」中编辑").
 				TextColor(t.TextMuted)
 			if !gateOK {
@@ -445,6 +455,19 @@ func claudeSummaryCard(c *ui.Context, st *state.State, acc bridge.AccessConfigs,
 			}
 		})
 	})
+}
+
+// gatewayStateWord 把网关状态译成摘要卡 meta 行的状态词。
+func gatewayStateWord(state string) string {
+	switch state {
+	case "running":
+		return "运行中"
+	case "degraded":
+		return "降级"
+	case "starting":
+		return "启动中"
+	}
+	return "已停止"
 }
 
 // configRow 渲染一行实际配置：第一行名称/使用中/模型摘要，第二行操作，

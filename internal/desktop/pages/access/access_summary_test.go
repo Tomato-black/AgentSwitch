@@ -12,14 +12,15 @@ import (
 )
 
 // TestClaudeSummaryCardVisible 覆盖合并页摘要卡：Claude 页签首屏即可见
-// 接入状态，无需展开配置列表。
+// 接入状态，无需展开配置列表。测试夹具网关为停止态——状态徽章按优先级
+// 显示「网关已停止」（2026-11-07 原型对齐）。
 func TestClaudeSummaryCardVisible(t *testing.T) {
 	st, _ := uitest.New(t)
 	st.Access.App = "claude"
 	tt := ui.NewTester(func(c *ui.Context) {
 		Page(c, st)
 	}, 1000, 800)
-	for _, want := range []string{"Claude Code 接入", "尚未应用", "Claude Code 设置"} {
+	for _, want := range []string{"Claude Code 接入", "网关已停止", "尚未选择接入配置", "Claude Code 设置"} {
 		if !tt.HasText(want) {
 			t.Fatalf("missing %q in %v", want, tt.Texts())
 		}

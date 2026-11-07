@@ -409,3 +409,29 @@ func TestPageHeaderAgentAccess(t *testing.T) {
 		t.Fatalf("codex 副标题缺失: %v", tt.Texts())
 	}
 }
+
+// TestSummaryCardMetaRow（2026-11-07 原型对齐）：摘要卡 meta 行含网关状态、
+// 配置名、模型与 1M 徽章；网关停止时状态徽章为「网关已停止」。
+func TestSummaryCardMetaRow(t *testing.T) {
+	st, a := uitest.New(t)
+	home := t.TempDir()
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	acc := bridge.AccessConfigs{A: a, Home: home}
+	if _, err := acc.Create("claude", "工作", "lm1", `{"env":{"ANTHROPIC_MODEL":"my-code[1M]"}}`); err != nil {
+		t.Fatal(err)
+	}
+	v := acc.List("claude")[0]
+	if err := acc.Apply(v.ID); err != nil {
+		t.Fatal(err)
+	}
+	st.Page = "access"
+	st.Access.App = "claude"
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
+	for _, want := range []string{"网关已停止", "配置 工作", "模型 my-code", "1M 上下文"} {
+		if !tt.HasText(want) {
+			t.Fatalf("missing %q: %v", want, tt.Texts())
+		}
+	}
+}
