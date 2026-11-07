@@ -8,6 +8,8 @@
 
 **本地 AI Agent 模型网关**——为 Claude Code / Codex（CLI / 桌面版）/ Claude Desktop 等本地 Agent 提供统一的模型入口：集中管理多供应商渠道与密钥，按「逻辑模型」做优先级故障转移，Agent 无需重启即可切换上游。Go 单二进制 + MyGo 原生 UI 桌面应用。
 
+**v0.2.0（2026-11-07）**：Claude Code 配置中心（分层 settings 表单/JSON/合并预览，独立「Claude Code 设置」页）· 接入页重排（摘要卡 + 配置列表 + 编辑子页）· 模型选择归接入（主模型/回退链/角色显示名自动填充）· 浏览器式缩放（Cmd/Ctrl ±/0）· 修复「权限无法设置」等实测问题。
+
 ```
 Claude Code ─┐                                   ┌─→ DeepSeek（按量）
 Codex       ──┼─→ AgentSwitch 网关（127.0.0.1） ──┼─→ 智谱 GLM Coding Plan
