@@ -1,0 +1,3756 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent 接入与 Claude Code 设置 · 交互原型</title>
+<style>
+  :root{
+    --bg:#FFFFFF;
+    --sidebar:#F5F5F7;
+    --border:#E4E4E9;
+    --text:#18181B;
+    --muted:#6B6B73;
+    --accent:#F97316;
+    --accent-hover:#EA620A;
+    --accent-text:#18181B;
+    --success:#16A34A;
+    --warning:#B45309;
+    --danger:#DC2626;
+    --soft-act:#FFF1E6;
+    --soft-act-text:#C2410C;
+    --soft-ok:#E8F7EE;
+    --soft-ok-text:#007634;
+    --soft-warn:#FEF3C7;
+    --soft-warn-text:#A64A00;
+    --soft-danger:#FEE2E2;
+    --soft-danger-text:#B91C1C;
+    --soft-gray:#EFEFF2;
+    --soft-gray-text:#52525B;
+    --selected:#E4E4EA;
+    --radius-card:12px;
+    --radius-control:8px;
+    --shadow-card:0 1px 0 rgba(24,24,27,.02), 0 1px 3px rgba(24,24,27,.04);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;background:#ECECF1;color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    font-size:13px;line-height:1.5;-webkit-font-smoothing:antialiased;
+  }
+  button,input,select,textarea{font:inherit}
+  button{cursor:pointer}
+  .mono{font-family:Menlo,Consolas,"Liberation Mono",monospace;font-size:12px}
+  .muted{color:var(--muted)}
+  .grow{flex:1}
+  .icon{display:inline-flex;align-items:center;justify-content:center}
+  .icon svg{width:16px;height:16px;display:block}
+
+  /* ---------- prototype bar ---------- */
+  .demo-bar{
+    height:40px;background:#18181B;color:#E4E4E7;display:flex;align-items:center;gap:10px;
+    padding:0 16px;font-size:12px;position:relative;z-index:10;
+  }
+  .demo-bar .dot{width:7px;height:7px;border-radius:50%;background:var(--accent)}
+  .demo-bar strong{font-weight:600;color:#fff}
+  .demo-bar .sep{width:1px;height:15px;background:#3F3F46;margin:0 2px}
+  .demo-bar .demo-hint{color:#A1A1AA}
+  .demo-bar .grow{flex:1}
+  .demo-bar button{
+    height:26px;border:1px solid #3F3F46;border-radius:7px;background:transparent;color:#E4E4E7;
+    padding:0 9px;font-size:12px;
+  }
+  .demo-bar button:hover{background:#2C2C31}
+
+  /* ---------- shell ---------- */
+  .app{
+    display:flex;height:calc(100vh - 40px);min-height:620px;background:var(--bg);overflow:hidden;
+  }
+  .sidebar{
+    width:200px;flex:0 0 200px;background:var(--sidebar);border-right:1px solid var(--border);
+    display:flex;flex-direction:column;padding:12px 8px 10px;
+  }
+  .brand{display:flex;align-items:center;gap:8px;padding:4px 6px 14px}
+  .logo{
+    width:24px;height:24px;border-radius:7px;background:var(--accent);color:var(--accent-text);
+    display:grid;place-items:center;font-weight:800;font-size:13px;letter-spacing:-.4px;
+  }
+  .brand-name{font-weight:700;font-size:13px}
+  .nav{display:flex;flex-direction:column;gap:2px}
+  .nav-item{
+    display:flex;align-items:center;gap:8px;height:30px;padding:0 8px;border-radius:8px;
+    border:0;background:transparent;color:var(--text);text-align:left;width:100%;
+  }
+  .nav-item:hover{background:#ECECF1}
+  .nav-item.active{background:var(--selected);font-weight:600}
+  .nav-item.active .icon{color:var(--accent)}
+  .nav-item .icon{color:var(--muted);flex:0 0 16px}
+  .nav-item .nav-label{flex:1}
+  .nav-item .nav-badge{
+    font-size:10px;font-weight:500;color:var(--soft-act-text);background:var(--soft-act);
+    border-radius:999px;padding:1px 6px;
+  }
+  .gateway{
+    margin-top:auto;border-top:1px solid var(--border);padding:12px 6px 4px;
+    display:flex;flex-direction:column;gap:6px;
+  }
+  .gw-row{display:flex;align-items:center;gap:7px;font-size:12px}
+  .led{width:8px;height:8px;border-radius:50%;background:var(--success);display:inline-block}
+  .gateway .addr{font-size:11px}
+  .gateway .btn{height:28px;font-size:12px;justify-content:center}
+
+  .main{flex:1;overflow:auto;padding:16px 24px 44px}
+  .page{max-width:920px;margin:0 auto}
+
+  /* ---------- agent tabs / merged access card ---------- */
+  .agent-tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin:0 0 12px;flex-wrap:wrap}
+  .agent-tab{
+    border:0;background:transparent;padding:8px 12px;color:var(--muted);border-bottom:2px solid transparent;
+    margin-bottom:-1px;font-size:13px;display:inline-flex;align-items:center;gap:6px;
+  }
+  .agent-tab:hover{color:var(--text)}
+  .agent-tab.active{color:var(--text);font-weight:600;border-bottom-color:var(--accent)}
+  .agent-tab .badge{height:18px;font-size:10px}
+  .access-card{
+    border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:14px;background:#fff;
+    box-shadow:var(--shadow-card);display:flex;gap:14px;align-items:flex-start;
+  }
+  .access-main{flex:1;min-width:0}
+  .access-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-weight:700;font-size:13px}
+  .access-title .badge{font-weight:500}
+  .access-meta{display:flex;gap:7px;flex-wrap:wrap;color:var(--muted);font-size:11.5px;margin-top:6px;align-items:center}
+  .access-meta b{color:var(--text);font-weight:600}
+  .access-meta .led{width:7px;height:7px}
+  .access-note{color:var(--muted);font-size:11.5px;margin-top:7px;line-height:1.5}
+  .access-actions{display:flex;gap:7px;align-items:center;flex:0 0 auto;flex-wrap:wrap;justify-content:flex-end}
+  .btn.act{background:var(--soft-act);border-color:transparent;color:var(--soft-act-text);font-weight:600}
+  .btn.act:hover{background:#FFE4D1}
+  .section-head{display:flex;align-items:flex-start;gap:10px;margin:18px 0 10px}
+  .section-title{font-size:14px;font-weight:700;letter-spacing:-.1px}
+  .section-desc{color:var(--muted);font-size:11.5px;margin-top:2px}
+  .section-head .badge{margin-left:auto;flex:0 0 auto}
+  .managed-more{border:1px solid var(--border);border-radius:10px;padding:8px 10px;margin-top:8px;background:#FCFCFD}
+  .managed-more summary{cursor:pointer;color:var(--muted);font-size:11.5px;list-style:none}
+  .managed-more summary::-webkit-details-marker{display:none}
+  .managed-more summary:hover{color:var(--text)}
+  .managed-more summary .chev{display:inline-block;transition:transform .15s;margin-right:4px}
+  .managed-more[open] summary .chev{transform:rotate(180deg)}
+
+  /* ---------- access drawer ---------- */
+  .drawer-overlay{position:fixed;inset:0;background:rgba(24,24,27,.28);z-index:40}
+  .drawer{
+    position:fixed;top:0;right:0;bottom:0;width:min(560px,94vw);background:#fff;z-index:41;
+    border-left:1px solid var(--border);box-shadow:-12px 0 40px rgba(24,24,27,.16);
+    display:flex;flex-direction:column;
+  }
+  .drawer-head{padding:16px 18px 10px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:12px}
+  .drawer-title{font-size:15px;font-weight:700}
+  .drawer-sub{color:var(--muted);font-size:11.5px;margin-top:2px;line-height:1.45}
+  .drawer-close{margin-left:auto;flex:0 0 auto;font-size:18px;line-height:1;width:28px;height:28px}
+  .drawer-body{flex:1;overflow:auto;padding:14px 18px 20px}
+  .drawer-foot{border-top:1px solid var(--border);padding:12px 18px;display:flex;gap:8px;justify-content:flex-end;background:#fff}
+  .access-row{display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid #F1F1F4}
+  .access-row:first-child{border-top:0}
+  .access-label{width:96px;flex:0 0 96px;color:var(--muted);font-size:12px}
+  .access-row .select,.access-row .input{flex:1;min-width:0}
+  .access-row .check{display:inline-flex;align-items:center;gap:5px;color:var(--muted);font-size:11.5px;white-space:nowrap}
+  .access-row .check input{accent-color:var(--accent);width:14px;height:14px}
+  .role-grid{display:grid;grid-template-columns:78px 1fr;gap:6px 10px;align-items:center;margin-top:4px}
+  .role-grid .role-label{color:var(--muted);font-size:12px}
+  .role-grid .select{height:30px;font-size:12px}
+  .key-preview{
+    background:#18181B;color:#E4E4E7;border-radius:10px;padding:10px 12px;font-family:Menlo,Consolas,monospace;
+    font-size:11px;line-height:1.7;overflow:auto;max-height:220px;margin:5px 0 0;white-space:pre;
+  }
+  .key-preview .k{color:#93C5FD}
+  .key-preview .v{color:#FDBA74}
+  .key-preview .c{color:#A1A1AA}
+  .global-box{border:1px solid var(--border);border-radius:10px;padding:8px 10px;background:#FCFCFD;margin-top:6px}
+  .global-box .row{display:flex;gap:8px;font-family:Menlo,Consolas,monospace;font-size:10.5px;color:#52525B;padding:2px 0}
+
+  /* ---------- header ---------- */
+  .page-header{display:flex;align-items:flex-start;gap:16px;margin-bottom:12px}
+  .page-title{font-size:16px;font-weight:700;margin:0 0 3px;letter-spacing:-.1px}
+  .page-sub{color:var(--muted);font-size:13px}
+  .page-actions{margin-left:auto;display:flex;align-items:center;gap:8px;flex:0 0 auto}
+  .btn{
+    height:32px;padding:0 13px;border-radius:8px;border:1px solid var(--border);background:#fff;
+    color:var(--text);font-size:13px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;
+  }
+  .btn:hover{background:#F4F4F5}
+  .btn.small{height:28px;padding:0 9px;font-size:12px}
+  .btn.primary{
+    background:var(--accent);border-color:var(--accent);color:var(--accent-text);
+    border-radius:999px;font-weight:600;padding:0 18px;
+  }
+  .btn.primary:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
+  .btn.primary:disabled{
+    background:#F4F4F5;border-color:var(--border);color:#A1A1AA;cursor:not-allowed;font-weight:500;
+  }
+  .btn.danger{background:var(--soft-danger);border-color:transparent;color:var(--soft-danger-text)}
+  .btn.danger:hover{background:#FDD5D5}
+  .text-btn{
+    border:0;background:transparent;color:var(--muted);padding:4px 6px;border-radius:6px;font-size:12px;
+  }
+  .text-btn:hover{background:#F4F4F5;color:var(--text)}
+  .link-btn{border:0;background:transparent;color:#0A6CD6;padding:1px 3px;font-size:12px}
+  .link-btn:hover{text-decoration:underline}
+
+  /* ---------- banners / file strip ---------- */
+  .banner{
+    display:flex;align-items:flex-start;gap:8px;padding:9px 11px;border-radius:10px;
+    font-size:12px;margin-bottom:12px;border:1px solid transparent;
+  }
+  .banner.info{background:#F7F7F9;border-color:#EFEFF2;color:#52525B}
+  .banner.warn{background:var(--soft-warn);border-color:#FDE68A;color:var(--soft-warn-text)}
+  .banner.danger{background:var(--soft-danger);border-color:#FECACA;color:var(--soft-danger-text)}
+  .banner.ok{background:var(--soft-ok);border-color:#BBF7D0;color:var(--soft-ok-text)}
+  .banner .icon{margin-top:1px;flex:0 0 16px}
+  .banner b{font-weight:600}
+  .file-strip{
+    display:flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:10px;
+    padding:8px 10px;margin-bottom:12px;background:#FCFCFD;min-height:38px;
+  }
+  .file-strip .path{color:#52525B;word-break:break-all}
+  .file-strip .spacer{flex:1}
+  .file-strip .last{color:var(--muted);font-size:11px;white-space:nowrap}
+
+  /* ---------- segmented / tabs ---------- */
+  .segmented{
+    display:flex;gap:4px;background:#F5F5F7;border:1px solid var(--border);border-radius:10px;
+    padding:3px;margin-bottom:12px;
+  }
+  .seg-btn{
+    flex:1;border:0;background:transparent;border-radius:8px;padding:7px 10px;color:var(--muted);
+    text-align:center;line-height:1.25;
+  }
+  .seg-btn:hover{color:var(--text)}
+  .seg-btn.active{background:#fff;color:var(--text);font-weight:600;box-shadow:0 1px 2px rgba(24,24,27,.08)}
+  .seg-sub{display:block;font-size:10px;font-weight:400;color:var(--muted);margin-top:1px}
+  .seg-btn .lock-inline{display:inline-flex;vertical-align:-2px;margin-right:2px}
+
+  .context-card{
+    border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:12px;background:#fff;
+    box-shadow:var(--shadow-card);
+  }
+  .context-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .context-label{color:var(--muted);width:44px;flex:0 0 44px;font-size:12px}
+  .context-row .select{max-width:430px}
+  .file-tabs{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+  .file-tab{
+    border:1px solid var(--border);background:#fff;border-radius:8px;padding:6px 9px;color:var(--muted);
+    font-size:12px;display:inline-flex;align-items:center;gap:6px;
+  }
+  .file-tab:hover{background:#F7F7F9;color:var(--text)}
+  .file-tab.active{background:var(--selected);border-color:var(--selected);color:var(--text);font-weight:600}
+  .path-line{
+    font-family:Menlo,Consolas,monospace;font-size:11.5px;color:#52525B;background:#F7F7F9;
+    border:1px solid #EFEFF2;border-radius:8px;padding:7px 10px;margin-top:8px;word-break:break-all;
+  }
+  .context-note{color:var(--muted);font-size:12px;margin-top:7px}
+
+  .view-tabs{display:flex;align-items:center;gap:2px;border-bottom:1px solid var(--border);margin:0 0 12px}
+  .view-tab{
+    border:0;background:transparent;padding:8px 10px;color:var(--muted);border-bottom:2px solid transparent;
+    margin-bottom:-1px;font-size:13px;
+  }
+  .view-tab:hover{color:var(--text)}
+  .view-tab.active{color:var(--text);font-weight:600;border-bottom-color:var(--accent)}
+  .view-tabs .spacer{flex:1}
+
+  /* ---------- cards / forms ---------- */
+  .card{
+    background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px;
+    box-shadow:var(--shadow-card);
+  }
+  .card-head{display:flex;align-items:flex-start;gap:12px;margin-bottom:9px}
+  .card-title{font-weight:700;font-size:13px}
+  .card-desc{color:var(--muted);font-size:12px;margin-top:2px}
+  .card-actions{margin-left:auto;display:flex;align-items:center;gap:6px;flex:0 0 auto}
+  .form-row{display:flex;align-items:flex-start;gap:12px;padding:7px 0;border-top:1px solid #F1F1F4}
+  .form-row:first-child{border-top:0}
+  .form-row:first-of-type{border-top:0}
+  .form-label{width:112px;flex:0 0 112px;color:var(--muted);padding-top:7px;font-size:12.5px;display:flex;align-items:center;gap:4px}
+  .form-control{flex:1;min-width:0}
+  .x-mini{
+    width:16px;height:16px;border:0;border-radius:50%;background:transparent;color:#A1A1AA;
+    font-size:14px;line-height:1;display:inline-grid;place-items:center;padding:0;
+  }
+  .x-mini:hover{background:var(--soft-danger);color:var(--soft-danger-text)}
+  .input,.select,.textarea{
+    width:100%;height:32px;border:1px solid var(--border);border-radius:8px;background:#fff;
+    padding:0 10px;color:var(--text);font-size:13px;min-width:0;
+  }
+  .input.mono{font-family:Menlo,Consolas,monospace;font-size:12px}
+  .input:focus,.select:focus,.textarea:focus{
+    outline:2px solid var(--accent);outline-offset:-1px;border-color:var(--accent);
+  }
+  .input:disabled,.select:disabled{
+    background:#F7F7F9;color:#A1A1AA;cursor:not-allowed;
+  }
+  .textarea{height:auto;min-height:96px;padding:8px 10px;resize:vertical;line-height:1.6}
+  .inline-control{display:flex;gap:6px;align-items:center}
+  .inline-control .input{flex:1}
+  .hint{color:var(--muted);font-size:11.5px;margin-top:4px;line-height:1.45}
+  .hint.warn{color:var(--soft-warn-text)}
+  .hint.error{color:var(--soft-danger-text)}
+  .hint.ok{color:var(--soft-ok-text)}
+  .inherit-line{display:flex;align-items:center;gap:7px;flex-wrap:wrap;min-height:32px}
+  .inherit-line .value{color:#52525B}
+  .advanced-note{
+    margin-top:9px;padding:8px 10px;border-radius:9px;background:#F7F7F9;border:1px solid #EFEFF2;
+    color:var(--muted);font-size:11.5px;display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;
+  }
+  .advanced-note .icon{margin-top:1px}
+
+  .badge{
+    display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 7px;border-radius:999px;
+    font-size:10.5px;white-space:nowrap;background:var(--soft-gray);color:var(--soft-gray-text);
+    font-weight:500;line-height:1;
+  }
+  .badge svg{width:11px;height:11px}
+  .badge.ok{background:var(--soft-ok);color:var(--soft-ok-text)}
+  .badge.warn{background:var(--soft-warn);color:var(--soft-warn-text)}
+  .badge.danger{background:var(--soft-danger);color:var(--soft-danger-text)}
+  .badge.act{background:var(--soft-act);color:var(--soft-act-text)}
+  .badge.lock{background:#EFEFF2;color:#52525B}
+  .badge.plain{background:transparent;color:var(--muted);padding:0}
+
+  .chips{display:flex;flex-wrap:wrap;gap:6px;min-height:26px;align-items:center}
+  .chip{
+    display:inline-flex;align-items:center;gap:5px;border:1px solid var(--border);border-radius:8px;
+    padding:3px 7px;background:#fff;font-size:11.5px;max-width:100%;
+  }
+  .chip.mono{font-family:Menlo,Consolas,monospace;font-size:11px}
+  .chip .x{
+    border:0;background:transparent;color:#A1A1AA;font-size:14px;line-height:1;padding:0;
+    width:15px;height:15px;display:inline-grid;place-items:center;border-radius:50%;
+  }
+  .chip .x:hover{background:var(--soft-danger);color:var(--soft-danger-text)}
+  .chip .x:disabled{opacity:.28;cursor:default}
+  .chip .x:disabled:hover{background:transparent;color:#A1A1AA}
+  .chip.muted{background:#F7F7F9;color:var(--muted)}
+  .chip.soft-warn{background:var(--soft-warn);border-color:#FDE68A;color:var(--soft-warn-text)}
+  .chip.soft-ok{background:var(--soft-ok);border-color:#BBF7D0;color:var(--soft-ok-text)}
+  .chip.soft-danger{background:var(--soft-danger);border-color:#FECACA;color:var(--soft-danger-text)}
+  .chip .mini-src{font-size:9.5px;color:#71717A;background:#F4F4F5;border-radius:999px;padding:1px 5px}
+
+  .tri{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;height:30px;background:#fff}
+  .tri button{
+    border:0;border-right:1px solid var(--border);background:#fff;padding:0 10px;color:var(--muted);
+    font-size:12px;min-width:44px;
+  }
+  .tri button:last-child{border-right:0}
+  .tri button:hover{background:#F7F7F9;color:var(--text)}
+  .tri button:disabled{opacity:.42;cursor:not-allowed}
+  .tri button:disabled:hover{background:transparent;color:var(--muted)}
+  .tri button.active{background:var(--selected);color:var(--text);font-weight:600}
+  .tri button.on.active{background:var(--accent);color:var(--accent-text)}
+
+  .rule-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:10px}
+  .rule-group{border:1px solid var(--border);border-radius:10px;padding:9px;background:#FCFCFD;min-width:0}
+  .rule-head{display:flex;align-items:center;gap:6px;margin-bottom:7px}
+  .rule-title{font-weight:600;font-size:12px}
+  .rule-count{margin-left:auto;color:var(--muted);font-size:10.5px}
+  .rule-add{display:flex;gap:5px;margin-top:7px}
+  .rule-add .input{height:28px;font-size:11.5px}
+  .rule-add .btn{height:28px;padding:0 8px;font-size:11.5px}
+  .eval-flow{display:flex;align-items:stretch;gap:7px;margin:9px 0}
+  .eval-step{flex:1;border:1px solid var(--border);border-radius:9px;padding:7px 9px;background:#fff;min-width:0}
+  .eval-step .step-num{font-size:10px;color:var(--muted)}
+  .eval-step .step-name{font-weight:700;font-size:12px}
+  .eval-step.deny{border-color:#FECACA;background:#FFF7F7}
+  .eval-step.ask{border-color:#FDE68A;background:#FFFCF2}
+  .eval-step.allow{border-color:#BBF7D0;background:#F7FCF8}
+  .eval-arrow{display:flex;align-items:center;color:#A1A1AA;font-size:12px;flex:0 0 auto}
+  .eval-note{color:var(--muted);font-size:11.5px;line-height:1.5}
+
+  .env-table{width:100%;border-collapse:collapse;table-layout:fixed}
+  .env-table th{
+    text-align:left;font-size:10.5px;font-weight:500;color:var(--muted);padding:3px 6px;
+    border-bottom:1px solid var(--border);
+  }
+  .env-table td{padding:5px 6px;border-bottom:1px solid #F4F4F6;vertical-align:middle}
+  .env-table tr:last-child td{border-bottom:0}
+  .env-table .col-key{width:34%}
+  .env-table .col-val{width:auto}
+  .env-table .col-src{width:90px}
+  .env-table .col-op{width:58px;text-align:right}
+  .env-table tr.managed td{background:#FAFAFB}
+  .env-table .input{height:29px;font-size:11.5px}
+  .env-table .key-input{font-family:Menlo,Consolas,monospace;font-size:11px}
+  .env-table .val-input{font-family:Menlo,Consolas,monospace;font-size:11px}
+  .eye-btn{
+    border:0;background:transparent;color:var(--muted);width:26px;height:26px;border-radius:6px;
+    display:inline-grid;place-items:center;padding:0;
+  }
+  .eye-btn:hover{background:#F4F4F5;color:var(--text)}
+  .env-add{display:flex;gap:6px;margin-top:8px;align-items:center}
+  .env-add .input{height:29px;font-size:11.5px}
+  .env-add .key{width:190px;flex:0 0 190px}
+  .env-add .val{flex:1}
+  .env-add .btn{height:29px;padding:0 9px;font-size:11.5px}
+
+  .plugin-row{display:flex;align-items:center;gap:9px;padding:7px 0;border-top:1px solid #F1F1F4}
+  .plugin-row:first-child{border-top:0}
+  .plugin-name{font-family:Menlo,Consolas,monospace;font-size:11.5px;word-break:break-all}
+  .plugin-meta{color:var(--muted);font-size:10.5px;margin-top:1px}
+  .plugin-row .tri{margin-left:auto;flex:0 0 auto}
+  .plugin-row .effective{color:var(--muted);font-size:10.5px;margin-left:8px;white-space:nowrap}
+  .skill-summary{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:7px}
+  .skill-row .select{margin-left:auto;flex:0 0 150px;width:150px}
+  .skill-row .effective{white-space:normal;text-align:right;max-width:230px}
+
+  /* ---------- JSON ---------- */
+  .json-warn{display:flex;align-items:flex-start;gap:8px;margin-bottom:9px}
+  .json-wrap{
+    display:flex;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:#FCFCFD;
+    margin-top:9px;
+  }
+  .json-gutter{
+    width:46px;flex:0 0 46px;padding:10px 7px;text-align:right;color:#A1A1AA;font-family:Menlo,Consolas,monospace;
+    font-size:11.5px;line-height:20px;background:#F7F7F9;border-right:1px solid var(--border);
+    overflow:hidden;user-select:none;white-space:pre;
+  }
+  .json-text{
+    flex:1;min-height:430px;border:0;outline:0;resize:vertical;padding:10px 12px;
+    font-family:Menlo,Consolas,monospace;font-size:11.5px;line-height:20px;background:#fff;color:var(--text);
+    tab-size:2;white-space:pre;overflow:auto;
+  }
+  .json-toolbar{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:9px}
+  .json-toolbar .grow{flex:1}
+  .issue-list{margin:8px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:5px}
+  .issue-list li{display:flex;gap:6px;align-items:flex-start;font-size:11.5px}
+  .issue-list .path{font-family:Menlo,Consolas,monospace;font-size:11px;color:#52525B}
+
+  /* ---------- merge ---------- */
+  .perm-card{border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:12px;background:#fff;box-shadow:var(--shadow-card)}
+  .perm-card-head{display:flex;align-items:flex-start;gap:10px;margin-bottom:4px}
+  .perm-card-title{font-weight:700;font-size:13px}
+  .merge-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:9px;flex-wrap:wrap}
+  .merge-toolbar .search{position:relative;flex:1;min-width:220px}
+  .merge-toolbar .search .input{padding-left:30px;height:30px;font-size:12px}
+  .merge-toolbar .search .icon{position:absolute;left:9px;top:7px;color:var(--muted)}
+  .merge-legend{display:flex;gap:6px;flex-wrap:wrap;align-items:center;color:var(--muted);font-size:11px}
+  .merge-table{width:100%;border-collapse:collapse;table-layout:fixed}
+  .merge-table th{
+    text-align:left;font-size:10.5px;font-weight:500;color:var(--muted);padding:4px 6px;
+    border-bottom:1px solid var(--border);
+  }
+  .merge-table td{padding:8px 6px;vertical-align:top;border-bottom:1px solid #F1F1F4}
+  .merge-table tr.detail-row td{padding:0;border-bottom:1px solid #F1F1F4;background:#FAFAFC}
+  .merge-key{font-family:Menlo,Consolas,monospace;font-size:11px;color:#3F3F46;word-break:break-all}
+  .merge-value{font-size:11.5px;min-width:0}
+  .merge-value .mono{font-size:11px}
+  .merge-src{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end}
+  .merge-kind{font-size:10px;color:var(--muted);text-align:right;white-space:nowrap}
+  .merge-op{text-align:right;width:56px}
+  .expand-btn{
+    border:0;background:#F4F4F5;border-radius:6px;width:24px;height:24px;display:inline-grid;place-items:center;
+    color:var(--muted);padding:0;
+  }
+  .expand-btn:hover{background:#ECECF1;color:var(--text)}
+  .expand-btn svg{width:12px;height:12px;transition:transform .15s}
+  .expand-btn[aria-expanded="true"] svg{transform:rotate(180deg)}
+  .contrib{padding:8px 10px 10px}
+  .contrib-title{font-size:10.5px;color:var(--muted);margin-bottom:5px}
+  .contrib-row{display:flex;align-items:flex-start;gap:8px;padding:3px 0;font-size:11.5px}
+  .contrib-row .val{font-family:Menlo,Consolas,monospace;font-size:11px;word-break:break-all}
+  .contrib-row .val.inactive{color:#A1A1AA;text-decoration:line-through}
+  .contrib-row .src{flex:0 0 auto;max-width:54%}
+  .contrib-row .src .mono{word-break:break-all;line-height:1.35}
+  .contrib-row .grow{flex:1}
+  .no-result{padding:26px 12px;text-align:center;color:var(--muted);font-size:12px}
+
+  /* ---------- managed ---------- */
+  .source-card{
+    display:flex;align-items:flex-start;gap:10px;border:1px solid var(--border);border-radius:10px;
+    padding:10px 12px;margin-bottom:8px;background:#fff;
+  }
+  .source-card.hidden-source{background:#FAFAFB;border-style:dashed}
+  .source-icon{
+    width:30px;height:30px;border-radius:8px;background:#F4F4F5;color:var(--muted);
+    display:grid;place-items:center;flex:0 0 30px;
+  }
+  .source-name{font-weight:600;font-size:12.5px}
+  .source-path{font-family:Menlo,Consolas,monospace;font-size:10.5px;color:var(--muted);word-break:break-all;margin-top:1px}
+  .source-meta{font-size:10.5px;color:var(--muted);margin-top:3px}
+  .source-card .badge{margin-left:auto;flex:0 0 auto}
+  .policy-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:6px}
+  .policy-item{border:1px solid var(--border);border-radius:9px;padding:8px 10px;background:#FCFCFD}
+  .policy-label{font-size:10.5px;color:var(--muted);margin-bottom:4px}
+  .policy-value{font-size:11.5px}
+  .json-readonly{
+    background:#18181B;color:#E4E4E7;border-radius:10px;padding:11px 12px;overflow:auto;
+    font-family:Menlo,Consolas,monospace;font-size:11px;line-height:1.6;max-height:300px;margin:8px 0 0;
+  }
+  .json-readonly .k{color:#93C5FD}
+  .json-readonly .s{color:#FDBA74}
+
+  /* ---------- feedback / empty ---------- */
+  .success-box,.warn-box,.error-box{
+    border:1px solid transparent;border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:12px;
+  }
+  .success-box{background:var(--soft-ok);border-color:#BBF7D0;color:var(--soft-ok-text)}
+  .warn-box{background:var(--soft-warn);border-color:#FDE68A;color:var(--soft-warn-text)}
+  .error-box{background:var(--soft-danger);border-color:#FECACA;color:var(--soft-danger-text)}
+  .feedback-title{font-weight:700;display:flex;align-items:center;gap:6px}
+  .feedback-detail{color:inherit;opacity:.92;margin-top:3px;line-height:1.5}
+  .feedback-detail .mono{font-size:11px}
+  .feedback-actions{margin-top:7px;display:flex;gap:7px;flex-wrap:wrap}
+  .feedback-actions .btn{height:26px;font-size:11.5px;padding:0 9px;background:rgba(255,255,255,.7);border-color:rgba(24,24,27,.08)}
+  .empty{
+    border:1px dashed #D9D9E0;border-radius:12px;padding:30px 18px;text-align:center;background:#FCFCFD;
+  }
+  .empty-icon{
+    width:42px;height:42px;border-radius:12px;background:var(--soft-act);color:var(--soft-act-text);
+    display:grid;place-items:center;margin:0 auto 9px;
+  }
+  .empty-title{font-weight:700;font-size:13px;margin-bottom:3px}
+  .empty-desc{color:var(--muted);font-size:12px;max-width:540px;margin:0 auto 12px;line-height:1.55}
+  .empty-actions{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+
+  /* ---------- modal / toast ---------- */
+  .modal-overlay{
+    position:fixed;inset:0;background:rgba(24,24,27,.36);z-index:50;display:flex;align-items:center;
+    justify-content:center;padding:20px;
+  }
+  .modal{
+    background:#fff;border-radius:12px;width:min(520px,100%);max-height:88vh;overflow:auto;
+    box-shadow:0 20px 50px rgba(24,24,27,.25);border:1px solid rgba(255,255,255,.4);
+  }
+  .modal-head{padding:16px 18px 8px}
+  .modal-title{font-size:15px;font-weight:700;line-height:1.35}
+  .modal-sub{color:var(--muted);font-size:12px;margin-top:3px}
+  .modal-body{padding:0 18px 14px;font-size:12.5px;line-height:1.6}
+  .modal-actions{
+    display:flex;justify-content:flex-end;gap:8px;padding:12px 18px 16px;border-top:1px solid var(--border);
+  }
+  .modal-actions .btn{min-width:74px;justify-content:center}
+  .modal-actions .btn.primary{min-width:88px}
+  .modal-list{margin:7px 0 0;padding-left:18px;color:#3F3F46}
+  .modal-list li{margin:3px 0}
+  .modal-kv{display:flex;gap:10px;padding:4px 0;border-top:1px solid #F1F1F4;font-size:12px}
+  .modal-kv:first-child{border-top:0}
+  .modal-kv .k{color:var(--muted);width:72px;flex:0 0 72px}
+  .modal-kv .v{flex:1;min-width:0;word-break:break-all}
+  .modal-kv .v .mono{font-size:11px}
+  .scope-table{width:100%;border-collapse:collapse;font-size:11.5px}
+  .scope-table th{text-align:left;font-size:10.5px;color:var(--muted);font-weight:500;padding:5px 6px;border-bottom:1px solid var(--border)}
+  .scope-table td{padding:6px;border-bottom:1px solid #F1F1F4;vertical-align:top}
+  .scope-table tr:last-child td{border-bottom:0}
+  .scope-table .key{font-family:Menlo,Consolas,monospace;font-size:10.5px;word-break:break-all}
+  .scope-table .yes{color:var(--soft-ok-text);font-weight:600}
+  .scope-table .no{color:var(--soft-danger-text);font-weight:600}
+  .scope-table .ro{color:var(--muted)}
+  .help-step{display:flex;gap:9px;padding:7px 0;border-top:1px solid #F1F1F4}
+  .help-step:first-child{border-top:0}
+  .help-num{
+    width:20px;height:20px;border-radius:50%;background:var(--soft-act);color:var(--soft-act-text);
+    font-size:10.5px;font-weight:700;display:grid;place-items:center;flex:0 0 20px;margin-top:1px;
+  }
+  .help-step b{font-weight:600}
+  .toast-root{position:fixed;right:20px;bottom:20px;z-index:80;display:flex;flex-direction:column;gap:8px;max-width:380px}
+  .toast{
+    background:#18181B;color:#fff;border-radius:10px;padding:9px 11px;font-size:12px;line-height:1.45;
+    box-shadow:0 8px 24px rgba(24,24,27,.25);border-left:3px solid #52525B;animation:toast-in .18s ease-out;
+  }
+  .toast.success{border-left-color:#22C55E}
+  .toast.warn{border-left-color:#FBBF24}
+  .toast.error{border-left-color:#EF4444}
+  .toast.info{border-left-color:#60A5FA}
+  @keyframes toast-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .spinner{
+    width:12px;height:12px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;
+    display:inline-block;animation:spin .7s linear infinite;vertical-align:-2px;
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @media (prefers-reduced-motion: reduce){
+    *{animation:none!important;transition:none!important}
+  }
+  @media (max-width:1080px){
+    .main{padding:14px 16px 40px}
+    .sidebar{width:184px;flex-basis:184px}
+    .form-label{width:104px;flex-basis:104px}
+  }
+  @media (max-width:900px){
+    .rule-grid{grid-template-columns:1fr}
+    .policy-grid{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+
+<div class="demo-bar">
+  <span class="dot"></span>
+  <strong>交互原型</strong>
+  <span class="sep"></span>
+  <span>Agent 接入 + Claude Code 设置</span>
+  <span class="demo-hint">假数据 · 可直接点击体验</span>
+  <span class="grow"></span>
+  <button data-action="open-help">使用说明</button>
+  <button data-action="open-rules">作用域规则</button>
+</div>
+
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">A</div>
+      <div class="brand-name">AgentSwitch</div>
+    </div>
+    <nav class="nav" aria-label="主导航">
+      <button class="nav-item" data-action="nav" data-value="logical">
+        <span class="icon" data-icon="logical"></span><span class="nav-label">逻辑模型</span>
+      </button>
+      <button class="nav-item" data-action="nav" data-value="channels">
+        <span class="icon" data-icon="channels"></span><span class="nav-label">渠道</span>
+      </button>
+      <button class="nav-item active" data-action="nav" data-value="access" aria-current="page">
+        <span class="icon" data-icon="access"></span><span class="nav-label">Agent 接入</span>
+        <span class="nav-badge">新</span>
+      </button>
+      <button class="nav-item" data-action="nav" data-value="settings">
+        <span class="icon" data-icon="settings"></span><span class="nav-label">设置</span>
+      </button>
+    </nav>
+    <div class="gateway">
+      <div class="gw-row"><span class="led" id="gw-led"></span><span id="gw-state-text">运行中</span></div>
+      <div class="addr mono muted">127.0.0.1:17890</div>
+      <button class="btn small danger" id="gw-toggle" data-action="stop-gateway">停止网关</button>
+    </div>
+  </aside>
+
+  <main class="main" id="main">
+    <div class="page" id="page"></div>
+  </main>
+</div>
+
+<div id="modal-root"></div>
+<div id="drawer-root"></div>
+<div id="toast-root" class="toast-root" aria-live="polite" aria-atomic="false"></div>
+
+<script>
+(() => {
+  'use strict';
+
+  /* =========================================================
+     1. 基础工具
+     ========================================================= */
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+  const clone = (v) => JSON.parse(JSON.stringify(v));
+  const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+  const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const attr = (v) => esc(v).replace(/`/g, '&#96;');
+  const mono = (v) => `<span class="mono">${esc(v)}</span>`;
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const nowClock = () => {
+    const d = new Date();
+    return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  };
+  const basename = (p) => {
+    const clean = String(p || '').replace(/[\\/]+$/, '');
+    const parts = clean.split(/[\\/]/);
+    return parts[parts.length - 1] || clean;
+  };
+  const hasAt = (obj, path) => {
+    if (!path) return false;
+    let cur = obj;
+    for (const part of path.split('.')) {
+      if (!isObj(cur) && !Array.isArray(cur)) return false;
+      if (!Object.prototype.hasOwnProperty.call(cur, part)) return false;
+      cur = cur[part];
+    }
+    return true;
+  };
+  const getAt = (obj, path) => {
+    if (!path) return undefined;
+    let cur = obj;
+    for (const part of path.split('.')) {
+      if (cur === null || cur === undefined) return undefined;
+      if (!Object.prototype.hasOwnProperty.call(cur, part)) return undefined;
+      cur = cur[part];
+    }
+    return cur;
+  };
+  const setAt = (obj, path, value) => {
+    const parts = path.split('.');
+    let cur = obj;
+    parts.forEach((part, i) => {
+      if (i === parts.length - 1) cur[part] = value;
+      else {
+        if (!isObj(cur[part]) && !Array.isArray(cur[part])) cur[part] = {};
+        cur = cur[part];
+      }
+    });
+  };
+  const deleteAt = (obj, path) => {
+    const parts = path.split('.');
+    let cur = obj;
+    for (let i = 0; i < parts.length - 1; i++) {
+      if (!isObj(cur[parts[i]]) && !Array.isArray(cur[parts[i]])) return;
+      cur = cur[parts[i]];
+    }
+    delete cur[parts[parts.length - 1]];
+  };
+  const diffPaths = (a, b, prefix = '') => {
+    const out = [];
+    const keys = new Set([...Object.keys(a || {}), ...Object.keys(b || {})]);
+    for (const k of keys) {
+      const path = prefix ? `${prefix}.${k}` : k;
+      const va = a ? a[k] : undefined;
+      const vb = b ? b[k] : undefined;
+      if (isObj(va) && isObj(vb)) out.push(...diffPaths(va, vb, path));
+      else if (JSON.stringify(va) !== JSON.stringify(vb)) out.push(path);
+    }
+    return out;
+  };
+  const unique = (arr) => Array.from(new Set(arr));
+  const isSecretKey = (key) => /(TOKEN|SECRET|PASSWORD|API_KEY|AUTH_TOKEN|_KEY$)/i.test(String(key || ''));
+  const maskText = '••••••••';
+
+  /* =========================================================
+     2. 图标
+     ========================================================= */
+  const ICON_SVG = {
+    logical: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><rect x="2.5" y="2.5" width="11" height="3.2" rx="1.2"/><rect x="2.5" y="6.4" width="11" height="3.2" rx="1.2"/><rect x="2.5" y="10.3" width="11" height="3.2" rx="1.2"/></svg>',
+    channels: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="3.4" cy="8" r="1.6"/><circle cx="12.6" cy="4" r="1.6"/><circle cx="12.6" cy="12" r="1.6"/><path d="M5 8h2.2c1.2 0 1.6-.6 2.2-1.6.6-1 1.1-1.6 1.8-1.6M5 8h2.2c1.2 0 1.6.6 2.2 1.6.6 1 1.1 1.6 1.8 1.6"/></svg>',
+    access: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6.5 9.5 9.5 6.5"/><path d="M7 4.2 8.4 2.8a3 3 0 0 1 4.2 4.2L11.2 8.4"/><path d="M9 11.8 7.6 13.2a3 3 0 0 1-4.2-4.2L4.8 7.6"/></svg>',
+    config: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/><circle cx="5.5" cy="4.5" r="1.4" fill="#fff"/><circle cx="10.5" cy="8" r="1.4" fill="#fff"/><circle cx="6.5" cy="11.5" r="1.4" fill="#fff"/></svg>',
+    settings: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="2.1"/><path d="M8 1.9v1.5M8 12.6v1.5M1.9 8h1.5M12.6 8h1.5M3.7 3.7l1.1 1.1M11.2 11.2l1.1 1.1M12.3 3.7l-1.1 1.1M4.8 11.2l-1.1 1.1"/></svg>',
+    lock: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.2" y="7" width="9.6" height="6.2" rx="1.4"/><path d="M5.2 7V5.2a2.8 2.8 0 0 1 5.6 0V7"/></svg>',
+    info: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="6"/><path d="M8 7.2v3.4M8 5.4h.01"/></svg>',
+    warning: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.2 14.2 13H1.8L8 2.2Z"/><path d="M8 6.2v3M8 11.4h.01"/></svg>',
+    check: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3.2 8.4 3 3 6.6-7"/></svg>',
+    folder: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M1.8 4.2c0-.7.5-1.2 1.2-1.2h3l1.4 1.4h5.6c.7 0 1.2.5 1.2 1.2v6.2c0 .7-.5 1.2-1.2 1.2H3c-.7 0-1.2-.5-1.2-1.2V4.2Z"/></svg>',
+    refresh: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 6.4A5.4 5.4 0 1 0 13.2 9"/><path d="M13 2.6v3.8H9.2"/></svg>',
+    eye: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1.8 8s2.3-3.8 6.2-3.8S14.2 8 14.2 8 11.9 11.8 8 11.8 1.8 8 1.8 8Z"/><circle cx="8" cy="8" r="1.6"/></svg>',
+    copy: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><rect x="5" y="5" width="8" height="8" rx="1.4"/><path d="M3.2 10.8H3c-.7 0-1.2-.5-1.2-1.2V3c0-.7.5-1.2 1.2-1.2h6.6c.7 0 1.2.5 1.2 1.2v.2"/></svg>',
+    chevron: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m4.5 6 3.5 3.5L11.5 6"/></svg>',
+    plus: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M8 3.2v9.6M3.2 8h9.6"/></svg>',
+    external: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.2 2.8h4v4M13.2 2.8 7.4 8.6"/><path d="M12 9.4v2.8c0 .7-.5 1.2-1.2 1.2H3.8c-.7 0-1.2-.5-1.2-1.2V5.2c0-.7.5-1.2 1.2-1.2h2.8"/></svg>',
+    search: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.2"/><path d="m10.2 10.2 3 3"/></svg>'
+  };
+  const icon = (name, size = 16) => {
+    const raw = ICON_SVG[name] || ICON_SVG.info;
+    return `<span class="icon" style="width:${size}px;height:${size}px" aria-hidden="true">${raw.replace('<svg ', `<svg width="${size}" height="${size}" `)}</span>`;
+  };
+  const badge = (kind, text) => `<span class="badge ${kind || ''}">${esc(text)}</span>`;
+  const lockBadge = (text) => `<span class="badge lock">${icon('lock', 11)}${esc(text)}</span>`;
+
+  /* =========================================================
+     3. 假数据
+     ========================================================= */
+  const GATEWAY_MODEL = 'my-code';
+  const CORE_MANAGED_ENV = ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_MODEL'];
+  const ROLE_DEFS = [
+    { label: 'Sonnet', key: 'ANTHROPIC_DEFAULT_SONNET_MODEL', nameKey: 'ANTHROPIC_DEFAULT_SONNET_MODEL_NAME' },
+    { label: 'Opus', key: 'ANTHROPIC_DEFAULT_OPUS_MODEL', nameKey: 'ANTHROPIC_DEFAULT_OPUS_MODEL_NAME' },
+    { label: 'Fable', key: 'ANTHROPIC_DEFAULT_FABLE_MODEL', nameKey: 'ANTHROPIC_DEFAULT_FABLE_MODEL_NAME' },
+    { label: 'Haiku', key: 'ANTHROPIC_DEFAULT_HAIKU_MODEL', nameKey: 'ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME' },
+    { label: 'Subagent', key: 'CLAUDE_CODE_SUBAGENT_MODEL', nameKey: '' }
+  ];
+  const ACCESS_MANAGED_ENV = [
+    ...CORE_MANAGED_ENV,
+    'ANTHROPIC_SMALL_FAST_MODEL',
+    ...ROLE_DEFS.flatMap((r) => [r.key, r.nameKey].filter(Boolean))
+  ];
+  const MANAGED_SOURCE_PATH = '/Library/Application Support/ClaudeCode/managed-settings.json';
+
+  const PROJECTS = [
+    { id: 'agentswitch', name: 'AgentSwitch', path: '/Users/caozhang/work/java_work/AgentSwitch', recent: '刚刚', gitRoot: '/Users/caozhang/work/java_work/AgentSwitch' },
+    { id: 'hp', name: 'hp', path: '/Users/caozhang/work/java_work/hp', recent: '2 小时前', gitRoot: '/Users/caozhang/work/java_work/hp' },
+    { id: 'season-loop', name: 'season-loop', path: '/Users/caozhang/work/java_work/season-loop', recent: '昨天', gitRoot: '/Users/caozhang/work/java_work/season-loop' },
+    { id: 'neighbor-backend', name: 'project-neighbor-backend', path: '/Users/caozhang/work/java_work/project-neighbor/project-neighbor-backend', recent: '3 天前', gitRoot: '/Users/caozhang/work/java_work/project-neighbor', note: '位于仓库子目录' }
+  ];
+
+  const SEED = {
+    user: {
+      model: 'sonnet',
+      fallbackModel: ['haiku', 'sonnet'],
+      effortLevel: 'high',
+      alwaysThinkingEnabled: true,
+      skipDangerousModePermissionPrompt: true,
+      skillOverrides: {
+        'superpowers:brainstorming': 'off',
+        commit: 'on',
+        deploy: 'off',
+        'legacy-context': 'name-only',
+        'old-skill': 'off'
+      },
+      env: {
+        ANTHROPIC_BASE_URL: 'http://127.0.0.1:17890',
+        ANTHROPIC_AUTH_TOKEN: 'sk-agw-demo-7f3c9a2e',
+        ANTHROPIC_MODEL: 'my-code[1M]',
+        ANTHROPIC_SMALL_FAST_MODEL: 'my-code',
+        ANTHROPIC_DEFAULT_SONNET_MODEL: 'my-code',
+        ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: 'Sonnet',
+        ANTHROPIC_DEFAULT_OPUS_MODEL: 'my-code',
+        ANTHROPIC_DEFAULT_OPUS_MODEL_NAME: 'Opus',
+        ANTHROPIC_DEFAULT_FABLE_MODEL: 'my-code',
+        ANTHROPIC_DEFAULT_FABLE_MODEL_NAME: 'Fable',
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: 'my-code',
+        ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME: 'Haiku',
+        CLAUDE_CODE_SUBAGENT_MODEL: 'my-code',
+        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+        API_TIMEOUT_MS: '600000'
+      },
+      permissions: {
+        defaultMode: 'default',
+        deny: ['Read(./.env)', 'Bash(rm -rf:*)'],
+        ask: ['Bash(git push:*)'],
+        allow: ['Bash(git status)', 'Bash(npm test:*)', 'Read(./src/**)'],
+        additionalDirectories: ['~/work/shared-docs']
+      },
+      statusLine: {
+        type: 'command',
+        command: '~/.claude/statusline.sh',
+        padding: 0,
+        refreshInterval: 5
+      },
+      enabledPlugins: {
+        'superpowers@claude-plugins-official': true,
+        'pm-execution@pm-skills': true,
+        'frontend-design@claude-plugins-official': false
+      },
+      enableAllProjectMcpServers: false,
+      enabledMcpjsonServers: ['context7'],
+      disabledMcpjsonServers: ['legacy-fs'],
+      autoCompactEnabled: true,
+      autoMemoryEnabled: true,
+      cleanupPeriodDays: 30,
+      hooks: {
+        PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: '~/.claude/hooks/audit.sh' }] }]
+      }
+    },
+    shared: {
+      skillOverrides: {
+        'project-audit': 'user-invocable-only'
+      },
+      permissions: {
+        allow: ['Bash(npm test:*)', 'Bash(pnpm lint)', 'Edit(./src/**)'],
+        deny: ['Read(./secrets/**)'],
+        additionalDirectories: ['~/work/shared-docs', '~/work/java_work/vendor']
+      },
+      env: {
+        NODE_ENV: 'development',
+        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
+      },
+      enabledPlugins: {
+        'superpowers@claude-plugins-official': true,
+        'pm-execution@pm-skills': false
+      },
+      enableAllProjectMcpServers: true,
+      enabledMcpjsonServers: ['playwright'],
+      statusLine: {
+        type: 'command',
+        command: './.claude/status.sh',
+        padding: 2
+      },
+      hooks: {
+        PostToolUse: [{ matcher: 'Write', hooks: [{ type: 'command', command: 'pnpm lint --fix' }] }]
+      }
+    },
+    local: {
+      model: 'opus',
+      skipDangerousModePermissionPrompt: false,
+      skillOverrides: {
+        'project-audit': 'off'
+      },
+      permissions: {
+        defaultMode: 'acceptEdits',
+        allow: ['Bash(docker compose:*)', 'Bash(npm test:*)'],
+        ask: ['Bash(git push:*)'],
+        deny: ['Bash(curl:*)']
+      },
+      env: {
+        NODE_ENV: 'local',
+        DEBUG: 'agentswitch:*'
+      },
+      enabledPlugins: {
+        'frontend-design@claude-plugins-official': true
+      }
+    },
+    managed: {
+      skillOverrides: {
+        'security-review': 'off'
+      },
+      permissions: {
+        defaultMode: 'default',
+        deny: ['Read(./.env)', 'Bash(curl:*)', 'WebFetch'],
+        ask: ['Bash(git push:*)'],
+        allow: ['Read(./src/**)']
+      },
+      env: {
+        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
+      },
+      availableModels: ['sonnet', 'haiku'],
+      modelSettings: { 'claude-sonnet-5': { effortLevel: 'high' } },
+      allowedMcpServers: ['github'],
+      deniedMcpServers: ['filesystem'],
+      enabledPlugins: { 'sec-default@builtin': true },
+      disableAutoMode: 'disable'
+    }
+  };
+
+  const SOURCE_ORDER = ['managed', 'local', 'shared', 'user'];
+  const SOURCE_LABEL = { managed: '托管', local: '项目本地', shared: '项目共享', user: '用户级' };
+
+  const MANAGED_SOURCES = [
+    {
+      name: 'managed-settings.json',
+      path: MANAGED_SOURCE_PATH,
+      kind: '文件',
+      status: 'loaded',
+      modified: '2026-10-30 09:12'
+    },
+    {
+      name: 'com.example.claude.plist',
+      path: '/Library/Managed Preferences/com.example.claude.plist',
+      kind: 'MDM',
+      status: 'loaded',
+      modified: '2026-10-28 17:40'
+    },
+    {
+      name: '远程组织策略',
+      path: '由 Claude Code 运行时从组织服务获取',
+      kind: '远程',
+      status: 'hidden',
+      modified: '—'
+    }
+  ];
+
+  const INSTALLED_PLUGINS = [
+    'superpowers@claude-plugins-official',
+    'pm-execution@pm-skills',
+    'frontend-design@claude-plugins-official',
+    'chrome-devtools-mcp@claude-plugins-official'
+  ];
+  const MCP_SERVERS = ['context7', 'playwright', 'legacy-fs', 'github'];
+
+  const SKILL_STATES = [
+    ['on', '开启'],
+    ['name-only', '仅名称'],
+    ['user-invocable-only', '仅手动调用'],
+    ['off', '关闭']
+  ];
+  const SKILL_STATE_LABEL = Object.fromEntries(SKILL_STATES);
+  const INSTALLED_SKILLS = [
+    { name: 'superpowers:brainstorming', source: 'plugin', plugin: 'superpowers@claude-plugins-official', desc: '方案发散与头脑风暴' },
+    { name: 'superpowers:test-driven-development', source: 'plugin', plugin: 'superpowers@claude-plugins-official', desc: 'TDD 工作流' },
+    { name: 'pm-execution:write-prd', source: 'plugin', plugin: 'pm-execution@pm-skills', desc: '生成 PRD' },
+    { name: 'frontend-design', source: 'plugin', plugin: 'frontend-design@claude-plugins-official', desc: '前端视觉设计规范' },
+    { name: 'claude-api', source: 'built-in', desc: 'Claude API 参考与模型迁移' },
+    { name: 'security-review', source: 'built-in', desc: '安全审查' },
+    { name: 'dataviz', source: 'built-in', desc: '图表与可视化规范' },
+    { name: 'skill-creator', source: 'built-in', desc: '创建新 Skill（作者锁定仅手动）', lock: 'author' },
+    { name: 'commit', source: 'user', desc: '提交变更' },
+    { name: 'deploy', source: 'user', desc: '部署流程' },
+    { name: 'legacy-context', source: 'user', desc: '旧项目上下文' },
+    { name: 'project-audit', source: 'project', desc: '项目级审计流程' }
+  ];
+
+  const USER_ONLY_KEYS = ['autoMode', 'modelPicker', 'sandbox.allowAppleEvents', 'worktree.location'];
+  const NOT_SHARED_KEYS = ['skipDangerousModePermissionPrompt', 'syncClaudeAiPlugins', 'syncClaudeAiSkills', 'useAutoModeDuringPlan'];
+  const MANAGED_ONLY_KEYS = ['managedMcpServers', 'isolation', 'deniedModels', 'availableModelsMatch'];
+  const RESTART_KEYS = ['model', 'fallbackModel', 'effortLevel', 'alwaysThinkingEnabled'];
+  const HOT_PREFIXES = [
+    'env.', 'permissions.', 'statusLine', 'enabledPlugins',
+    'enableAllProjectMcpServers', 'enabledMcpjsonServers', 'disabledMcpjsonServers',
+    'autoCompactEnabled', 'autoMemoryEnabled'
+  ];
+
+  /* =========================================================
+     4. 状态
+     ========================================================= */
+  let docs = clone(SEED);
+  let baseline = {
+    user: clone(SEED.user),
+    shared: clone(SEED.shared),
+    local: clone(SEED.local)
+  };
+
+  const state = {
+    agentTab: 'claude',            // claude | codex | desktop | guide
+    scope: 'user',                 // user | project | managed
+    projectId: 'agentswitch',
+    projectFile: 'shared',         // shared | local
+    view: 'form',                  // form | json | merge
+    dirty: false,
+    dirtyTarget: null,
+    jsonDrafts: {},
+    jsonTarget: null,
+    jsonDirty: false,
+    jsonError: null,
+    result: null,
+    formErrors: [],
+    lastSaved: { user: '今天 11:42', shared: '昨天 18:05', local: '今天 09:10' },
+    revealed: new Set(),
+    mergeFilter: '',
+    expanded: new Set(),
+    managedExpanded: false,
+    customProjects: [],
+    accessDrawerOpen: false,
+    accessGlobalOpen: false,
+    access: {
+      config: '默认配置',
+      model: GATEWAY_MODEL,
+      oneM: true,
+      roles: { Sonnet: GATEWAY_MODEL, Opus: GATEWAY_MODEL, Fable: GATEWAY_MODEL, Haiku: GATEWAY_MODEL, Subagent: GATEWAY_MODEL },
+      dirty: false,
+      applied: true,
+      lastApplied: '今天 11:38',
+      lastSaved: '今天 11:36'
+    },
+    gatewayRunning: true
+  };
+
+  let modalActions = {};
+  let pendingDiscard = null;
+
+  /* =========================================================
+     5. 目标、路径、项目
+     ========================================================= */
+  function allProjects() {
+    return [...PROJECTS, ...state.customProjects];
+  }
+  function currentProject() {
+    if (!state.projectId) return null;
+    return allProjects().find((p) => p.id === state.projectId) || null;
+  }
+  function currentTarget() {
+    return state.scope === 'user' ? 'user' : state.projectFile;
+  }
+  function currentDoc() {
+    return docs[currentTarget()];
+  }
+  function currentBaseline() {
+    return baseline[currentTarget()];
+  }
+  function sharedPath() {
+    const p = currentProject();
+    return p ? `${p.path}/.claude/settings.json` : '';
+  }
+  function localPath() {
+    const p = currentProject();
+    if (!p) return '';
+    return `${p.gitRoot || p.path}/.claude/settings.local.json`;
+  }
+  function targetPath(target = currentTarget()) {
+    if (target === 'user') return '~/.claude/settings.json';
+    if (target === 'shared') return sharedPath();
+    if (target === 'local') return localPath();
+    return MANAGED_SOURCE_PATH;
+  }
+  function sourcePath(source) {
+    if (source === 'managed') return MANAGED_SOURCE_PATH;
+    if (source === 'local') return localPath() || '<project>/.claude/settings.local.json';
+    if (source === 'shared') return sharedPath() || '<project>/.claude/settings.json';
+    return '~/.claude/settings.json';
+  }
+  function sourceLabel(source) {
+    return SOURCE_LABEL[source] || source;
+  }
+  function lowerSources(target = currentTarget()) {
+    if (target === 'local') return ['shared', 'user'];
+    if (target === 'shared') return ['user'];
+    return [];
+  }
+  function backupPath(target = currentTarget()) {
+    const d = new Date();
+    const stamp = `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}`;
+    const filename = target === 'local' ? 'settings.local.json' : 'settings.json';
+    return `~/.agentswitch/backups/claude-settings/${stamp}-${filename}`;
+  }
+  function shortPath(p) {
+    if (!p) return '';
+    return p.replace(/^\/Users\/[^/]+/, '~');
+  }
+
+  /* =========================================================
+     6. 合并
+     ========================================================= */
+  function activeSources() {
+    return SOURCE_ORDER.filter((src) => {
+      if (src === 'shared' || src === 'local') return !!currentProject();
+      return true;
+    });
+  }
+
+  function mergedDoc() {
+    const out = {};
+    for (const src of activeSources()) {
+      const doc = docs[src];
+      if (!isObj(doc)) continue;
+      for (const [key, value] of Object.entries(doc)) {
+        if (key === 'permissions' && isObj(value)) {
+          if (!isObj(out.permissions)) out.permissions = {};
+          for (const [pk, pv] of Object.entries(value)) {
+            if (['allow', 'ask', 'deny', 'additionalDirectories'].includes(pk) && Array.isArray(pv)) {
+              if (!Array.isArray(out.permissions[pk])) out.permissions[pk] = [];
+              for (const item of pv) {
+                if (!out.permissions[pk].includes(item)) out.permissions[pk].push(item);
+              }
+            } else if (!Object.prototype.hasOwnProperty.call(out.permissions, pk)) {
+              out.permissions[pk] = clone(pv);
+            }
+          }
+        } else if (key === 'env' && isObj(value)) {
+          if (!isObj(out.env)) out.env = {};
+          for (const [ek, ev] of Object.entries(value)) {
+            if (!Object.prototype.hasOwnProperty.call(out.env, ek)) out.env[ek] = ev;
+          }
+        } else if (key === 'hooks' && isObj(value)) {
+          if (!isObj(out.hooks)) out.hooks = {};
+          for (const [ev, arr] of Object.entries(value)) {
+            if (!Array.isArray(out.hooks[ev])) out.hooks[ev] = [];
+            if (Array.isArray(arr)) out.hooks[ev].push(...clone(arr));
+          }
+        } else if (key === 'enabledPlugins' && isObj(value)) {
+          if (!isObj(out.enabledPlugins)) out.enabledPlugins = {};
+          for (const [id, enabled] of Object.entries(value)) {
+            if (!Object.prototype.hasOwnProperty.call(out.enabledPlugins, id)) out.enabledPlugins[id] = enabled;
+          }
+        } else if (key === 'skillOverrides' && isObj(value)) {
+          if (!isObj(out.skillOverrides)) out.skillOverrides = {};
+          for (const [name, skillState] of Object.entries(value)) {
+            if (!Object.prototype.hasOwnProperty.call(out.skillOverrides, name)) out.skillOverrides[name] = skillState;
+          }
+        } else if (key === 'enabledMcpjsonServers' || key === 'disabledMcpjsonServers') {
+          if (!Array.isArray(out[key])) out[key] = [];
+          if (Array.isArray(value)) {
+            for (const item of value) {
+              if (!out[key].includes(item)) out[key].push(item);
+            }
+          }
+        } else if (['fallbackModel', 'modelPicker', 'availableModels', 'modelSettings'].includes(key)) {
+          if (!Object.prototype.hasOwnProperty.call(out, key)) out[key] = clone(value);
+        } else if (!Object.prototype.hasOwnProperty.call(out, key)) {
+          out[key] = clone(value);
+        }
+      }
+    }
+    const dangerLayers = activeSources().filter((src) => hasAt(docs[src], 'skipDangerousModePermissionPrompt'));
+    if (dangerLayers.length) {
+      out.skipDangerousModePermissionPrompt = dangerLayers.some((src) => docs[src].skipDangerousModePermissionPrompt === true);
+    }
+    return out;
+  }
+
+  function scalarSources(path) {
+    const list = activeSources()
+      .filter((src) => hasAt(docs[src], path))
+      .map((src) => ({ source: src, value: getAt(docs[src], path) }));
+    let activeIdx = 0;
+    if (path === 'permissions.defaultMode') {
+      for (let i = 0; i < list.length; i++) {
+        const src = list[i].source;
+        const val = list[i].value;
+        const isProject = src === 'local' || src === 'shared';
+        if (!(isProject && (val === 'auto' || val === 'bypassPermissions'))) {
+          activeIdx = i;
+          break;
+        }
+      }
+    }
+    if (path === 'skipDangerousModePermissionPrompt') {
+      const anyTrue = list.some((x) => x.value === true);
+      return list.map((item) => ({ ...item, active: anyTrue ? item.value === true : false }));
+    }
+    return list.map((item, i) => ({ ...item, active: i === activeIdx }));
+  }
+
+  function arraySources(path) {
+    const map = new Map();
+    for (const src of activeSources()) {
+      const arr = getAt(docs[src], path);
+      if (!Array.isArray(arr)) continue;
+      for (const item of arr) {
+        if (!map.has(item)) map.set(item, src);
+      }
+    }
+    return Array.from(map.entries()).map(([value, source]) => ({ value, source }));
+  }
+
+  function hookSources(path) {
+    return activeSources()
+      .filter((src) => hasAt(docs[src], path))
+      .map((src) => ({ source: src, value: getAt(docs[src], path) }));
+  }
+
+  function mergeKind(path) {
+    if (/^permissions\.(allow|ask|deny|additionalDirectories)$/.test(path)) return '并集';
+    if (path === 'enabledMcpjsonServers' || path === 'disabledMcpjsonServers') return '并集';
+    if (path.startsWith('skillOverrides.')) return '逐键';
+    if (path === 'skipDangerousModePermissionPrompt') return '任一层 true';
+    if (path.startsWith('env.')) return '逐变量';
+    if (path.startsWith('hooks.')) return '累加';
+    if (path.startsWith('enabledPlugins.')) return '逐键';
+    if (['fallbackModel', 'modelPicker', 'availableModels', 'modelSettings'].includes(path)) return '整值替换';
+    return '覆盖';
+  }
+
+  function effectiveForMerge(path) {
+    if (path === 'permissions.defaultMode') {
+      const active = scalarSources(path).find((x) => x.active);
+      return active ? active.value : undefined;
+    }
+    return getAt(mergedDoc(), path);
+  }
+
+  function activeSourceFor(path) {
+    const list = scalarSources(path);
+    const active = list.find((x) => x.active);
+    return active ? active.source : null;
+  }
+
+  function contributionsFor(path) {
+    const kind = mergeKind(path);
+    if (kind === '并集') return { type: 'array', entries: arraySources(path) };
+    if (kind === '累加') return { type: 'hooks', entries: hookSources(path) };
+    return { type: 'scalar', entries: scalarSources(path) };
+  }
+
+  /* =========================================================
+     7. 校验
+     ========================================================= */
+  function scopeIssuesRaw(doc, target) {
+    const out = [];
+    const add = (path, msg, sev = 'error') => out.push({ path, msg, sev });
+    const has = (p) => hasAt(doc, p);
+
+    if (target === 'user') {
+      for (const k of MANAGED_ONLY_KEYS) {
+        if (has(k)) add(k, '仅托管策略可设置，Claude Code 会忽略此值', 'warn');
+      }
+    }
+
+    if (target === 'shared' || target === 'local') {
+      for (const k of USER_ONLY_KEYS) {
+        if (has(k)) add(k, '仅用户级可写，写在项目层不会生效', 'error');
+      }
+      if (target === 'shared') {
+        for (const k of NOT_SHARED_KEYS) {
+          if (has(k)) add(k, '不能写入项目共享，请放到用户级或项目本地', 'error');
+        }
+      }
+      if (has('cleanupPeriodDays')) {
+        add('cleanupPeriodDays', '本期仅用户级提供编辑；项目层不提供入口', 'warn');
+      }
+      if (target === 'shared' && has('autoMemoryDirectory')) {
+        add('autoMemoryDirectory', '项目共享中的 autoMemoryDirectory 会被 Claude Code 忽略', 'warn');
+      }
+      const dm = getAt(doc, 'permissions.defaultMode');
+      if (dm === 'auto' || dm === 'bypassPermissions') {
+        add('permissions.defaultMode', `项目级 ${dm} 不生效；实际会回落到较低层的有效值`, 'warn');
+      }
+    }
+    return out;
+  }
+
+  function scopeIssues(doc, target, baseDoc) {
+    const cur = scopeIssuesRaw(doc, target);
+    const base = baseDoc ? scopeIssuesRaw(baseDoc, target) : [];
+    return cur.map((issue) => ({
+      ...issue,
+      isNew: !base.some((b) => b.path === issue.path && b.msg === issue.msg && b.sev === issue.sev)
+    }));
+  }
+
+  function managedKeyChanges(doc, base) {
+    return ACCESS_MANAGED_ENV.filter((k) => JSON.stringify(getAt(doc, `env.${k}`)) !== JSON.stringify(getAt(base, `env.${k}`)));
+  }
+
+  function validateDoc(doc) {
+    const errors = [];
+    const add = (path, msg) => errors.push({ path, msg });
+    if (!isObj(doc)) {
+      add('(根节点)', '配置根节点必须是一个 JSON 对象');
+      return errors;
+    }
+    if (hasAt(doc, 'model') && typeof doc.model !== 'string') add('model', 'model 必须是字符串');
+    if (hasAt(doc, 'fallbackModel')) {
+      if (!Array.isArray(doc.fallbackModel) || doc.fallbackModel.some((x) => typeof x !== 'string' || !x.trim())) {
+        add('fallbackModel', 'fallbackModel 必须是非空字符串数组');
+      }
+    }
+    if (hasAt(doc, 'effortLevel') && !['low', 'medium', 'high', 'xhigh'].includes(doc.effortLevel)) {
+      add('effortLevel', 'effortLevel 只能是 low / medium / high / xhigh');
+    }
+    if (hasAt(doc, 'env')) {
+      if (!isObj(doc.env)) add('env', 'env 必须是对象');
+      else {
+        for (const [k, v] of Object.entries(doc.env)) {
+          if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) add(`env.${k}`, '环境变量名只能包含字母、数字、下划线，且不能以数字开头');
+          if (typeof v !== 'string') add(`env.${k}`, '环境变量值必须是字符串');
+        }
+      }
+    }
+    if (hasAt(doc, 'permissions')) {
+      if (!isObj(doc.permissions)) add('permissions', 'permissions 必须是对象');
+      else {
+        const p = doc.permissions;
+        if (hasAt(p, 'defaultMode') && typeof p.defaultMode !== 'string') add('permissions.defaultMode', 'defaultMode 必须是字符串');
+        for (const key of ['allow', 'ask', 'deny', 'additionalDirectories']) {
+          if (!hasAt(p, key)) continue;
+          if (!Array.isArray(p[key]) || p[key].some((x) => typeof x !== 'string' || !x.trim())) {
+            add(`permissions.${key}`, `${key} 必须是非空字符串数组`);
+          }
+          if (key === 'additionalDirectories') {
+            for (const v of p[key] || []) {
+              if (!(v.startsWith('/') || v.startsWith('~/'))) add(`permissions.${key}`, `目录必须是绝对路径或 ~/ 开头：${v}`);
+            }
+          }
+        }
+      }
+    }
+    if (hasAt(doc, 'statusLine')) {
+      if (!isObj(doc.statusLine)) add('statusLine', 'statusLine 必须是对象');
+      else {
+        if (doc.statusLine.type !== 'command') add('statusLine.type', '本期只支持 type=command');
+        if (!doc.statusLine.command || typeof doc.statusLine.command !== 'string') add('statusLine.command', '状态栏命令不能为空');
+      }
+    }
+    if (hasAt(doc, 'cleanupPeriodDays')) {
+      const v = doc.cleanupPeriodDays;
+      if (!Number.isInteger(v) || v < 1) add('cleanupPeriodDays', '保留天数必须是 ≥1 的整数');
+    }
+    if (hasAt(doc, 'enabledPlugins')) {
+      if (!isObj(doc.enabledPlugins)) add('enabledPlugins', 'enabledPlugins 必须是对象');
+      else {
+        for (const [id, v] of Object.entries(doc.enabledPlugins)) {
+          if (typeof v !== 'boolean') add(`enabledPlugins.${id}`, '插件开关必须是布尔值');
+        }
+      }
+    }
+    if (hasAt(doc, 'skillOverrides')) {
+      if (!isObj(doc.skillOverrides)) add('skillOverrides', 'skillOverrides 必须是对象');
+      else {
+        for (const [name, v] of Object.entries(doc.skillOverrides)) {
+          if (!name || name === '__proto__') add(`skillOverrides.${name}`, '该 Skill 名不能写入配置');
+          if (!SKILL_STATES.some((s) => s[0] === v)) add(`skillOverrides.${name}`, 'Skill 状态只能是 on / name-only / user-invocable-only / off');
+        }
+      }
+    }
+    for (const key of ['enabledMcpjsonServers', 'disabledMcpjsonServers']) {
+      if (!hasAt(doc, key)) continue;
+      if (!Array.isArray(doc[key]) || doc[key].some((x) => typeof x !== 'string' || !x.trim())) {
+        add(key, `${key} 必须是非空字符串数组`);
+      }
+    }
+    return errors;
+  }
+
+  function liveGatewayModel() {
+    const raw = getAt(docs.user, 'env.ANTHROPIC_MODEL');
+    if (typeof raw === 'string' && raw.trim()) return raw.replace(/\[1m\]$/i, '');
+    return state.access.model || GATEWAY_MODEL;
+  }
+
+  function modelWarning(value) {
+    if (!value) return '';
+    const base = String(value).replace(/\[1m\]$/i, '');
+    const gw = liveGatewayModel();
+    if (base === gw) return '';
+    return `网关当前模型为 ${gw}；${value} 需先在逻辑模型页登记，否则网关可能返回 404。`;
+  }
+
+  /* =========================================================
+     8. 拼装通用组件
+     ========================================================= */
+  function card(title, desc, body, extra = '') {
+    return `<section class="card">
+      <div class="card-head">
+        <div><div class="card-title">${title}</div>${desc ? `<div class="card-desc">${desc}</div>` : ''}</div>
+        ${extra ? `<div class="card-actions">${extra}</div>` : ''}
+      </div>
+      ${body}
+    </section>`;
+  }
+
+  function fieldRow(label, control, hint = '', path = '') {
+    const remove = path && hasAt(currentDoc(), path) && !ACCESS_MANAGED_ENV.includes(path.replace(/^env\./, ''))
+      ? `<button class="x-mini" data-action="remove-key" data-path="${attr(path)}" title="移除本层设置">×</button>`
+      : '';
+    return `<div class="form-row">
+      <div class="form-label">${esc(label)}${remove}</div>
+      <div class="form-control">${control}${hint ? `<div class="hint">${hint}</div>` : ''}</div>
+    </div>`;
+  }
+
+  function inheritedRow(label, path, displayValue, source, options = {}) {
+    return `<div class="form-row">
+      <div class="form-label">${esc(label)}</div>
+      <div class="form-control">
+        <div class="inherit-line">
+          <span class="value mono">${esc(displayValue)}</span>
+          <span class="badge">${icon('chevron', 10)}继承 · ${esc(sourceLabel(source))}</span>
+          ${options.noOverride ? '' : `<button class="link-btn" data-action="override" data-path="${attr(path)}">在本层覆盖</button>`}
+        </div>
+        ${options.hint ? `<div class="hint">${options.hint}</div>` : ''}
+      </div>
+    </div>`;
+  }
+
+  function triControl(path, labels = {}) {
+    const has = hasAt(currentDoc(), path);
+    const val = getAt(currentDoc(), path);
+    const inheritLabel = labels.inherit || '继承';
+    const onLabel = labels.on || '开';
+    const offLabel = labels.off || '关';
+    const btn = (v, label, cls = '') => {
+      const active = v === ''
+        ? !has
+        : (has && String(val) === v);
+      return `<button class="${cls} ${active ? 'active' : ''}" data-action="tri" data-path="${attr(path)}" data-value="${v}">${esc(label)}</button>`;
+    };
+    return `<div class="tri" role="group" aria-label="${attr(path)}">
+      ${btn('', inheritLabel)}
+      ${btn('true', onLabel, 'on')}
+      ${btn('false', offLabel)}
+    </div>`;
+  }
+
+  function triWithHint(path, labels = {}, hint = '') {
+    return `${triControl(path, labels)}${hint ? `<div class="hint">${hint}</div>` : ''}`;
+  }
+
+  function selectControl(path, options, emptyLabel = '继承') {
+    const has = hasAt(currentDoc(), path);
+    const val = getAt(currentDoc(), path);
+    return `<select class="select" data-bind="${attr(path)}" data-empty="delete">
+      <option value="" ${!has ? 'selected' : ''}>${esc(emptyLabel)}</option>
+      ${options.map((o) => `<option value="${attr(o.value)}" ${has && String(val) === String(o.value) ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}
+    </select>`;
+  }
+
+  function numberControl(path, min, max, placeholder = '') {
+    const val = hasAt(currentDoc(), path) ? getAt(currentDoc(), path) : '';
+    return `<input class="input mono" type="number" data-bind="${attr(path)}" data-kind="number" value="${attr(val)}" ${min !== undefined ? `min="${min}"` : ''} ${max !== undefined ? `max="${max}"` : ''} placeholder="${attr(placeholder)}">`;
+  }
+
+  function textControl(path, opts = {}) {
+    const val = hasAt(currentDoc(), path) ? getAt(currentDoc(), path) : '';
+    return `<input class="input ${opts.mono ? 'mono' : ''}" data-bind="${attr(path)}" ${opts.emptyDelete ? 'data-empty="delete"' : ''} value="${attr(val)}" placeholder="${attr(opts.placeholder || '')}" ${opts.list ? `list="${attr(opts.list)}"` : ''}>`;
+  }
+
+  function chipsHTML(path, items, sourceMap = {}, opts = {}) {
+    if (!items || items.length === 0) {
+      return `<div class="hint">当前层未设置${opts.emptyHint ? ` · ${opts.emptyHint}` : ''}</div>`;
+    }
+    return `<div class="chips">${items.map((item, idx) => {
+      const src = sourceMap[item];
+      const move = opts.movable ? `
+        <button class="x" data-action="move-chip" data-path="${attr(path)}" data-index="${idx}" data-dir="-1" title="上移" ${idx === 0 ? 'disabled' : ''}>↑</button>
+        <button class="x" data-action="move-chip" data-path="${attr(path)}" data-index="${idx}" data-dir="1" title="下移" ${idx === items.length - 1 ? 'disabled' : ''}>↓</button>` : '';
+      return `<span class="chip mono">${esc(item)}${src ? `<span class="mini-src">${esc(sourceLabel(src))}</span>` : ''}
+        ${move}
+        <button class="x" data-action="remove-chip" data-path="${attr(path)}" data-value="${attr(item)}" title="移除">×</button>
+      </span>`;
+    }).join('')}</div>`;
+  }
+
+  function inheritedChips(path, target = currentTarget()) {
+    const currentArr = getAt(currentDoc(), path);
+    const curSet = new Set(Array.isArray(currentArr) ? currentArr : []);
+    const map = new Map();
+    for (const src of lowerSources(target)) {
+      const arr = getAt(docs[src], path);
+      if (!Array.isArray(arr)) continue;
+      for (const item of arr) {
+        if (!curSet.has(item) && !map.has(item)) map.set(item, src);
+      }
+    }
+    if (map.size === 0) return '';
+    return `<div class="chips" style="margin-top:6px">${Array.from(map.entries()).map(([item, src]) =>
+      `<span class="chip mono muted">${esc(item)}<span class="mini-src">${esc(sourceLabel(src))}</span></span>`
+    ).join('')}</div>`;
+  }
+
+  function addRow(path, placeholder, buttonLabel = '添加') {
+    return `<div class="rule-add">
+      <input class="input mono" data-add-input="${attr(path)}" placeholder="${attr(placeholder)}">
+      <button class="btn small" data-action="add-chip" data-path="${attr(path)}">${esc(buttonLabel)}</button>
+    </div>`;
+  }
+
+  /* =========================================================
+     9. 页面骨架
+     ========================================================= */
+  function renderPage() {
+    const page = $('#page');
+    if (!page) return;
+
+    if (state.agentTab !== 'claude') {
+      page.innerHTML = headerHTML() + agentTabsHTML() + agentPlaceholderHTML();
+      updateChrome();
+      renderAccessDrawer();
+      return;
+    }
+
+    page.innerHTML = headerHTML() + agentTabsHTML() + accessSummaryHTML() + settingsAreaHTML();
+    updateChrome();
+
+    const ta = $('#json-text');
+    const gutter = $('#json-gutter');
+    if (ta && gutter) {
+      ta.addEventListener('scroll', () => { gutter.scrollTop = ta.scrollTop; });
+      syncGutter(ta.value);
+    }
+    if (state.view === 'json') {
+      updateJSONPanels();
+    }
+    updateGatewayChrome();
+    renderAccessDrawer();
+  }
+
+  function updateGatewayChrome() {
+    const led = $('#gw-led');
+    const text = $('#gw-state-text');
+    const btn = $('#gw-toggle');
+    if (led) led.style.background = state.gatewayRunning ? 'var(--success)' : 'var(--danger)';
+    if (text) text.textContent = state.gatewayRunning ? '运行中' : '已停止';
+    if (btn) {
+      btn.textContent = state.gatewayRunning ? '停止网关' : '启动网关';
+      btn.className = state.gatewayRunning ? 'btn small danger' : 'btn small';
+    }
+  }
+
+  function headerHTML() {
+    const isClaude = state.agentTab === 'claude';
+    const saveDisabled = !isClaude || !canSave();
+    return `<div class="page-header">
+      <div>
+        <h1 class="page-title">Agent 接入</h1>
+        <div class="page-sub">${isClaude ? '把 Claude Code 接到 AgentSwitch，并在同一页管理它的设置。' : '选择 Agent 进行接入与配置。'}</div>
+      </div>
+      <div class="page-actions">
+        <button class="btn" data-action="refresh" title="重新读取文件状态">
+          ${icon('refresh', 14)} 刷新
+        </button>
+        ${isClaude ? `<button class="btn primary" id="save-btn" data-action="save" ${saveDisabled ? 'disabled' : ''}>保存设置</button>` : ''}
+      </div>
+    </div>`;
+  }
+
+  function agentTabsHTML() {
+    const tabs = [
+      ['claude', 'Claude Code', '接入 + 设置'],
+      ['codex', 'Codex', ''],
+      ['desktop', 'Claude Desktop', ''],
+      ['guide', '连接指南', '']
+    ];
+    return `<div class="agent-tabs" role="tablist" aria-label="Agent">
+      ${tabs.map(([value, label, sub]) => {
+        const active = state.agentTab === value;
+        return `<button class="agent-tab ${active ? 'active' : ''}" role="tab" aria-selected="${active}" data-action="agent-tab" data-value="${value}">
+          ${esc(label)}${sub ? `<span class="badge act">${esc(sub)}</span>` : ''}
+        </button>`;
+      }).join('')}
+    </div>`;
+  }
+
+  function agentPlaceholderHTML() {
+    const names = { codex: 'Codex', desktop: 'Claude Desktop', guide: '连接指南' };
+    const name = names[state.agentTab] || '该 Agent';
+    return `<div class="empty" style="margin-top:8px">
+      <div class="empty-icon">${icon('access', 21)}</div>
+      <div class="empty-title">${esc(name)} 仍沿用接入结构</div>
+      <div class="empty-desc">本原型聚焦 Claude Code：网关接入与 Claude Code 设置已经合并到同一页。Codex、Claude Desktop 与连接指南的接入配置保持原有形态，不并入本页设置区。</div>
+      <div class="empty-actions">
+        <button class="btn primary" data-action="agent-tab" data-value="claude">返回 Claude Code</button>
+      </div>
+    </div>`;
+  }
+
+  function accessSummaryHTML() {
+    const a = state.access;
+    const gwOk = state.gatewayRunning;
+    let stateBadge;
+    if (!gwOk) stateBadge = badge('danger', '网关已停止');
+    else if (a.dirty) stateBadge = badge('warn', '有未保存的接入更改');
+    else if (!a.applied) stateBadge = badge('warn', '待应用');
+    else stateBadge = badge('ok', '已应用');
+    const model = `${a.model}${a.oneM ? '[1M]' : ''}`;
+    const applyBtn = gwOk
+      ? (a.dirty || !a.applied
+        ? `<button class="btn act" data-action="access-apply">应用接入</button>`
+        : `<button class="btn" data-action="access-apply">重新应用</button>`)
+      : `<button class="btn" data-action="access-apply" disabled title="网关已停止，先启动网关">应用接入</button>`;
+    return `<section class="access-card">
+      <div class="access-main">
+        <div class="access-title">${icon('access', 15)} Claude Code 接入 ${stateBadge}</div>
+        <div class="access-meta">
+          <span class="led" style="background:${gwOk ? 'var(--success)' : 'var(--danger)'}"></span>
+          <span>${gwOk ? '运行中' : '已停止'}</span>
+          <span class="mono">127.0.0.1:17890</span>
+          <span>·</span><span>配置 <b>${esc(a.config)}</b></span>
+          <span>·</span><span>网关模型 <span class="mono">${esc(model)}</span></span>
+          ${a.oneM ? badge('act', '1M') : ''}
+          <span>·</span><span>最后应用 ${esc(a.lastApplied || '—')}</span>
+        </div>
+        <div class="access-note">接入只写受管键（Base URL、令牌、主模型、SMALL_FAST 与角色映射，共 ${ACCESS_MANAGED_ENV.length} 个）；权限、状态栏、项目配置在下方「Claude Code 设置」中编辑。</div>
+      </div>
+      <div class="access-actions">
+        <button class="btn" data-action="access-edit">编辑接入</button>
+        ${applyBtn}
+      </div>
+    </section>`;
+  }
+
+  function settingsAreaHTML() {
+    const head = `<div class="section-head">
+      <div>
+        <div class="section-title">Claude Code 设置</div>
+        <div class="section-desc">权限、状态栏、项目配置等；接入投影键由上方接入管理。</div>
+      </div>
+      <span class="badge lock">${icon('lock', 10)} 受管 ${ACCESS_MANAGED_ENV.length} 键</span>
+    </div>`;
+
+    if (state.scope === 'managed') {
+      return `${head}${scopeTabsHTML()}${managedView()}`;
+    }
+    if (state.scope === 'project' && !currentProject()) {
+      return `${head}${scopeTabsHTML()}${projectContextHTML()}${emptyProjectHTML()}`;
+    }
+    const body = state.view === 'form'
+      ? formView()
+      : state.view === 'json'
+        ? jsonView()
+        : mergeView();
+    return `${head}${fileStripHTML()}${scopeTabsHTML()}${contextHTML()}${viewTabsHTML()}${resultBannerHTML()}${body}`;
+  }
+
+  function renderAccessDrawer() {
+    const root = $('#drawer-root');
+    if (!root) return;
+    if (!state.accessDrawerOpen || state.agentTab !== 'claude') {
+      root.innerHTML = '';
+      return;
+    }
+    const a = state.access;
+    const gwOk = state.gatewayRunning;
+    const models = ['my-code', 'sonnet', 'opus', 'haiku', 'fable'];
+    const configs = ['默认配置', '项目开发', '备用配置'];
+    const roleRows = ROLE_DEFS.map((r) => {
+      const current = a.roles[r.label] || a.model || GATEWAY_MODEL;
+      return `<span class="role-label">${esc(r.label)}</span>
+        <select class="select" data-access-role="${attr(r.label)}" aria-label="${attr(r.label)} 角色模型">
+          <option value="__follow__" ${current === '__follow__' ? 'selected' : ''}>跟随主模型（${esc(a.model || GATEWAY_MODEL)}）</option>
+          ${models.map((m) => `<option value="${attr(m)}" ${current === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}
+        </select>`;
+    }).join('');
+
+    root.innerHTML = `<div class="drawer-overlay" data-action="access-close-overlay"></div>
+      <aside class="drawer" role="dialog" aria-modal="true" aria-label="接入配置">
+        <div class="drawer-head">
+          <div>
+            <div class="drawer-title">接入配置</div>
+            <div class="drawer-sub">只管理网关接入与受管键；权限、状态栏、项目配置在下方设置区编辑。</div>
+          </div>
+          <button class="eye-btn drawer-close" data-action="access-close" aria-label="关闭">×</button>
+        </div>
+        <div class="drawer-body">
+          <div class="access-row">
+            <span class="access-label">接入配置</span>
+            <select class="select" data-access-field="config" aria-label="接入配置">
+              ${configs.map((c) => `<option value="${attr(c)}" ${a.config === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}
+            </select>
+            <button class="btn small" data-action="access-new">新建</button>
+          </div>
+          <details class="managed-more">
+            <summary><span class="chev">${icon('chevron', 11)}</span>全局配置（2 个键，合并进所有接入配置）</summary>
+            <div class="global-box">
+              <div class="row"><span>CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC</span><span>=</span><span>"1"</span></div>
+              <div class="row"><span>API_TIMEOUT_MS</span><span>=</span><span>"600000"</span></div>
+            </div>
+          </details>
+
+          <div class="card-desc" style="margin:14px 0 5px">模型与角色</div>
+          <div class="access-row">
+            <span class="access-label">默认模型</span>
+            <select class="select" data-access-field="model" aria-label="默认模型">
+              ${models.map((m) => `<option value="${attr(m)}" ${a.model === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}
+            </select>
+            <label class="check"><input type="checkbox" data-access-field="oneM" ${a.oneM ? 'checked' : ''}> 1M 上下文声明</label>
+          </div>
+          <div class="role-grid" style="margin-top:8px">${roleRows}</div>
+
+          <div class="card-desc" style="margin:16px 0 5px">将写入的受管键 <span class="badge lock" style="margin-left:4px">${ACCESS_MANAGED_ENV.length} 个</span></div>
+          <pre class="key-preview">${managedPreviewHTML()}</pre>
+          <div class="hint">应用后写入用户级 <span class="mono">~/.claude/settings.json</span>；写前备份，只改这些键，其余设置原样保留。</div>
+          ${gwOk ? '' : `<div class="banner danger" style="margin-top:9px">${icon('warning')}<div><b>网关已停止。</b>先启动网关，再应用接入。</div></div>`}
+        </div>
+        <div class="drawer-foot">
+          <button class="btn" data-action="access-close">关闭</button>
+          <button class="btn" data-action="access-save">仅保存</button>
+          <button class="btn primary" data-action="access-apply" ${gwOk ? '' : 'disabled'}>保存并应用</button>
+        </div>
+      </aside>`;
+  }
+
+  function openAccessDrawer() {
+    state.accessDrawerOpen = true;
+    renderAccessDrawer();
+  }
+
+  function closeAccessDrawer() {
+    state.accessDrawerOpen = false;
+    renderAccessDrawer();
+    renderPage();
+  }
+
+  function managedPreviewHTML() {
+    const a = state.access;
+    const baseUrl = getAt(docs.user, 'env.ANTHROPIC_BASE_URL') || 'http://127.0.0.1:17890';
+    const token = getAt(docs.user, 'env.ANTHROPIC_AUTH_TOKEN') || 'sk-agw-demo';
+    const model = `${a.model}${a.oneM ? '[1M]' : ''}`;
+    const lines = [
+      ['ANTHROPIC_BASE_URL', baseUrl],
+      ['ANTHROPIC_AUTH_TOKEN', maskText],
+      ['ANTHROPIC_MODEL', model],
+      ['ANTHROPIC_SMALL_FAST_MODEL', a.model],
+      ...ROLE_DEFS.flatMap((r) => {
+        const selected = a.roles[r.label] === '__follow__' ? a.model : (a.roles[r.label] || a.model);
+        return r.nameKey ? [[r.key, selected], [r.nameKey, r.label]] : [[r.key, selected]];
+      })
+    ];
+    return lines.map(([k, v]) => `<span class="k">env.${esc(k)}</span> = <span class="v">"${esc(v)}"</span>`).join('\n');
+  }
+
+  function applyAccessToSettings() {
+    const a = state.access;
+    if (!isObj(docs.user.env)) docs.user.env = {};
+    if (!isObj(baseline.user.env)) baseline.user.env = {};
+    const model = `${a.model}${a.oneM ? '[1M]' : ''}`;
+    const values = {
+      ANTHROPIC_MODEL: model,
+      ANTHROPIC_SMALL_FAST_MODEL: a.model
+    };
+    for (const r of ROLE_DEFS) {
+      const selected = a.roles[r.label] === '__follow__' ? a.model : (a.roles[r.label] || a.model);
+      values[r.key] = selected;
+      if (r.nameKey) values[r.nameKey] = r.label;
+    }
+    for (const [k, v] of Object.entries(values)) {
+      docs.user.env[k] = v;
+      baseline.user.env[k] = v;
+    }
+    if (state.jsonTarget === 'user') {
+      state.jsonDrafts.user = JSON.stringify(docs.user, null, 2);
+      state.jsonDirty = false;
+    }
+  }
+
+  function requestAccessApply() {
+    if (!state.gatewayRunning) {
+      toast('网关已停止，请先启动网关', 'warn');
+      return;
+    }
+    if (state.dirty) {
+      openModal({
+        title: '先处理未保存的 Claude Code 设置',
+        sub: '应用接入会重写受管键；当前设置区有未保存修改。',
+        body: `<div>建议先保存或放弃设置，再应用接入，避免同一文件的两类修改交叠。</div>
+          <div class="hint" style="margin-top:6px">${icon('info', 12)} 设置保存只改非受管键；接入应用只改受管键。</div>`,
+        actions: [
+          { label: '取消', kind: '', action: 'close' },
+          { label: '去保存设置', kind: 'primary', action: 'focus-settings-save', autofocus: true }
+        ]
+      });
+      modalActions['focus-settings-save'] = () => {
+        closeModal();
+        closeAccessDrawer();
+        setTimeout(() => $('#save-btn')?.focus(), 30);
+      };
+      return;
+    }
+    const a = state.access;
+    const model = `${a.model}${a.oneM ? '[1M]' : ''}`;
+    openModal({
+      title: '应用接入到 Claude Code？',
+      sub: '只写入受管键；写前备份，其余设置原样保留。',
+      body: `
+        <div class="modal-kv"><div class="k">目标文件</div><div class="v mono">~/.claude/settings.json</div></div>
+        <div class="modal-kv"><div class="k">接入配置</div><div class="v">${esc(a.config)}</div></div>
+        <div class="modal-kv"><div class="k">网关模型</div><div class="v"><span class="mono">${esc(model)}</span>${a.oneM ? badge('act', '1M') : ''}</div></div>
+        <div class="modal-kv"><div class="k">受管键</div><div class="v">${ACCESS_MANAGED_ENV.length} 个（Base URL、令牌、模型、SMALL_FAST、角色映射）</div></div>
+        <div class="modal-kv"><div class="k">备份</div><div class="v mono">${esc(backupPath('user'))}</div></div>
+        <div class="modal-kv"><div class="k">生效范围</div><div class="v">${badge('warn', '需重启 Claude Code')}<span class="hint" style="display:inline;margin-left:7px">环境变量与模型映射变更</span></div></div>
+        <div class="hint" style="margin-top:9px">应用后受管键会立即更新；设置区若打开在用户级，会自动刷新。</div>
+      `,
+      width: 560,
+      actions: [
+        { label: '取消', kind: '', action: 'close' },
+        { label: '应用', kind: 'primary', action: 'access-apply-confirm', autofocus: true, onClick: performAccessApply }
+      ]
+    });
+  }
+
+  function performAccessApply() {
+    applyAccessToSettings();
+    state.access.dirty = false;
+    state.access.applied = true;
+    state.access.lastApplied = `刚刚 ${nowClock()}`;
+    state.accessDrawerOpen = false;
+    closeModal();
+    renderPage();
+    toast('接入已应用，受管键已更新', 'success');
+  }
+
+  function saveAccessOnly() {
+    state.access.dirty = false;
+    state.access.applied = false;
+    state.access.lastSaved = `刚刚 ${nowClock()}`;
+    state.accessDrawerOpen = false;
+    renderPage();
+    toast('接入配置已保存；尚未应用到 Claude Code', 'info');
+  }
+
+  function fileStripHTML() {
+    const target = currentTarget();
+    let status = badge('ok', '已保存');
+    if (state.view === 'json' && state.jsonError) status = badge('danger', 'JSON 有错误');
+    else if (state.dirty && state.dirtyTarget === target) status = badge('warn', '有未保存修改');
+    if (state.scope === 'managed') status = badge('lock', '只读');
+    if (state.scope === 'project' && !currentProject()) status = badge('', '未选择项目');
+    const path = state.scope === 'managed' ? '3 个来源 · 只读' : targetPath();
+    return `<div class="file-strip">
+      <span class="icon" style="color:var(--muted)">${icon('folder', 15)}</span>
+      <span class="mono path">${esc(path || '—')}</span>
+      ${status}
+      ${state.scope === 'managed' ? '' : `<span class="last">上次保存：${esc(state.lastSaved[target] || '—')}</span>`}
+      <span class="spacer"></span>
+      ${state.scope === 'managed' ? '' : `<button class="text-btn" data-action="copy-path">复制路径</button>`}
+    </div>`;
+  }
+
+  function scopeTabsHTML() {
+    const tab = (value, label, sub, lock = false) => {
+      const active = state.scope === value;
+      return `<button class="seg-btn ${active ? 'active' : ''}" role="tab" aria-selected="${active}" data-action="scope" data-value="${value}">
+        ${lock ? `<span class="lock-inline">${icon('lock', 11)}</span>` : ''}${esc(label)}
+        <span class="seg-sub">${esc(sub)}</span>
+      </button>`;
+    };
+    return `<div class="segmented" role="tablist" aria-label="配置层级">
+      ${tab('user', '用户级', '~/.claude/settings.json')}
+      ${tab('project', '项目级', '共享 / 本地')}
+      ${tab('managed', '企业托管', '只读', true)}
+    </div>`;
+  }
+
+  function contextHTML() {
+    if (state.scope === 'project') return projectContextHTML();
+    const project = currentProject();
+    return `<div class="context-card">
+      <div class="context-note" style="margin-top:0">用户级设置对当前用户的所有 Claude Code 会话生效；项目共享/本地可以覆盖这里的值。${project ? `下方「合并后」提示基于当前项目 <b>${esc(project.name)}</b>。` : '当前未选择项目，合并提示只包含用户级与托管策略。'}</div>
+    </div>`;
+  }
+
+  function projectContextHTML() {
+    const project = currentProject();
+    const options = allProjects().map((p) =>
+      `<option value="${attr(p.id)}" ${state.projectId === p.id ? 'selected' : ''}>${esc(p.name)} — ${esc(shortPath(p.path))}</option>`
+    ).join('');
+    const fileTabs = project ? `<div class="file-tabs" role="tablist" aria-label="项目配置文件">
+      <button class="file-tab ${state.projectFile === 'shared' ? 'active' : ''}" role="tab" aria-selected="${state.projectFile === 'shared'}" data-action="project-file" data-value="shared">
+        ${icon('folder', 13)} 共享配置 <span class="mono">.claude/settings.json</span>
+      </button>
+      <button class="file-tab ${state.projectFile === 'local' ? 'active' : ''}" role="tab" aria-selected="${state.projectFile === 'local'}" data-action="project-file" data-value="local">
+        ${icon('lock', 13)} 本地配置 <span class="mono">.claude/settings.local.json</span>
+      </button>
+    </div>` : '';
+
+    let pathNote = '';
+    if (project) {
+      const resolved = state.projectFile === 'local' ? localPath() : sharedPath();
+      const subdir = project.gitRoot && project.gitRoot !== project.path;
+      pathNote = `<div class="path-line">${esc(resolved)}</div>`;
+      if (state.projectFile === 'local' && subdir) {
+        pathNote += `<div class="context-note">本地配置默认跟随 Git 仓库根；当前项目在子目录，因此实际写入 ${mono(project.gitRoot)} 下的 <span class="mono">.claude/settings.local.json</span>。</div>`;
+      } else if (state.projectFile === 'shared') {
+        pathNote += `<div class="context-note">共享文件跟随会话工作目录；若 Claude Code 在子目录启动，读取的是该子目录下的 <span class="mono">.claude/settings.json</span>。</div>`;
+      } else {
+        pathNote += `<div class="context-note">本地文件默认跟随 Git 仓库根；Windows、非 Git 仓库、家目录仓库等场景可能有例外。</div>`;
+      }
+    }
+
+    return `<div class="context-card">
+      <div class="context-row">
+        <span class="context-label">项目</span>
+        <select class="select" id="project-select" aria-label="选择项目">
+          <option value="__none__" ${!project ? 'selected' : ''}>（未选择项目）</option>
+          ${options}
+        </select>
+        <button class="btn small" data-action="pick-dir">${icon('folder', 13)} 选择目录…</button>
+        ${project && project.note ? `<span class="badge warn">${esc(project.note)}</span>` : ''}
+      </div>
+      ${fileTabs}
+      ${pathNote}
+    </div>`;
+  }
+
+  function viewTabsHTML() {
+    const tab = (value, label) => `<button class="view-tab ${state.view === value ? 'active' : ''}" role="tab" aria-selected="${state.view === value}" data-action="view" data-value="${value}">${esc(label)}</button>`;
+    return `<div class="view-tabs" role="tablist" aria-label="配置视图">
+      ${tab('form', '表单')}
+      ${tab('json', 'JSON')}
+      ${tab('merge', '合并预览')}
+      <span class="spacer"></span>
+      <button class="link-btn" data-action="open-rules">作用域规则</button>
+    </div>`;
+  }
+
+  function resultBannerHTML() {
+    if (!state.result) return '';
+    const r = state.result;
+    const cls = r.effect.kind === 'hot' ? 'success-box' : 'warn-box';
+    const iconName = r.effect.kind === 'hot' ? 'check' : 'warning';
+    return `<div class="${cls}" id="result-banner">
+      <div class="feedback-title">${icon(iconName, 13)} 已保存 · ${esc(r.effect.label)}</div>
+      <div class="feedback-detail">
+        已写入 ${mono(r.path)}；备份：${mono(r.backup)}。
+        ${r.effect.reason && r.effect.reason.length ? `触发键：${r.effect.reason.map(esc).join('、')}。` : ''}
+      </div>
+      <div class="feedback-actions">
+        <button class="btn" data-action="result-backup">查看备份路径</button>
+        <button class="btn" data-action="result-dismiss">关闭提示</button>
+      </div>
+    </div>`;
+  }
+
+  function emptyProjectHTML() {
+    return `<div class="empty">
+      <div class="empty-icon">${icon('folder', 21)}</div>
+      <div class="empty-title">选择一个项目</div>
+      <div class="empty-desc">项目级配置分为共享 <span class="mono">.claude/settings.json</span> 与本地 <span class="mono">.claude/settings.local.json</span>。从最近项目中选择，或手动选一个目录。</div>
+      <div class="empty-actions">
+        <button class="btn primary" data-action="focus-project-select">选择最近项目</button>
+        <button class="btn" data-action="pick-dir">选择目录…</button>
+      </div>
+    </div>`;
+  }
+
+  /* =========================================================
+     10. 表单视图
+     ========================================================= */
+  function formView() {
+    return `
+      ${state.formErrors.length ? `<div class="error-box" id="form-errors">
+        <div class="feedback-title">${icon('warning', 13)} 当前配置有 ${state.formErrors.length} 个问题</div>
+        <ul class="modal-list">${state.formErrors.map((e) => `<li><span class="mono">${esc(e.path)}</span>：${esc(e.msg)}</li>`).join('')}</ul>
+      </div>` : ''}
+      <div class="hint" style="margin:-2px 0 10px">表单只编辑当前层；空白项显示「继承自下层」，不会把继承值写进当前文件。</div>
+      ${modelCard()}
+      ${envCard()}
+      ${permissionsCard()}
+      ${statusLineCard()}
+      ${mcpCard()}
+      ${skillsCard()}
+      ${memoryCard()}
+    `;
+  }
+
+  function modelCard() {
+    const doc = currentDoc();
+    const model = hasAt(doc, 'model') ? doc.model : undefined;
+    const inherited = inheritedValue('model');
+    let modelRow;
+
+    if (model !== undefined) {
+      const warn = modelWarning(model);
+      const modelHint = warn
+        ? `<span id="model-hint" class="hint warn">${esc(warn)}</span>`
+        : `<span id="model-hint" class="hint">网关模型为 ${esc(liveGatewayModel())}。</span>`;
+      modelRow = fieldRow('主模型', `
+        <div class="inline-control">
+          <input class="input mono" id="model-input" data-bind="model" data-empty="delete" value="${attr(model)}" list="model-suggestions" placeholder="例如 my-code / sonnet / opus">
+          <button class="btn small" data-action="set-gateway-model">跟随网关</button>
+        </div>
+        <datalist id="model-suggestions">
+          <option value="my-code"></option><option value="sonnet"></option><option value="opus"></option>
+          <option value="haiku"></option><option value="fable"></option>
+        </datalist>`, modelHint, 'model');
+    } else if (inherited) {
+      modelRow = inheritedRow('主模型', 'model', inherited.value, inherited.source, { hint: '当前层没有 model，显示的是下层继承值。' });
+    } else {
+      modelRow = fieldRow('主模型', `<div class="inline-control">
+          <input class="input mono" data-bind="model" data-empty="delete" list="model-suggestions" placeholder="例如 my-code / sonnet">
+          <button class="btn small" data-action="set-gateway-model">跟随网关</button>
+        </div>
+        <datalist id="model-suggestions">
+          <option value="my-code"></option><option value="sonnet"></option><option value="opus"></option>
+          <option value="haiku"></option><option value="fable"></option>
+        </datalist>`, `当前层与下层都未设置；网关模型为 ${esc(liveGatewayModel())}。`, 'model');
+    }
+
+    const fallback = hasAt(doc, 'fallbackModel') ? doc.fallbackModel : undefined;
+    const fallbackInherited = inheritedValue('fallbackModel');
+    let fallbackRow;
+    if (fallback !== undefined) {
+      fallbackRow = fieldRow('回退模型', `${chipsHTML('fallbackModel', fallback, {}, { movable: true, emptyHint: '空数组表示不使用回退模型' })}
+         ${addRow('fallbackModel', '添加回退模型，例如 haiku', '添加')}
+         <div class="hint">按顺序尝试；整值替换，不跨层并集。</div>`, '', 'fallbackModel');
+    } else if (fallbackInherited) {
+      fallbackRow = inheritedRow('回退模型', 'fallbackModel', fallbackInherited.value.join(' → '), fallbackInherited.source, { hint: '当前层没有 fallbackModel，显示的是下层继承值。' });
+    } else {
+      fallbackRow = fieldRow('回退模型', `<div class="hint">当前层与下层都未设置。</div>${addRow('fallbackModel', '添加回退模型', '添加')}`, '整值替换，不跨层合并。', 'fallbackModel');
+    }
+
+    const effort = hasAt(doc, 'effortLevel') ? doc.effortLevel : undefined;
+    const effortInherited = inheritedValue('effortLevel');
+    let effortRow;
+    if (hasAt(doc, 'effortLevel')) {
+      effortRow = fieldRow('推理强度', `<select class="select" data-bind="effortLevel" data-empty="delete">
+          <option value="">继承</option>
+          ${['low','medium','high','xhigh'].map((v) => `<option value="${v}" ${effort === v ? 'selected' : ''}>${v}</option>`).join('')}
+        </select>`, '修改后需重启 Claude Code。', 'effortLevel');
+    } else if (effortInherited) {
+      effortRow = inheritedRow('推理强度', 'effortLevel', effortInherited.value, effortInherited.source, { hint: '当前层没有 effortLevel，显示的是下层继承值；修改后需重启 Claude Code。' });
+    } else {
+      effortRow = fieldRow('推理强度', `<select class="select" data-bind="effortLevel" data-empty="delete">
+            <option value="">继承</option><option value="low">low</option><option value="medium">medium</option>
+            <option value="high">high</option><option value="xhigh">xhigh</option>
+          </select>`, '修改后需重启 Claude Code。', 'effortLevel');
+    }
+
+    return card('模型与响应', '主模型、回退模型与推理强度', `
+      ${modelRow}
+      ${fallbackRow}
+      ${effortRow}
+      ${fieldRow('思考开关', triWithHint('alwaysThinkingEnabled', { on: '开启', off: '关闭', inherit: '继承' }, '缺省或开启 = 允许思考；修改后需重启。'), '', 'alwaysThinkingEnabled')}
+      <div class="advanced-note">${icon('info', 13)}<div><b>高级模型键不在表单中：</b><span class="mono">modelPicker</span>、<span class="mono">availableModels</span>、<span class="mono">modelSettings</span>、<span class="mono">maxEffortLevel</span>。它们有整值替换或 scope 特殊规则，请用 <button class="link-btn" data-action="view" data-value="json">JSON 视图</button> 编辑。</div></div>
+    `);
+  }
+
+  function inheritedValue(path) {
+    for (const src of lowerSources()) {
+      if (hasAt(docs[src], path)) return { value: getAt(docs[src], path), source: src };
+    }
+    return null;
+  }
+
+  function envCard() {
+    const doc = currentDoc();
+    const env = isObj(doc.env) ? doc.env : {};
+    const allEntries = Object.entries(env);
+    const target = currentTarget();
+    const coreManagedEntries = allEntries.filter(([k]) => CORE_MANAGED_ENV.includes(k));
+    const extraManagedEntries = allEntries.filter(([k]) => ACCESS_MANAGED_ENV.includes(k) && !CORE_MANAGED_ENV.includes(k));
+    const normalEntries = allEntries.filter(([k]) => !ACCESS_MANAGED_ENV.includes(k));
+    const visibleEntries = [
+      ...coreManagedEntries,
+      ...(state.managedExpanded ? extraManagedEntries : []),
+      ...normalEntries
+    ];
+    const projectManaged = (state.scope === 'project') && allEntries.some(([k]) => ACCESS_MANAGED_ENV.includes(k));
+    const managedMissing = target === 'user' && CORE_MANAGED_ENV.some((k) => !Object.prototype.hasOwnProperty.call(env, k));
+
+    const rows = visibleEntries.map(([key, value]) => {
+      const managed = ACCESS_MANAGED_ENV.includes(key);
+      const secret = isSecretKey(key);
+      const revealed = state.revealed.has(`${target}:${key}`);
+      const inputType = secret && !revealed ? 'password' : 'text';
+      return `<tr class="${managed ? 'managed' : ''}">
+        <td class="col-key">
+          <input class="input key-input" data-env-key="${attr(key)}" value="${attr(key)}" ${managed ? 'disabled' : ''}>
+        </td>
+        <td class="col-val">
+          <div class="inline-control">
+            <input class="input val-input" type="${inputType}" data-env-value="${attr(key)}" value="${attr(value)}" ${managed ? 'disabled' : ''}>
+            ${secret ? `<button class="eye-btn" data-action="reveal-env" data-key="${attr(key)}" title="${revealed ? '隐藏' : '显示'}">${icon('eye', 14)}</button>` : ''}
+          </div>
+        </td>
+        <td class="col-src">${managed ? lockBadge('接入投影') : ''}${key === 'ANTHROPIC_MODEL' && /\[1m\]$/i.test(String(value)) ? `<span class="badge act" style="margin-left:4px">1M</span>` : ''}</td>
+        <td class="col-op">
+          ${(secret || managed) ? `<button class="eye-btn" data-action="copy-env" data-key="${attr(key)}" title="复制值">${icon('copy', 13)}</button>` : ''}
+          ${managed ? '' : `<button class="x-mini" data-action="remove-env" data-key="${attr(key)}" title="移除变量">×</button>`}
+        </td>
+      </tr>`;
+    }).join('');
+
+    const managedMore = extraManagedEntries.length
+      ? `<div class="managed-more">
+          <button class="link-btn" data-action="toggle-managed">${state.managedExpanded ? '收起' : `展开接入投影的其他 ${extraManagedEntries.length} 个键`}</button>
+          <span class="hint" style="margin-left:6px">SMALL_FAST 与角色映射；全部由接入管理，不可在此修改。</span>
+        </div>`
+      : '';
+
+    const inherited = inheritedEnvHTML();
+    const mergedCount = Object.keys(mergedDoc().env || {}).length;
+
+    let alerts = '';
+    if (projectManaged) {
+      alerts += `<div class="banner warn" style="margin:0 0 8px">${icon('warning')}<div><b>项目层出现了接入投影键。</b>项目级值会覆盖用户级接入配置，可能导致网关鉴权/路由异常。设置区不会改这些键，建议删除项目层覆盖后在接入抽屉中重新应用。</div></div>`;
+    }
+    if (managedMissing) {
+      alerts += `<div class="banner warn" style="margin:0 0 8px">${icon('warning')}<div><b>受管键不完整。</b>用户级配置缺少 ${CORE_MANAGED_ENV.filter((k) => !Object.prototype.hasOwnProperty.call(env, k)).map((k) => `<span class="mono">${esc(k)}</span>`).join('、')}，接入可能未应用。<button class="link-btn" data-action="access-edit">打开接入</button></div></div>`;
+    }
+
+    return card('环境变量', `env 逐变量合并；接入投影共 ${ACCESS_MANAGED_ENV.length} 个键只读`, `
+      ${alerts}
+      <div class="banner info" style="margin:0 0 9px">${icon('lock')}<div><b>由本页「接入」管理：</b>Base URL、令牌、主模型、SMALL_FAST 与角色映射（共 ${ACCESS_MANAGED_ENV.length} 个键）。修改请打开 <button class="link-btn" data-action="access-edit">接入</button>。</div></div>
+      <table class="env-table">
+        <thead><tr><th class="col-key">变量名</th><th class="col-val">值</th><th class="col-src">状态</th><th class="col-op"></th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="4"><div class="hint" style="padding:6px 0">当前层没有环境变量。</div></td></tr>`}</tbody>
+      </table>
+      ${managedMore}
+      <div class="env-add">
+        <input class="input key mono" id="env-new-key" placeholder="NEW_VAR">
+        <input class="input val mono" id="env-new-value" placeholder="值">
+        <button class="btn small" data-action="add-env">添加变量</button>
+      </div>
+      <div class="hint">当前层 ${allEntries.length} 项；合并后 ${mergedCount} 项。<button class="link-btn" data-action="view" data-value="merge">查看合并预览</button> 敏感值默认遮蔽，显示后请勿截图分享。</div>
+      ${inherited}
+    `);
+  }
+
+  function inheritedEnvHTML() {
+    const doc = currentDoc();
+    const cur = isObj(doc.env) ? doc.env : {};
+    const map = new Map();
+    for (const src of lowerSources()) {
+      const env = isObj(docs[src].env) ? docs[src].env : {};
+      for (const [k, v] of Object.entries(env)) {
+        if (!Object.prototype.hasOwnProperty.call(cur, k) && !map.has(k)) map.set(k, { value: v, source: src });
+      }
+    }
+    if (map.size === 0) return '';
+    const entries = Array.from(map.entries());
+    const visible = entries.filter(([k]) => CORE_MANAGED_ENV.includes(k) || !ACCESS_MANAGED_ENV.includes(k));
+    const extraManaged = entries.filter(([k]) => ACCESS_MANAGED_ENV.includes(k) && !CORE_MANAGED_ENV.includes(k)).length;
+    return `<div style="margin-top:10px">
+      <div class="card-desc" style="margin-bottom:5px">继承自下层（只读）</div>
+      <div class="chips">
+        ${visible.map(([k, x]) => {
+          const secret = isSecretKey(k);
+          return `<span class="chip mono muted">${esc(k)}=${esc(secret ? maskText : x.value)}<span class="mini-src">${esc(sourceLabel(x.source))}</span>${ACCESS_MANAGED_ENV.includes(k) ? `<span class="mini-src">${icon('lock', 9)} 接入</span>` : ''}${k === 'ANTHROPIC_MODEL' && /\[1m\]$/i.test(String(x.value)) ? `<span class="mini-src">1M</span>` : ''}${secret ? `<button class="x" data-action="copy-env" data-key="${attr(k)}" data-source="${attr(x.source)}" title="复制值">${icon('copy', 10)}</button>` : ''}</span>`;
+        }).join('')}
+        ${extraManaged ? `<span class="chip muted">其余 ${extraManaged} 个接入投影键（只读）</span>` : ''}
+      </div>
+    </div>`;
+  }
+
+  function permissionsCard() {
+    const doc = currentDoc();
+    const docPerm = isObj(doc.permissions) ? doc.permissions : {};
+    const inheritedDm = inheritedValue('permissions.defaultMode');
+    const dm = hasAt(doc, 'permissions.defaultMode') ? doc.permissions.defaultMode : '';
+    const projectScope = state.scope === 'project';
+    const dmSelect = `<select class="select" data-bind="permissions.defaultMode" data-empty="delete">
+      <option value="" ${!hasAt(doc, 'permissions.defaultMode') ? 'selected' : ''}>继承${inheritedDm ? `（当前：${esc(inheritedDm.value)}）` : ''}</option>
+      ${['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'].map((v) => {
+        const disabled = projectScope && (v === 'auto' || v === 'bypassPermissions');
+        return `<option value="${v}" ${dm === v ? 'selected' : ''} ${disabled ? 'disabled' : ''}>${v}${disabled ? '（项目级不生效）' : ''}</option>`;
+      }).join('')}
+    </select>`;
+    const dmWarn = projectScope && (dm === 'auto' || dm === 'bypassPermissions')
+      ? `<div class="hint warn">项目级设置 ${esc(dm)} 不生效；合并预览会回落到较低层的有效值。</div>`
+      : '';
+
+    const decisionGroup = (key, label, kind) => {
+      const arr = hasAt(docPerm, key) && Array.isArray(docPerm[key]) ? docPerm[key] : null;
+      const inherited = inheritedChipsForDecision(key);
+      return `<div class="rule-group">
+        <div class="rule-head">
+          ${badge(kind, label)}<span class="rule-count">${arr ? arr.length : 0} 条</span>
+        </div>
+        ${arr ? chipsHTML(`permissions.${key}`, arr, {}, { emptyHint: '显式空数组' }) : `<div class="hint">当前层未设置</div>`}
+        ${inherited}
+        ${addRow(`permissions.${key}`, '例如 Bash(git status:*)', '添加')}
+      </div>`;
+    };
+
+    const dirs = hasAt(docPerm, 'additionalDirectories') && Array.isArray(docPerm.additionalDirectories) ? docPerm.additionalDirectories : null;
+    const dirsInherited = inheritedChipsForPath('permissions.additionalDirectories');
+
+    const dangerEffective = effectiveForMerge('skipDangerousModePermissionPrompt');
+    const dangerHint = `合并后：<b>${dangerEffective === true ? '跳过确认' : dangerEffective === false ? '显示确认' : '未设置（Claude Code 默认显示确认）'}</b>。任一层 true 即跳过；不会自动开启 Bypass 模式。`;
+    const dangerRow = state.scope === 'project' && state.projectFile === 'shared'
+      ? `<div class="form-row">
+          <div class="form-label">危险模式确认</div>
+          <div class="form-control">
+            <div class="tri" role="group" aria-label="skipDangerousModePermissionPrompt" aria-disabled="true">
+              <button disabled>继承</button><button disabled>跳过确认</button><button disabled>显示确认</button>
+            </div>
+            <div class="hint warn">不能写入项目共享；请切到用户级或项目本地修改。</div>
+          </div>
+        </div>`
+      : fieldRow('危险模式确认',
+          `${triControl('skipDangerousModePermissionPrompt', { on: '跳过确认', off: '显示确认', inherit: '继承' })}
+           ${state.scope === 'user' ? `<span class="badge act" style="margin-left:8px">默认开启</span>` : ''}
+           <div class="hint">${dangerHint}</div>`,
+          '',
+          'skipDangerousModePermissionPrompt');
+
+    return card('权限', 'deny → ask → allow，首个匹配决定', `
+      ${fieldRow('默认模式', dmSelect, dmWarn, 'permissions.defaultMode')}
+      ${dangerRow}
+      <div class="eval-flow" aria-label="权限求值顺序">
+        <div class="eval-step deny"><div class="step-num">1</div><div class="step-name">deny</div><div class="step-num">先匹配拒绝</div></div>
+        <div class="eval-arrow">→</div>
+        <div class="eval-step ask"><div class="step-num">2</div><div class="step-name">ask</div><div class="step-num">再匹配询问</div></div>
+        <div class="eval-arrow">→</div>
+        <div class="eval-step allow"><div class="step-num">3</div><div class="step-name">allow</div><div class="step-num">最后匹配允许</div></div>
+      </div>
+      <div class="eval-note">首个匹配的规则决定结果，与规则写得多具体无关；<b>任意层的 deny 都压过任意层的 allow</b>。项目级 allow 不能覆盖用户级或托管层的 deny。</div>
+      <div class="rule-grid">
+        ${decisionGroup('deny', '拒绝', 'danger')}
+        ${decisionGroup('ask', '询问', 'warn')}
+        ${decisionGroup('allow', '允许', 'ok')}
+      </div>
+      <div class="form-row" style="margin-top:10px">
+        <div class="form-label">额外目录</div>
+        <div class="form-control">
+          ${dirs ? chipsHTML('permissions.additionalDirectories', dirs, {}, { emptyHint: '显式空数组' }) : `<div class="hint">当前层未设置</div>`}
+          ${dirsInherited}
+          ${addRow('permissions.additionalDirectories', '绝对路径或 ~/ 开头，例如 ~/work/shared', '添加')}
+          <div class="hint">数组跨层并集；当前层只编辑自己的项。</div>
+        </div>
+      </div>
+    `);
+  }
+
+  function inheritedChipsForDecision(decision) {
+    return inheritedChips(`permissions.${decision}`);
+  }
+  function inheritedChipsForPath(path) {
+    return inheritedChips(path);
+  }
+
+  function statusLineCard() {
+    const doc = currentDoc();
+    if (!hasAt(doc, 'statusLine') || !isObj(doc.statusLine)) {
+      const inherited = inheritedValue('statusLine');
+      const body = inherited
+        ? inheritedRow('状态栏', 'statusLine', summarizeStatusLine(inherited.value), inherited.source, { hint: '当前层没有状态栏配置。' })
+        : `<div class="form-row"><div class="form-label">状态栏</div><div class="form-control">
+            <div class="inherit-line"><span class="muted">当前层和下层都没有状态栏配置</span>
+            <button class="link-btn" data-action="override" data-path="statusLine">在本层启用</button></div>
+            <div class="hint">状态栏命令由 Claude Code 在本机执行；设置区不会主动运行它。</div>
+          </div></div>`;
+      return card('状态栏', '自定义底部状态栏命令', body);
+    }
+    const sl = doc.statusLine;
+    return card('状态栏', '自定义底部状态栏命令；整对象覆盖', `
+      <div class="form-row">
+        <div class="form-label">类型</div>
+        <div class="form-control"><span class="badge act">command</span><span class="hint" style="display:inline;margin-left:8px">本期只支持命令型状态栏。</span></div>
+      </div>
+      ${fieldRow('命令', `<input class="input mono" data-bind="statusLine.command" value="${attr(sl.command || '')}" placeholder="~/.claude/statusline.sh">`, '命令由 Claude Code 在本机执行；设置区不会主动运行。')}
+      ${fieldRow('内边距', numberControl('statusLine.padding', 0, 20, '0'), 'padding 为整数，默认 0。')}
+      ${fieldRow('刷新间隔', numberControl('statusLine.refreshInterval', 1, 3600, '可选，单位秒'), '填写后按固定间隔刷新，而不只依赖事件驱动。')}
+      ${fieldRow('隐藏 Vim 模式', triWithHint('statusLine.hideVimModeIndicator', { on: '隐藏', off: '显示', inherit: '继承' }), '')}
+      <div class="hint">${icon('info', 12)} 状态栏对象按最高层整值覆盖；当前层一旦设置，会覆盖下层的命令。</div>
+    `, `<button class="text-btn" data-action="remove-key" data-path="statusLine">移除本层状态栏</button>`);
+  }
+
+  function summarizeStatusLine(sl) {
+    if (!isObj(sl)) return String(sl);
+    return `${sl.type || 'command'} · ${sl.command || '（无命令）'}`;
+  }
+
+  function mcpCard() {
+    const doc = currentDoc();
+    const pluginIds = unique([
+      ...INSTALLED_PLUGINS,
+      ...activeSources().flatMap((src) => Object.keys(docs[src].enabledPlugins || {}))
+    ]);
+
+    const pluginRows = pluginIds.map((id) => {
+      const installed = INSTALLED_PLUGINS.includes(id);
+      const effective = effectiveForMerge(`enabledPlugins.${id}`);
+      const src = activeSourceFor(`enabledPlugins.${id}`);
+      const effText = effective === undefined ? '未设置' : (effective ? '开' : '关');
+      return `<div class="plugin-row">
+        <div style="min-width:0">
+          <div class="plugin-name">${esc(id)}</div>
+          <div class="plugin-meta">${installed ? '已安装' : '未在本地插件清单中找到'}</div>
+        </div>
+        <div class="effective">合并后：<b>${effText}</b>${src ? ` · ${sourceLabel(src)}` : ''}</div>
+        ${triControl(`enabledPlugins.${id}`, { on: '开', off: '关', inherit: '继承' })}
+      </div>`;
+    }).join('');
+
+    const enableAll = triWithHint('enableAllProjectMcpServers', { on: '开启', off: '关闭', inherit: '继承' }, '允许项目 .mcp.json 中的所有服务器；仍受 enabled/disabled 列表约束。');
+
+    return card('MCP 与插件', '只做启用/禁用开关，不编辑 .mcp.json 或安装插件', `
+      <div class="card-desc" style="margin-bottom:7px">插件开关（enabledPlugins）</div>
+      ${pluginRows}
+      <div class="hint">项目本地写「关」可以覆盖项目共享的「开」；高层 false 优先。</div>
+
+      <div class="card-desc" style="margin:12px 0 7px">MCP 开关</div>
+      ${fieldRow('项目 MCP 全开', enableAll, '', 'enableAllProjectMcpServers')}
+      ${fieldRow('启用的服务器', `${hasAt(doc, 'enabledMcpjsonServers') ? chipsHTML('enabledMcpjsonServers', doc.enabledMcpjsonServers, {}, { emptyHint: '显式空数组' }) : `<div class="hint">当前层未设置</div>`}
+        ${inheritedChips('enabledMcpjsonServers')}
+        ${addRow('enabledMcpjsonServers', '例如 context7', '添加')}`, '只切换启用状态，不编辑服务定义。', 'enabledMcpjsonServers')}
+      ${fieldRow('禁用的服务器', `${hasAt(doc, 'disabledMcpjsonServers') ? chipsHTML('disabledMcpjsonServers', doc.disabledMcpjsonServers, {}, { emptyHint: '显式空数组' }) : `<div class="hint">当前层未设置</div>`}
+        ${inheritedChips('disabledMcpjsonServers')}
+        ${addRow('disabledMcpjsonServers', '例如 legacy-fs', '添加')}`, '同名同时出现在启用/禁用时 Claude Code 的最终行为以实际版本为准；设置区会提示。', 'disabledMcpjsonServers')}
+      ${state.scope === 'user' ? `
+        <div class="card-desc" style="margin:12px 0 7px">Claude.ai 同步（仅用户级）</div>
+        ${fieldRow('同步插件', triWithHint('syncClaudeAiPlugins', { on: '开启', off: '关闭', inherit: '继承' }), '关闭后不再从 claude.ai 同步插件。', 'syncClaudeAiPlugins')}
+        ${fieldRow('同步 Skills', triWithHint('syncClaudeAiSkills', { on: '开启', off: '关闭', inherit: '继承' }), '关闭后不再从 claude.ai 同步 skills。', 'syncClaudeAiSkills')}
+      ` : `<div class="hint" style="margin-top:8px">${icon('info', 12)} syncClaudeAiPlugins / syncClaudeAiSkills 不能写入项目共享；如需修改请切到用户级或项目本地。</div>`}
+    `);
+  }
+
+  function skillSourceLabel(source) {
+    return { 'built-in': '内置', user: '用户', project: '项目', plugin: '插件', unknown: '未识别' }[source] || source;
+  }
+
+  function skillEffective(item) {
+    if (item.source === 'plugin') {
+      const pluginOn = effectiveForMerge(`enabledPlugins.${item.plugin}`);
+      const disabled = pluginOn === false;
+      return { state: disabled ? 'off' : 'on', locked: 'plugin', note: disabled ? '插件已关闭' : '由插件管理', source: null };
+    }
+    const managedState = docs.managed.skillOverrides && docs.managed.skillOverrides[item.name];
+    if (SKILL_STATES.some((s) => s[0] === managedState)) {
+      return { state: managedState, locked: 'policy', note: '托管策略锁定', source: 'managed' };
+    }
+    if (item.lock === 'author') {
+      return { state: 'user-invocable-only', locked: 'author', note: '作者锁定为仅手动', source: null };
+    }
+    const merged = mergedDoc();
+    const effective = merged.skillOverrides && merged.skillOverrides[item.name];
+    const source = activeSources().find((s) => docs[s].skillOverrides && Object.prototype.hasOwnProperty.call(docs[s].skillOverrides, item.name));
+    return { state: effective || 'on', locked: null, note: null, source: source || null };
+  }
+
+  function skillsCard() {
+    const doc = currentDoc();
+    const known = new Set(INSTALLED_SKILLS.map((s) => s.name));
+    const overrideNames = unique(activeSources().flatMap((src) => Object.keys(docs[src].skillOverrides || {})));
+    const items = [
+      ...INSTALLED_SKILLS,
+      ...overrideNames.filter((name) => !known.has(name)).map((name) => ({
+        name, source: 'unknown', desc: '未识别到本地 Skill；可能来自未加载的插件或已删除技能'
+      }))
+    ];
+
+    const counts = { on: 0, off: 0, other: 0, locked: 0 };
+    const rows = items.map((item) => {
+      const eff = skillEffective(item);
+      if (eff.state === 'on') counts.on += 1;
+      else if (eff.state === 'off') counts.off += 1;
+      else counts.other += 1;
+      if (eff.locked) counts.locked += 1;
+
+      const curOverride = doc.skillOverrides && Object.prototype.hasOwnProperty.call(doc.skillOverrides, item.name)
+        ? doc.skillOverrides[item.name] : '';
+      const canEdit = !eff.locked;
+      const stateLabel = SKILL_STATE_LABEL[eff.state] || eff.state;
+      const effectiveText = `生效：<b>${esc(stateLabel)}</b>${eff.source ? ` · ${esc(eff.source === 'managed' ? '托管' : sourceLabel(eff.source))}` : ''}`;
+      const lockBadge = eff.locked === 'plugin' ? badge('lock', '由插件管理')
+        : eff.locked === 'policy' ? badge('lock', '托管策略锁定')
+          : eff.locked === 'author' ? badge('lock', '作者锁定') : '';
+      const ignored = eff.locked && curOverride
+        ? `<div class="plugin-meta" style="color:var(--warn)">当前层 skillOverrides=${esc(SKILL_STATE_LABEL[curOverride] || curOverride)}，${eff.locked === 'plugin' ? '插件来源不生效' : '锁定值优先'}。</div>` : '';
+      const control = canEdit
+        ? `<select class="select" data-skill-key="${attr(item.name)}" aria-label="${attr(item.name)} 状态">
+            <option value="" ${!curOverride ? 'selected' : ''}>继承（未设置）</option>
+            ${SKILL_STATES.map(([v, label]) => `<option value="${v}" ${curOverride === v ? 'selected' : ''}>${esc(label)}</option>`).join('')}
+           </select>`
+        : `<select class="select" disabled aria-label="${attr(item.name)} 状态（锁定）"><option>${esc(stateLabel)}</option></select>`;
+
+      return `<div class="plugin-row skill-row">
+        <div style="min-width:0">
+          <div class="plugin-name">${esc(item.name)}${item.source === 'unknown' ? ` ${badge('warn', '未识别')}` : ''}</div>
+          <div class="plugin-meta">${esc(skillSourceLabel(item.source))}${item.plugin ? ` · ${esc(item.plugin)}` : ''} · ${esc(item.desc || '')}</div>
+          ${ignored}
+        </div>
+        <div class="effective">${effectiveText} ${lockBadge}</div>
+        ${control}
+      </div>`;
+    }).join('');
+
+    const sharedWarn = state.scope === 'project' && state.projectFile === 'shared'
+      ? `<div class="hint warn">当前为项目共享：Skills 开关会影响所有协作者，并可能随仓库提交。</div>` : '';
+
+    return card('Skills', '按技能开启/关闭；插件来源的 Skills 由插件开关管理', `
+      <div class="skill-summary">
+        ${badge('ok', `开启 ${counts.on}`)}
+        ${badge('', `关闭 ${counts.off}`)}
+        ${badge('warn', `其他状态 ${counts.other}`)}
+        ${badge('lock', `锁定 ${counts.locked}`)}
+      </div>
+      ${sharedWarn}
+      ${rows}
+      <div class="hint">默认开启（不写键）。关闭后模型不可见，<span class="mono">/名称</span> 也不再可用；修改保存后在新会话生效。可在 Claude Code 的 <span class="mono">/skills</span> 中核对最终状态。</div>
+    `);
+  }
+
+  function memoryCard() {
+    const doc = currentDoc();
+    const cleanup = hasAt(doc, 'cleanupPeriodDays') ? doc.cleanupPeriodDays : '';
+    const cleanupControl = state.scope === 'user'
+      ? `${numberControl('cleanupPeriodDays', 1, 3650, '30')}<div class="hint">保留本地会话记录的天数，默认 30；本期仅用户级可编辑，托管策略只读。</div>`
+      : `<div class="hint">本期仅用户级提供编辑；项目层不提供入口，托管策略只读。</div>`;
+    return card('记忆与上下文', '自动压缩、自动记忆与会话记录保留', `
+      ${fieldRow('自动压缩', triWithHint('autoCompactEnabled', { on: '开启', off: '关闭', inherit: '继承' }), '上下文将满时自动压缩。', 'autoCompactEnabled')}
+      ${fieldRow('自动记忆', triWithHint('autoMemoryEnabled', { on: '开启', off: '关闭', inherit: '继承' }), '允许 Claude 读取/写入项目自动记忆目录。', 'autoMemoryEnabled')}
+      ${fieldRow('记录保留天数', cleanupControl, '', 'cleanupPeriodDays')}
+      <div class="advanced-note">${icon('info', 13)}<div><b>高级上下文键：</b><span class="mono">autoCompactWindow</span>、<span class="mono">autoMemoryDirectory</span> 走 JSON。注意：项目共享里的 <span class="mono">autoMemoryDirectory</span> 会被 Claude Code 忽略，建议放到用户级或项目本地。</div></div>
+    `);
+  }
+
+  /* =========================================================
+     11. JSON 视图
+     ========================================================= */
+  function jsonView() {
+    const target = currentTarget();
+    if (state.jsonTarget !== target || !state.jsonDirty) {
+      state.jsonDrafts[target] = JSON.stringify(currentDoc(), null, 2);
+      state.jsonTarget = target;
+      state.jsonDirty = false;
+      state.jsonError = null;
+    }
+    const draft = state.jsonDrafts[target] ?? JSON.stringify(currentDoc(), null, 2);
+    const projectShared = target === 'shared';
+    return `
+      <div class="banner warn">${icon('warning')}<div><b>此视图可能包含明文密钥。</b>严格 JSON：不支持注释与尾逗号；截图或分享前请确认内容。</div></div>
+      <div class="card">
+        <div class="card-head">
+          <div><div class="card-title">JSON 编辑器</div><div class="card-desc">当前层完整文档；保存只写入这个文件，不会合并到其他层。</div></div>
+          <div class="card-actions">${badge('plain', targetPath().split('/').pop() || 'settings.json')}</div>
+        </div>
+        <div id="json-error"></div>
+        <div id="json-scope"></div>
+        <div class="json-wrap">
+          <div class="json-gutter" id="json-gutter" aria-hidden="true"></div>
+          <textarea class="json-text" id="json-text" spellcheck="false" aria-label="JSON 编辑器">${esc(draft)}</textarea>
+        </div>
+        <div class="json-toolbar">
+          <button class="btn small" data-action="json-format">格式化</button>
+          <button class="btn small" data-action="json-validate">校验</button>
+          <button class="btn small" data-action="json-reset">重置</button>
+          <span class="grow"></span>
+          <span class="hint" style="margin:0">${projectShared ? '项目共享文件通常会被提交到 Git。' : '保存前会备份当前文件。'}</span>
+        </div>
+      </div>
+    `;
+  }
+
+  function syncGutter(text) {
+    const gutter = $('#json-gutter');
+    if (!gutter) return;
+    const n = String(text || '').split('\n').length;
+    let out = '';
+    for (let i = 1; i <= Math.max(n, 1); i++) out += i + '\n';
+    gutter.textContent = out.trimEnd();
+  }
+
+  function parseJSONError(text, err) {
+    const msg = err && err.message ? err.message : 'JSON 语法错误';
+    let line = null;
+    let col = null;
+    const lineCol = msg.match(/line\s+(\d+)\s+column\s+(\d+)/i);
+    if (lineCol) {
+      line = Number(lineCol[1]);
+      col = Number(lineCol[2]);
+    } else {
+      const posMatch = msg.match(/position\s+(\d+)/i);
+      if (posMatch) {
+        const pos = Number(posMatch[1]);
+        const before = text.slice(0, pos);
+        line = before.split('\n').length;
+        col = pos - before.lastIndexOf('\n');
+      }
+    }
+    return { message: msg, line, col };
+  }
+
+  function updateJSONPanels() {
+    const errBox = $('#json-error');
+    const scopeBox = $('#json-scope');
+    if (errBox) {
+      if (state.jsonError) {
+        const loc = state.jsonError.line ? `第 ${state.jsonError.line} 行${state.jsonError.col ? `第 ${state.jsonError.col} 列` : ''} · ` : '';
+        errBox.innerHTML = `<div class="error-box"><div class="feedback-title">${icon('warning', 13)} JSON 语法错误</div><div class="feedback-detail">${esc(loc)}${esc(state.jsonError.message)}</div></div>`;
+      } else {
+        errBox.innerHTML = '';
+      }
+    }
+    if (scopeBox) {
+      const target = currentTarget();
+      const doc = currentDoc();
+      const base = currentBaseline();
+      const issues = scopeIssues(doc, target, base);
+      const mChanges = managedKeyChanges(doc, base);
+      let html = '';
+      if (mChanges.length) {
+        html += `<div class="error-box" style="margin:9px 0 0"><div class="feedback-title">${icon('lock', 13)} 受管键被修改</div>
+          <div class="feedback-detail">${mChanges.map((k) => `<span class="mono">${esc(k)}</span>`).join('、')} 由本页「接入」管理，设置区不能修改。<button class="link-btn" data-action="access-edit">打开接入</button></div></div>`;
+      }
+      if (issues.length) {
+        const errors = issues.filter((i) => i.sev === 'error');
+        const warns = issues.filter((i) => i.sev !== 'error');
+        html += `<div class="${errors.length ? 'error-box' : 'warn-box'}" style="margin:9px 0 0">
+          <div class="feedback-title">${icon(errors.length ? 'warning' : 'info', 13)} ${errors.length ? 'Scope 校验未通过' : 'Scope 提示'}</div>
+          <ul class="issue-list">
+            ${issues.map((i) => `<li>${i.sev === 'error' ? badge('danger', '阻断') : badge('warn', '提示')}<span><span class="path">${esc(i.path)}</span>：${esc(i.msg)}${i.isNew ? '' : '（历史遗留，本次未改动）'}</span></li>`).join('')}
+          </ul>
+        </div>`;
+      }
+      if (!html) {
+        html = `<div class="hint ok" style="margin:9px 0 0">${icon('check', 12)} 未发现 scope 或受管键问题。</div>`;
+      }
+      scopeBox.innerHTML = html;
+    }
+  }
+
+  function onJSONInput(ta) {
+    const target = currentTarget();
+    state.jsonDrafts[target] = ta.value;
+    state.jsonTarget = target;
+    state.jsonDirty = true;
+    syncGutter(ta.value);
+    try {
+      const parsed = JSON.parse(ta.value);
+      if (!isObj(parsed)) {
+        state.jsonError = { message: '根节点必须是一个 JSON 对象（不能是数组、字符串或 null）', line: 1, col: 1 };
+        recomputeDirty();
+        updateJSONPanels();
+        return;
+      }
+      state.jsonError = null;
+      docs[target] = parsed;
+      state.formErrors = [];
+      state.result = null;
+      const r = $('#result-banner'); if (r) r.remove();
+      recomputeDirty();
+      updateJSONPanels();
+    } catch (err) {
+      state.jsonError = parseJSONError(ta.value, err);
+      recomputeDirty();
+      updateJSONPanels();
+    }
+  }
+
+  /* =========================================================
+     12. 合并预览视图
+     ========================================================= */
+  function mergeView() {
+    const rows = buildMergeRows();
+    const dirtyWarn = state.dirty
+      ? `<div class="banner warn">${icon('warning')}<div><b>预览基于已保存内容。</b>当前有未保存修改，预览不包含草稿；保存后会更新。</div></div>`
+      : '';
+    return `
+      ${dirtyWarn}
+      <div class="banner info">${icon('info')}<div><b>优先级：</b>Managed &gt; <span class="mono">--settings</span> &gt; 项目本地 &gt; 项目共享 &gt; 用户级。<span class="muted">本次未检测到 <span class="mono">--settings</span>，不参与预览；远程托管策略不可见时可能不完整。</span></div></div>
+      ${permissionEvalHTML()}
+      <div class="card" style="padding-bottom:10px">
+        <div class="merge-toolbar">
+          <div class="search">${icon('search', 14)}<input class="input" id="merge-filter" placeholder="按键路径过滤，例如 permissions、env、model" value="${attr(state.mergeFilter)}"></div>
+          <button class="btn small" data-action="merge-refresh">${icon('refresh', 13)} 刷新预览</button>
+        </div>
+        <div class="merge-legend" style="margin-bottom:6px">
+          <span>来源：</span>${SOURCE_ORDER.map((s) => `<span class="badge ${s === 'managed' ? 'lock' : ''}">${s === 'managed' ? icon('lock', 10) : ''}${esc(sourceLabel(s))}</span>`).join('')}
+          <span style="margin-left:6px">合并：</span><span class="badge">并集</span><span class="badge">逐变量</span><span class="badge">整值替换</span>
+        </div>
+        <table class="merge-table">
+          <thead><tr><th style="width:31%">键</th><th>最终值</th><th style="width:116px;text-align:right">来源</th><th style="width:72px;text-align:right">合并</th><th class="merge-op"></th></tr></thead>
+          <tbody id="merge-tbody">
+            ${rows.map((path) => mergeRowHTML(path)).join('')}
+          </tbody>
+        </table>
+        <div class="no-result" id="merge-no-result" style="display:none">${icon('search', 18)}<div style="margin-top:6px">没有匹配的键。<button class="link-btn" data-action="merge-clear">清除搜索</button></div></div>
+      </div>
+    `;
+  }
+
+  function buildMergeRows() {
+    const paths = [];
+    const add = (p) => { if (!paths.includes(p)) paths.push(p); };
+    const merged = mergedDoc();
+
+    ['model', 'fallbackModel', 'effortLevel', 'alwaysThinkingEnabled', 'skipDangerousModePermissionPrompt', 'permissions.defaultMode', 'statusLine',
+      'enableAllProjectMcpServers', 'enabledMcpjsonServers', 'disabledMcpjsonServers',
+      'autoCompactEnabled', 'autoMemoryEnabled', 'cleanupPeriodDays', 'availableModels', 'modelSettings'].forEach((p) => {
+      if (hasAt(merged, p)) add(p);
+    });
+
+    for (const k of Object.keys(merged.env || {})) add(`env.${k}`);
+    for (const decision of ['deny', 'ask', 'allow']) {
+      if ((merged.permissions && merged.permissions[decision] || []).length) add(`permissions.${decision}`);
+    }
+    if ((merged.permissions && merged.permissions.additionalDirectories || []).length) add('permissions.additionalDirectories');
+    for (const id of Object.keys(merged.enabledPlugins || {})) add(`enabledPlugins.${id}`);
+    for (const name of Object.keys(merged.skillOverrides || {})) add(`skillOverrides.${name}`);
+    for (const ev of Object.keys(merged.hooks || {})) add(`hooks.${ev}`);
+
+    const order = [
+      'model', 'fallbackModel', 'effortLevel', 'alwaysThinkingEnabled', 'skipDangerousModePermissionPrompt',
+      'env.', 'permissions.defaultMode', 'permissions.deny', 'permissions.ask', 'permissions.allow', 'permissions.additionalDirectories',
+      'statusLine', 'enabledPlugins.', 'skillOverrides.', 'enableAllProjectMcpServers', 'enabledMcpjsonServers', 'disabledMcpjsonServers',
+      'hooks.', 'availableModels', 'modelSettings', 'autoCompactEnabled', 'autoMemoryEnabled', 'cleanupPeriodDays'
+    ];
+    const rank = (p) => {
+      const i = order.findIndex((o) => (o.endsWith('.') ? p.startsWith(o) : p === o));
+      return i === -1 ? 999 : i;
+    };
+    return paths.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+  }
+
+  function mergeRowHTML(path) {
+    const kind = mergeKind(path);
+    const value = effectiveForMerge(path);
+    const contrib = contributionsFor(path);
+    const sources = unique(
+      path === 'skipDangerousModePermissionPrompt' || path.startsWith('skillOverrides.')
+        ? contrib.entries.map((e) => e.source)
+        : contrib.type === 'array'
+          ? contrib.entries.map((e) => e.source)
+          : contrib.type === 'hooks'
+            ? contrib.entries.map((e) => e.source)
+            : contrib.entries.filter((e) => e.active).map((e) => e.source)
+    );
+    const canExpand = contrib.entries.length > 0;
+    const expanded = state.expanded.has(path);
+    const detail = canExpand ? `<tr class="detail-row" data-detail-key="${attr(path)}" ${expanded ? '' : 'hidden'}>
+      <td colspan="5">${mergeDetailHTML(path, contrib)}</td>
+    </tr>` : '';
+    return `<tr class="merge-row" data-key="${attr(path)}">
+      <td><div class="merge-key">${esc(path)}</div></td>
+      <td><div class="merge-value">${mergeValueHTML(path, value, kind)}</div></td>
+      <td><div class="merge-src">${sources.slice(0, 2).map((s) => `<span class="badge ${s === 'managed' ? 'lock' : ''}" title="${attr(shortPath(sourcePath(s)))}">${s === 'managed' ? icon('lock', 9) : ''}${esc(sourceLabel(s))}</span>`).join('')}${sources.length > 2 ? `<span class="badge">+${sources.length - 2}</span>` : ''}</div></td>
+      <td><div class="merge-kind">${esc(kind)}</div></td>
+      <td class="merge-op">${canExpand ? `<button class="expand-btn" data-action="merge-expand" data-key="${attr(path)}" aria-expanded="${expanded}" aria-label="展开来源">${icon('chevron', 12)}</button>` : ''}</td>
+    </tr>${detail}`;
+  }
+
+  function mergeValueHTML(path, value, kind) {
+    if (value === undefined) return '<span class="muted">未设置</span>';
+    if (path.startsWith('skillOverrides.')) {
+      const label = SKILL_STATE_LABEL[value] || String(value);
+      const tone = value === 'on' ? 'ok' : value === 'off' ? 'danger' : 'warn';
+      const name = path.slice('skillOverrides.'.length);
+      const item = INSTALLED_SKILLS.find((s) => s.name === name);
+      return `${badge(tone, label)}${item && item.source === 'plugin' ? ` ${badge('lock', '插件不生效')}` : ''}`;
+    }
+    if (isSecretKey(path)) return `<span class="mono">${maskText}</span>`;
+    if (Array.isArray(value)) {
+      if (value.length === 0) return '<span class="muted">空数组</span>';
+      if (kind === '整值替换') {
+        return `<span class="muted">${value.length} 项：</span>${value.slice(0, 3).map((v) => `<span class="chip mono" style="margin:1px 2px">${esc(v)}</span>`).join('')}${value.length > 3 ? `<span class="badge">+${value.length - 3}</span>` : ''}`;
+      }
+      return `${value.slice(0, 3).map((v) => `<span class="chip mono" style="margin:1px 2px">${esc(v)}</span>`).join('')}${value.length > 3 ? `<span class="badge">+${value.length - 3}</span>` : ''}`;
+    }
+    if (typeof value === 'boolean') return value ? badge('ok', '开') : badge('', '关');
+    if (isObj(value)) {
+      if (path === 'statusLine') return `<span class="mono">${esc(summarizeStatusLine(value))}</span>`;
+      if (path === 'modelSettings') return `<span class="muted">${Object.keys(value).length} 个模型设置</span>`;
+      return `<span class="mono">{…}</span>`;
+    }
+    return `<span class="mono">${esc(value)}</span>`;
+  }
+
+  function mergeDetailHTML(path, contrib) {
+    if (contrib.type === 'array') {
+      return `<div class="contrib">
+        <div class="contrib-title">并集去重；同一项保留最高层来源。</div>
+        ${contrib.entries.map((e) => `<div class="contrib-row"><span class="src">${badge('', sourceLabel(e.source))} <span class="muted mono" style="font-size:10px">${esc(shortPath(sourcePath(e.source)))}</span></span><span class="val">${esc(e.value)}</span></div>`).join('')}
+      </div>`;
+    }
+    if (contrib.type === 'hooks') {
+      return `<div class="contrib">
+        <div class="contrib-title">hooks 跨层累加；执行顺序以 Claude Code 实际行为为准。</div>
+        ${contrib.entries.map((e) => `<div class="contrib-row"><span class="src">${badge('', sourceLabel(e.source))} <span class="muted mono" style="font-size:10px">${esc(shortPath(sourcePath(e.source)))}</span></span><span class="val">${esc((e.value || []).length)} 组</span><span class="grow"></span><span class="muted mono">${esc(JSON.stringify(e.value).slice(0, 120))}</span></div>`).join('')}
+      </div>`;
+    }
+    const isOr = path === 'skipDangerousModePermissionPrompt';
+    const isSkill = path.startsWith('skillOverrides.');
+    const anyTrue = isOr && contrib.entries.some((e) => e.value === true);
+    const orTitle = isOr
+      ? (anyTrue
+          ? '任一层为 true 即 true；false 不会覆盖其他层的 true。'
+          : '所有层均为 false 或未设置，结果为「显示确认」。')
+      : isSkill
+        ? '逐技能合并；项目本地 > 项目共享 > 用户级；policy / flag / 作者 / 插件锁定优先。'
+        : '各层贡献；被更高层覆盖的值保留可见。';
+    const stateBadge = (e) => {
+      if (!isOr) return e.active ? badge('ok', '生效') : badge('', '被覆盖');
+      if (anyTrue) return e.value === true ? badge('ok', '生效') : badge('', 'false 不覆盖');
+      return badge('', '均为 false');
+    };
+    return `<div class="contrib">
+      <div class="contrib-title">${orTitle}</div>
+      ${contrib.entries.map((e) => `<div class="contrib-row">
+        <span class="src">${badge('', sourceLabel(e.source))} <span class="muted mono" style="font-size:10px">${esc(shortPath(sourcePath(e.source)))}</span></span>
+        <span class="val ${e.active || (isOr && anyTrue) ? '' : 'inactive'}">${esc(displayContribution(e.value))}</span>
+        <span class="grow"></span>
+        ${stateBadge(e)}
+      </div>`).join('')}
+    </div>`;
+  }
+
+  function displayContribution(v) {
+    if (Array.isArray(v)) return v.join(', ') || '空数组';
+    if (isObj(v)) return JSON.stringify(v);
+    if (typeof v === 'boolean') return v ? '开' : '关';
+    if (v === undefined) return '未设置';
+    return String(v);
+  }
+
+  function permissionEvalHTML() {
+    const merged = mergedDoc();
+    const p = merged.permissions || {};
+    const counts = { deny: (p.deny || []).length, ask: (p.ask || []).length, allow: (p.allow || []).length };
+    const dist = (decision) => activeSources().filter((s) => Array.isArray(getAt(docs[s], `permissions.${decision}`)) && getAt(docs[s], `permissions.${decision}`).length)
+      .map((s) => `${sourceLabel(s)} ${getAt(docs[s], `permissions.${decision}`).length}`).join(' · ');
+    return `<div class="perm-card">
+      <div class="perm-card-head">
+        <div><div class="perm-card-title">权限求值</div><div class="card-desc">deny → ask → allow，首个匹配决定；deny 任意层压过 allow 任意层。</div></div>
+        <div style="margin-left:auto">${badge('plain', '只读')}</div>
+      </div>
+      <div class="eval-flow">
+        <div class="eval-step deny"><div class="step-num">1</div><div class="step-name">deny · ${counts.deny} 条（去重）</div><div class="step-num">各层：${esc(dist('deny') || '无')}</div></div>
+        <div class="eval-arrow">→</div>
+        <div class="eval-step ask"><div class="step-num">2</div><div class="step-name">ask · ${counts.ask} 条（去重）</div><div class="step-num">各层：${esc(dist('ask') || '无')}</div></div>
+        <div class="eval-arrow">→</div>
+        <div class="eval-step allow"><div class="step-num">3</div><div class="step-name">allow · ${counts.allow} 条（去重）</div><div class="step-num">各层：${esc(dist('allow') || '无')}</div></div>
+      </div>
+      <div class="eval-note">规则的具体程度不影响顺序。项目级 <span class="mono">defaultMode</span> 写 <span class="mono">auto</span> / <span class="mono">bypassPermissions</span> 不生效；当前有效默认模式：<b>${esc(effectiveForMerge('permissions.defaultMode') || '未设置')}</b>。</div>
+      <div class="eval-note" style="margin-top:4px">示例：<span class="mono">Read(./.env)</span> → <b>deny</b>（托管）；<span class="mono">Bash(git push:*)</span> → <b>ask</b>；<span class="mono">Read(./src/App.tsx)</span> → <b>allow</b>。</div>
+    </div>`;
+  }
+
+  /* =========================================================
+     13. 企业托管视图
+     ========================================================= */
+  function managedView() {
+    return `
+      ${resultBannerHTML()}
+      ${managedSourcesHTML()}
+      ${managedPolicyHTML()}
+      <div class="card">
+        <div class="card-head">
+          <div><div class="card-title">原始策略 JSON（本地可读部分）</div><div class="card-desc">敏感值已遮蔽；AgentSwitch 不会写入这些文件。</div></div>
+          <div class="card-actions"><button class="btn small" data-action="managed-refresh">${icon('refresh', 13)} 刷新策略</button></div>
+        </div>
+        <pre class="json-readonly">${highlightJSON(JSON.stringify(maskSecrets(docs.managed), null, 2))}</pre>
+      </div>
+    `;
+  }
+
+  function managedSourcesHTML() {
+    const cards = MANAGED_SOURCES.map((s) => {
+      const hidden = s.status === 'hidden';
+      return `<div class="source-card ${hidden ? 'hidden-source' : ''}">
+        <div class="source-icon">${icon(hidden ? 'lock' : 'folder', 16)}</div>
+        <div style="min-width:0">
+          <div class="source-name">${esc(s.name)}</div>
+          <div class="source-path">${esc(s.path)}</div>
+          <div class="source-meta">${esc(s.kind)} · 修改时间 ${esc(s.modified)}</div>
+        </div>
+        ${hidden ? badge('warn', '不可见') : badge('ok', '已加载')}
+      </div>`;
+    }).join('');
+    return `<div class="card">
+      <div class="card-head">
+        <div><div class="card-title">策略来源</div><div class="card-desc">本地可读来源已加载；远程组织策略由 Claude Code 运行时合并，AgentSwitch 无法读取。</div></div>
+      </div>
+      ${cards}
+      <div class="hint">${icon('info', 12)} 部分来源不可见时，下方「最终策略」可能不完整；以 Claude Code 实际运行为准。</div>
+    </div>`;
+  }
+
+  function managedPolicyHTML() {
+    const p = docs.managed.permissions || {};
+    const deny = (p.deny || []).length;
+    const ask = (p.ask || []).length;
+    const allow = (p.allow || []).length;
+    const envKeys = Object.keys(docs.managed.env || {});
+    return `<div class="card">
+      <div class="card-head">
+        <div><div class="card-title">最终策略摘要</div><div class="card-desc">来自本地可读托管来源；用于解释「为什么某些设置改不动」。</div></div>
+      </div>
+      <div class="policy-grid">
+        <div class="policy-item"><div class="policy-label">权限规则</div><div class="policy-value">${badge('danger', `deny ${deny}`)} ${badge('warn', `ask ${ask}`)} ${badge('ok', `allow ${allow}`)}</div></div>
+        <div class="policy-item"><div class="policy-label">可用模型</div><div class="policy-value chips">${(docs.managed.availableModels || []).map((m) => `<span class="chip mono">${esc(m)}</span>`).join('') || '<span class="muted">未限制</span>'}</div></div>
+        <div class="policy-item"><div class="policy-label">MCP 允许 / 拒绝</div><div class="policy-value chips">${(docs.managed.allowedMcpServers || []).map((m) => badge('ok', m)).join('')}${(docs.managed.deniedMcpServers || []).map((m) => badge('danger', m)).join('')}</div></div>
+        <div class="policy-item"><div class="policy-label">环境变量</div><div class="policy-value">${envKeys.map((k) => `<span class="chip mono">${esc(k)}</span>`).join('') || '<span class="muted">无</span>'}</div></div>
+        <div class="policy-item"><div class="policy-label">自动模式</div><div class="policy-value">${docs.managed.disableAutoMode === 'disable' ? badge('danger', '禁用 auto mode') : '<span class="muted">未限制</span>'}</div></div>
+        <div class="policy-item"><div class="policy-label">受管插件</div><div class="policy-value chips">${Object.keys(docs.managed.enabledPlugins || {}).map((id) => `<span class="chip mono">${esc(id)}</span>`).join('') || '<span class="muted">无</span>'}</div></div>
+      </div>
+    </div>`;
+  }
+
+  function maskSecrets(value, path = '') {
+    if (Array.isArray(value)) return value.map((v) => maskSecrets(v, path));
+    if (isObj(value)) {
+      const out = {};
+      for (const [k, v] of Object.entries(value)) out[k] = maskSecrets(v, path ? `${path}.${k}` : k);
+      return out;
+    }
+    if (path && isSecretKey(path.split('.').pop())) return maskText;
+    return value;
+  }
+
+  function highlightJSON(text) {
+    return esc(text)
+      .replace(/(&quot;(?:\\.|[^&])*?&quot;)(\s*:)/g, '<span class="k">$1</span>$2')
+      .replace(/:\s*(&quot;(?:\\.|[^&])*?&quot;)/g, ': <span class="s">$1</span>');
+  }
+
+  /* =========================================================
+     14. 交互状态
+     ========================================================= */
+  function blockingJSONIssues() {
+    if (state.view !== 'json') return [];
+    const target = currentTarget();
+    const issues = scopeIssues(currentDoc(), target, currentBaseline())
+      .filter((i) => i.sev === 'error' && i.isNew)
+      .map((i) => ({ kind: 'scope', path: i.path, msg: i.msg }));
+    const m = managedKeyChanges(currentDoc(), currentBaseline())
+      .map((k) => ({ kind: 'managed', path: `env.${k}`, msg: '由本页「接入」管理，请打开接入抽屉修改' }));
+    return [...issues, ...m];
+  }
+
+  function canSave() {
+    if (state.scope === 'managed') return false;
+    if (state.scope === 'project' && !currentProject()) return false;
+    if (!state.dirty) return false;
+    if (state.view === 'json' && state.jsonError) return false;
+    if (state.view === 'json' && blockingJSONIssues().length) return false;
+    return true;
+  }
+
+  function updateChrome() {
+    const save = $('#save-btn');
+    if (save) {
+      save.disabled = !canSave();
+      const why = state.scope === 'managed'
+        ? '企业托管配置只读'
+        : !state.dirty
+          ? '没有未保存的修改'
+          : state.jsonError
+            ? '先修复 JSON 错误'
+            : (state.view === 'json' && blockingJSONIssues().length)
+              ? '先修复 scope 或受管键问题'
+              : '';
+      save.title = save.disabled ? why : '保存当前层配置';
+    }
+    const strip = $('.file-strip');
+    if (strip) {
+      const target = currentTarget();
+      let status = badge('ok', '已保存');
+      if (state.scope === 'managed') status = badge('lock', '只读');
+      else if (state.view === 'json' && state.jsonError) status = badge('danger', 'JSON 有错误');
+      else if (state.dirty && state.dirtyTarget === target) status = badge('warn', '有未保存修改');
+      else if (state.scope === 'project' && !currentProject()) status = badge('', '未选择项目');
+      const old = strip.querySelector('.badge');
+      if (old) old.outerHTML = status;
+    }
+  }
+
+  function recomputeDirty() {
+    const changed = diffPaths(currentBaseline(), currentDoc());
+    const invalidJSON = state.view === 'json' && !!state.jsonError;
+    state.dirty = changed.length > 0 || invalidJSON;
+    state.dirtyTarget = state.dirty ? currentTarget() : null;
+    updateChrome();
+  }
+
+  function markDirty() {
+    state.result = null;
+    state.formErrors = [];
+    const r = $('#result-banner'); if (r) r.remove();
+    if (state.view !== 'json') {
+      state.jsonTarget = null;
+      state.jsonDirty = false;
+    }
+    recomputeDirty();
+  }
+
+  function switchScope(next) {
+    if (next === state.scope) return;
+    const apply = () => {
+      state.scope = next;
+      state.result = null;
+      state.formErrors = [];
+      state.jsonError = null;
+      if (next !== 'managed' && state.jsonTarget !== currentTarget()) {
+        state.jsonDirty = false;
+        state.jsonTarget = null;
+      }
+      if (next === 'managed') state.view = 'form';
+      renderPage();
+    };
+    if (state.dirty) requestDiscard(apply);
+    else apply();
+  }
+
+  function switchProjectFile(next) {
+    if (next === state.projectFile) return;
+    const apply = () => {
+      state.projectFile = next;
+      state.result = null;
+      state.formErrors = [];
+      state.jsonError = null;
+      state.jsonDirty = false;
+      state.jsonTarget = null;
+      renderPage();
+    };
+    if (state.dirty) requestDiscard(apply);
+    else apply();
+  }
+
+  function requestProjectChange(nextId) {
+    const apply = () => {
+      state.projectId = nextId;
+      state.result = null;
+      state.formErrors = [];
+      state.jsonError = null;
+      state.jsonDirty = false;
+      state.jsonTarget = null;
+      renderPage();
+    };
+    if (state.dirty) requestDiscard(apply);
+    else apply();
+  }
+
+  function switchView(next) {
+    if (next === state.view) return;
+    if (state.view === 'json' && state.jsonError && next !== 'json') {
+      toast('先修复 JSON 错误，或点击「重置」', 'warn');
+      return;
+    }
+    if (state.view === 'json' && next !== 'json') {
+      state.jsonDirty = false;
+      state.jsonTarget = null;
+    }
+    if (next === 'json') {
+      const target = currentTarget();
+      if (state.jsonTarget !== target || !state.jsonDirty) {
+        state.jsonDrafts[target] = JSON.stringify(currentDoc(), null, 2);
+        state.jsonTarget = target;
+        state.jsonDirty = false;
+        state.jsonError = null;
+      }
+    }
+    state.view = next;
+    renderPage();
+  }
+
+  function requestDiscard(onDiscard) {
+    pendingDiscard = onDiscard;
+    openModal({
+      title: '放弃未保存的修改？',
+      sub: currentTargetPathLabel(),
+      body: `<div>当前文件有未保存的修改。切换后这些修改会丢失。</div>
+        <div class="hint" style="margin-top:6px">${icon('info', 12)} 保存后再切换，或选择「继续编辑」。</div>`,
+      actions: [
+        { label: '放弃修改', kind: 'danger', action: 'discard' },
+        { label: '继续编辑', kind: 'primary', action: 'close', autofocus: true }
+      ]
+    });
+  }
+
+  function currentTargetPathLabel() {
+    return state.scope === 'managed' ? '企业托管配置（只读）' : shortPath(targetPath());
+  }
+
+  function discardCurrent() {
+    if (state.dirtyTarget) {
+      docs[state.dirtyTarget] = clone(baseline[state.dirtyTarget]);
+      state.jsonDrafts[state.dirtyTarget] = JSON.stringify(docs[state.dirtyTarget], null, 2);
+    }
+    state.dirty = false;
+    state.dirtyTarget = null;
+    state.jsonError = null;
+    state.jsonDirty = false;
+    state.formErrors = [];
+    const fn = pendingDiscard;
+    pendingDiscard = null;
+    closeModal();
+    if (typeof fn === 'function') fn();
+    else renderPage();
+  }
+
+  /* =========================================================
+     15. 保存
+     ========================================================= */
+  function openSaveModal() {
+    if (state.scope === 'managed') {
+      toast('企业托管配置只读', 'warn');
+      return;
+    }
+    if (state.scope === 'project' && !currentProject()) {
+      toast('请先选择一个项目', 'warn');
+      return;
+    }
+    if (state.view === 'json' && state.jsonError) {
+      toast('先修复 JSON 错误再保存', 'error');
+      $('#json-text')?.focus();
+      return;
+    }
+    const target = currentTarget();
+    const doc = currentDoc();
+    const base = currentBaseline();
+    const formErrors = validateDoc(doc);
+    if (formErrors.length) {
+      showBlockingErrors('无法保存：配置校验未通过', formErrors);
+      return;
+    }
+    const newScopeErrors = scopeIssues(doc, target, base).filter((i) => i.sev === 'error' && i.isNew);
+    if (newScopeErrors.length) {
+      showBlockingErrors('无法保存：Scope 校验未通过', newScopeErrors);
+      return;
+    }
+    const mChanges = managedKeyChanges(doc, base);
+    if (mChanges.length) {
+      showBlockingErrors('无法保存：受管键不可修改', mChanges.map((k) => ({
+        path: `env.${k}`,
+        msg: '由本页「接入」管理，请打开接入抽屉修改；设置保存时会原样保留。'
+      })));
+      return;
+    }
+    const changed = diffPaths(base, doc);
+    if (changed.length === 0) {
+      toast('没有需要保存的修改', 'info');
+      return;
+    }
+    const effect = computeEffect(target, changed);
+    const path = targetPath();
+    const backup = backupPath(target);
+    const warnings = [];
+    if (target === 'shared') warnings.push('项目共享文件通常会被提交到 Git；不要在这里写密钥。');
+    if (target === 'shared' && hasSecretLikeValue(doc)) warnings.push('检测到疑似密钥或令牌；建议改存到项目本地 settings.local.json。');
+    if (changed.includes('model') && hasAt(doc, 'model') && modelWarning(doc.model)) warnings.push(modelWarning(doc.model));
+    const preExisting = scopeIssues(doc, target, base).filter((i) => !i.isNew);
+    if (preExisting.length) warnings.push(`文件中有 ${preExisting.length} 个历史 scope 提示，本次未改动，会原样保留。`);
+
+    const body = `
+      <div class="modal-kv"><div class="k">目标文件</div><div class="v mono">${esc(path)}</div></div>
+      <div class="modal-kv"><div class="k">变更键</div><div class="v"><div class="chips">${changed.slice(0, 8).map((k) => `<span class="chip mono">${esc(k)}</span>`).join('')}${changed.length > 8 ? `<span class="badge">等 ${changed.length} 个</span>` : ''}</div></div></div>
+      <div class="modal-kv"><div class="k">备份</div><div class="v mono">${esc(backup)}</div></div>
+      <div class="modal-kv"><div class="k">生效范围</div><div class="v">${badge(effect.kind === 'hot' ? 'ok' : 'warn', effect.label)}${effect.reason && effect.reason.length ? `<span class="hint" style="display:inline;margin-left:7px">${esc(effect.reason.join('、'))}</span>` : ''}</div></div>
+      ${warnings.length ? `<div class="warn-box" style="margin-top:9px">${icon('warning', 13)}<div>${warnings.map((w) => `<div>${esc(w)}</div>`).join('')}</div></div>` : ''}
+      <div class="hint" style="margin-top:9px">保存只修改当前层文件；不会合并写入其他层。未知键会原样保留。</div>
+    `;
+    openModal({
+      title: `保存到${state.scope === 'user' ? '用户级' : target === 'shared' ? '项目共享' : '项目本地'}配置？`,
+      sub: '写入前会备份当前文件；写入采用原子替换。',
+      body,
+      width: 560,
+      actions: [
+        { label: '取消', kind: '', action: 'close' },
+        { label: '保存', kind: 'primary', action: 'save', autofocus: true, onClick: () => performSave({ target, changed, effect, path, backup }) }
+      ]
+    });
+  }
+
+  function hasSecretLikeValue(doc) {
+    const env = isObj(doc.env) ? doc.env : {};
+    for (const [k, v] of Object.entries(env)) {
+      if (isSecretKey(k)) return true;
+      if (typeof v === 'string' && /(sk-[A-Za-z0-9]{12,}|Bearer\s+[A-Za-z0-9._-]{12,})/.test(v)) return true;
+    }
+    return false;
+  }
+
+  function computeEffect(target, changed) {
+    const restart = changed.filter((k) => RESTART_KEYS.includes(k));
+    if (restart.length) {
+      return { kind: 'restart', label: '需重启 Claude Code', reason: restart };
+    }
+    if (target !== 'user') {
+      return { kind: 'next', label: '下次启动（该项目新会话）', reason: ['项目级配置'] };
+    }
+    if (changed.includes('permissions.blockReadsOutsideWorkingDirectories')) {
+      return { kind: 'next', label: '下次启动', reason: ['permissions.blockReadsOutsideWorkingDirectories'] };
+    }
+    const unknown = changed.filter((k) => !HOT_PREFIXES.some((p) => k === p || k.startsWith(p)));
+    if (unknown.length) {
+      return { kind: 'next', label: '下次启动', reason: unknown.slice(0, 3) };
+    }
+    return { kind: 'hot', label: '已热生效', reason: changed.slice(0, 3) };
+  }
+
+  function performSave(info) {
+    const btn = $('#modal-primary');
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = `<span class="spinner"></span> 正在写入…`;
+    }
+    setTimeout(() => {
+      baseline[info.target] = clone(docs[info.target]);
+      state.dirty = false;
+      state.dirtyTarget = null;
+      state.jsonDirty = false;
+      state.jsonDrafts[info.target] = JSON.stringify(docs[info.target], null, 2);
+      state.formErrors = [];
+      state.lastSaved[info.target] = `刚刚 ${nowClock()}`;
+      state.result = {
+        effect: info.effect,
+        path: info.path,
+        backup: info.backup,
+        changed: info.changed
+      };
+      closeModal();
+      renderPage();
+      toast(`已保存到 ${shortPath(info.path)}`, 'success');
+    }, 700);
+  }
+
+  function showBlockingErrors(title, errors) {
+    openModal({
+      title,
+      sub: '修复后再保存；不会写入任何文件。',
+      body: `<ul class="modal-list">${errors.map((e) => `<li><span class="mono">${esc(e.path)}</span>：${esc(e.msg)}</li>`).join('')}</ul>`,
+      actions: [{ label: '去修复', kind: 'primary', action: 'close', autofocus: true }]
+    });
+  }
+
+  /* =========================================================
+     16. Modal / Toast
+     ========================================================= */
+  function openModal({ title, sub = '', body, actions = [], width = 520 }) {
+    const root = $('#modal-root');
+    modalActions = {};
+    actions.forEach((a) => { if (a.onClick) modalActions[a.action] = a.onClick; });
+    root.innerHTML = `<div class="modal-overlay" role="presentation">
+      <div class="modal" role="dialog" aria-modal="true" aria-label="${attr(title)}" style="width:min(${width}px,100%)">
+        <div class="modal-head">
+          <div class="modal-title">${esc(title)}</div>
+          ${sub ? `<div class="modal-sub">${esc(sub)}</div>` : ''}
+        </div>
+        <div class="modal-body">${body}</div>
+        <div class="modal-actions">
+          ${actions.map((a) => `<button class="btn ${a.kind || ''}" data-modal-action="${attr(a.action)}" ${a.autofocus ? 'data-autofocus="true"' : ''} ${a.action === 'save' ? 'id="modal-primary"' : ''}>${esc(a.label)}</button>`).join('')}
+        </div>
+      </div>
+    </div>`;
+    setTimeout(() => {
+      const focus = root.querySelector('[data-autofocus="true"]') || root.querySelector('button');
+      focus?.focus();
+    }, 0);
+  }
+
+  function closeModal() {
+    const root = $('#modal-root');
+    if (root) root.innerHTML = '';
+    modalActions = {};
+    pendingDiscard = null;
+  }
+
+  function toast(message, kind = 'info') {
+    const root = $('#toast-root');
+    if (!root) return;
+    const el = document.createElement('div');
+    el.className = `toast ${kind}`;
+    el.textContent = message;
+    root.appendChild(el);
+    setTimeout(() => {
+      el.style.opacity = '0';
+      el.style.transform = 'translateY(4px)';
+      el.style.transition = 'opacity .18s, transform .18s';
+      setTimeout(() => el.remove(), 220);
+    }, 3200);
+  }
+
+  function copyText(text) {
+    const done = () => toast('已复制到剪贴板', 'success');
+    const fail = () => toast('复制失败，请手动选择路径复制', 'warn');
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(done).catch(fail);
+      return;
+    }
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand('copy') ? done() : fail();
+    } catch {
+      fail();
+    }
+    ta.remove();
+  }
+
+  /* =========================================================
+     17. 事件
+     ========================================================= */
+  document.addEventListener('input', (e) => {
+    const t = e.target;
+    if (t.id === 'json-text') { onJSONInput(t); return; }
+    if (t.id === 'merge-filter') { filterMerge(t.value); return; }
+    if (t.dataset && t.dataset.bind) { onBindInput(t); return; }
+    if (t.dataset && t.dataset.envValue) {
+      const key = t.dataset.envValue;
+      if (!isObj(currentDoc().env)) currentDoc().env = {};
+      currentDoc().env[key] = t.value;
+      markDirty();
+      return;
+    }
+  });
+
+  document.addEventListener('change', (e) => {
+    const t = e.target;
+    if (t.dataset && t.dataset.accessField) {
+      const field = t.dataset.accessField;
+      if (field === 'oneM') state.access.oneM = !!t.checked;
+      else if (field === 'model' || field === 'config') state.access[field] = t.value;
+      state.access.dirty = true;
+      renderAccessDrawer();
+      return;
+    }
+    if (t.dataset && t.dataset.accessRole) {
+      state.access.roles[t.dataset.accessRole] = t.value;
+      state.access.dirty = true;
+      renderAccessDrawer();
+      return;
+    }
+    if (t.id === 'project-select') {
+      const next = t.value === '__none__' ? null : t.value;
+      if (next === state.projectId) return;
+      t.value = state.projectId || '__none__';
+      requestProjectChange(next);
+      return;
+    }
+    if (t.dataset && t.dataset.skillKey) {
+      const key = t.dataset.skillKey;
+      const doc = currentDoc();
+      if (!isObj(doc.skillOverrides)) doc.skillOverrides = {};
+      if (!t.value) delete doc.skillOverrides[key];
+      else doc.skillOverrides[key] = t.value;
+      if (isObj(doc.skillOverrides) && Object.keys(doc.skillOverrides).length === 0) delete doc.skillOverrides;
+      markDirty();
+      renderPage();
+      return;
+    }
+    if (t.dataset && t.dataset.bind && t.tagName === 'SELECT') {
+      const path = t.dataset.bind;
+      if (!t.value) deleteAt(currentDoc(), path);
+      else setAt(currentDoc(), path, t.value);
+      markDirty();
+      renderPage();
+      return;
+    }
+    if (t.dataset && t.dataset.envKey) {
+      const oldKey = t.dataset.envKey;
+      const newKey = t.value.trim();
+      const env = currentDoc().env;
+      if (!isObj(env)) return;
+      if (newKey === oldKey) return;
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(newKey)) {
+        toast('变量名只能包含字母、数字、下划线，且不能以数字开头', 'error');
+        t.value = oldKey;
+        return;
+      }
+      if (Object.prototype.hasOwnProperty.call(env, newKey)) {
+        toast('当前层已存在同名变量', 'warn');
+        t.value = oldKey;
+        return;
+      }
+      if (ACCESS_MANAGED_ENV.includes(newKey)) {
+        toast('该键由本页「接入」管理，不能在这里新增', 'warn');
+        t.value = oldKey;
+        return;
+      }
+      const entries = Object.entries(env).map(([k, v]) => [k === oldKey ? newKey : k, v]);
+      const rebuilt = {};
+      for (const [k, v] of entries) rebuilt[k] = v;
+      currentDoc().env = rebuilt;
+      markDirty();
+      renderPage();
+    }
+  });
+
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    const action = btn.dataset.action;
+    const value = btn.dataset.value;
+
+    switch (action) {
+      case 'nav':
+        if (value !== 'access') toast('此原型只演示「Agent 接入」页', 'info');
+        return;
+      case 'agent-tab':
+        if (state.agentTab === value) return;
+        state.agentTab = value;
+        state.accessDrawerOpen = false;
+        renderPage();
+        return;
+      case 'access-edit':
+        openAccessDrawer();
+        return;
+      case 'access-close':
+      case 'access-close-overlay':
+        closeAccessDrawer();
+        return;
+      case 'access-save':
+        saveAccessOnly();
+        return;
+      case 'access-apply':
+        requestAccessApply();
+        return;
+      case 'access-new':
+        toast('原型中新建接入配置未展开；实际会创建一条新配置', 'info');
+        return;
+      case 'toggle-managed':
+        state.managedExpanded = !state.managedExpanded;
+        renderPage();
+        return;
+      case 'scope':
+        switchScope(value);
+        return;
+      case 'project-file':
+        switchProjectFile(value);
+        return;
+      case 'view':
+        switchView(value);
+        return;
+      case 'save':
+        openSaveModal();
+        return;
+      case 'refresh':
+        renderPage();
+        toast('已刷新文件状态（假数据）', 'info');
+        return;
+      case 'copy-path':
+        copyText(state.scope === 'managed' ? MANAGED_SOURCE_PATH : targetPath());
+        return;
+      case 'copy-env': {
+        const key = btn.dataset.key;
+        const src = btn.dataset.source;
+        const val = src ? getAt(docs[src], `env.${key}`) : (isObj(currentDoc().env) ? currentDoc().env[key] : undefined);
+        if (val === undefined) toast('值不存在', 'warn');
+        else copyText(String(val));
+        return;
+      }
+      case 'go-access':
+        openAccessDrawer();
+        return;
+      case 'open-help':
+        openHelp();
+        return;
+      case 'open-rules':
+        openRules();
+        return;
+      case 'pick-dir':
+        openDirectoryPicker();
+        return;
+      case 'focus-project-select':
+        $('#project-select')?.focus();
+        return;
+      case 'override':
+        overrideKey(btn.dataset.path);
+        return;
+      case 'remove-key':
+        removeKey(btn.dataset.path);
+        return;
+      case 'set-gateway-model':
+        setAt(currentDoc(), 'model', liveGatewayModel());
+        markDirty();
+        renderPage();
+        toast(`主模型已设为 ${liveGatewayModel()}`, 'success');
+        return;
+      case 'tri':
+        setTri(btn.dataset.path, btn.dataset.value);
+        return;
+      case 'add-chip':
+        addChip(btn.dataset.path);
+        return;
+      case 'remove-chip':
+        removeChip(btn.dataset.path, btn.dataset.value);
+        return;
+      case 'move-chip':
+        moveChip(btn.dataset.path, Number(btn.dataset.index), Number(btn.dataset.dir));
+        return;
+      case 'reveal-env':
+        toggleReveal(btn.dataset.key);
+        return;
+      case 'add-env':
+        addEnv();
+        return;
+      case 'remove-env':
+        removeEnv(btn.dataset.key);
+        return;
+      case 'json-format':
+        formatJSON();
+        return;
+      case 'json-validate':
+        updateJSONPanels();
+        toast('已完成 JSON 与 scope 校验', 'info');
+        return;
+      case 'json-reset':
+        resetJSON();
+        return;
+      case 'merge-expand':
+        toggleMergeDetail(btn.dataset.key, btn);
+        return;
+      case 'merge-refresh':
+        renderPage();
+        toast('合并预览已刷新（假数据）', 'info');
+        return;
+      case 'merge-clear':
+        state.mergeFilter = '';
+        renderPage();
+        return;
+      case 'managed-refresh':
+        toast('已刷新托管策略（假数据）', 'info');
+        return;
+      case 'result-backup':
+        if (state.result) {
+          copyText(state.result.backup);
+        }
+        return;
+      case 'result-dismiss':
+        state.result = null;
+        renderPage();
+        return;
+      case 'stop-gateway':
+        state.gatewayRunning = !state.gatewayRunning;
+        updateGatewayChrome();
+        renderPage();
+        toast(state.gatewayRunning ? '网关已启动' : '网关已停止；接入应用已禁用', state.gatewayRunning ? 'success' : 'warn');
+        return;
+      default:
+        return;
+    }
+  });
+
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-modal-action]');
+    if (!btn) return;
+    const action = btn.dataset.modalAction;
+    const fn = modalActions[action];
+    if (action === 'close') { closeModal(); return; }
+    if (action === 'discard') { discardCurrent(); return; }
+    if (typeof fn === 'function') fn();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      if ($('#modal-root') && $('#modal-root').innerHTML.trim()) {
+        closeModal();
+      } else if (state.accessDrawerOpen) {
+        closeAccessDrawer();
+      }
+    }
+  });
+
+  function onBindInput(t) {
+    const path = t.dataset.bind;
+    const doc = currentDoc();
+    if (t.dataset.kind === 'number') {
+      if (String(t.value).trim() === '') deleteAt(doc, path);
+      else {
+        const n = Number(t.value);
+        if (Number.isFinite(n)) setAt(doc, path, n);
+      }
+    } else if (t.value === '' && t.dataset.empty === 'delete') {
+      deleteAt(doc, path);
+    } else {
+      setAt(doc, path, t.value);
+    }
+    markDirty();
+    if (path === 'model' || path === 'model' && t.id === 'model-input') {
+      const hint = $('#model-hint');
+      if (hint) {
+        const w = modelWarning(t.value);
+        hint.className = w ? 'hint warn' : 'hint';
+        hint.textContent = w || `当前层未设置时继承下层；网关模型为 ${liveGatewayModel()}。`;
+      }
+    }
+  }
+
+  function setTri(path, value) {
+    const doc = currentDoc();
+    if (value === '') deleteAt(doc, path);
+    else setAt(doc, path, value === 'true');
+    markDirty();
+    renderPage();
+  }
+
+  function addChip(path) {
+    const input = $(`[data-add-input="${cssEscape(path)}"]`);
+    if (!input) return;
+    const value = input.value.trim();
+    if (!value) { toast('请先输入内容', 'warn'); input.focus(); return; }
+    if (path === 'permissions.additionalDirectories' && !(value.startsWith('/') || value.startsWith('~/'))) {
+      toast('目录必须是绝对路径或 ~/ 开头', 'error');
+      input.focus();
+      return;
+    }
+    const doc = currentDoc();
+    let arr = Array.isArray(getAt(doc, path)) ? getAt(doc, path) : [];
+    if (arr.includes(value)) { toast('当前层已存在相同项', 'warn'); return; }
+    arr = [...arr, value];
+    setAt(doc, path, arr);
+    markDirty();
+    renderPage();
+  }
+
+  function removeChip(path, value) {
+    const doc = currentDoc();
+    let arr = Array.isArray(getAt(doc, path)) ? getAt(doc, path) : [];
+    arr = arr.filter((x) => x !== value);
+    if (path === 'fallbackModel' && arr.length === 0) deleteAt(doc, path);
+    else setAt(doc, path, arr);
+    markDirty();
+    renderPage();
+  }
+
+  function moveChip(path, index, dir) {
+    const doc = currentDoc();
+    const arr = getAt(doc, path);
+    if (!Array.isArray(arr)) return;
+    const next = index + dir;
+    if (next < 0 || next >= arr.length) return;
+    const copy = [...arr];
+    [copy[index], copy[next]] = [copy[next], copy[index]];
+    setAt(doc, path, copy);
+    markDirty();
+    renderPage();
+  }
+
+  function toggleReveal(key) {
+    const token = `${currentTarget()}:${key}`;
+    if (state.revealed.has(token)) state.revealed.delete(token);
+    else state.revealed.add(token);
+    renderPage();
+  }
+
+  function addEnv() {
+    const keyEl = $('#env-new-key');
+    const valEl = $('#env-new-value');
+    if (!keyEl || !valEl) return;
+    const key = keyEl.value.trim();
+    const value = valEl.value;
+    if (!key) { toast('请填写变量名', 'warn'); keyEl.focus(); return; }
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) { toast('变量名只能包含字母、数字、下划线，且不能以数字开头', 'error'); keyEl.focus(); return; }
+    if (ACCESS_MANAGED_ENV.includes(key)) { toast('该键由本页「接入」管理，请打开接入抽屉修改', 'warn'); return; }
+    const doc = currentDoc();
+    if (!isObj(doc.env)) doc.env = {};
+    if (Object.prototype.hasOwnProperty.call(doc.env, key)) { toast('当前层已存在同名变量', 'warn'); return; }
+    doc.env[key] = value;
+    markDirty();
+    renderPage();
+  }
+
+  function removeEnv(key) {
+    if (ACCESS_MANAGED_ENV.includes(key)) { toast('受管键只读，请打开接入抽屉修改', 'warn'); return; }
+    const doc = currentDoc();
+    if (isObj(doc.env)) delete doc.env[key];
+    markDirty();
+    renderPage();
+  }
+
+  function overrideKey(path) {
+    if (!path) return;
+    const defaults = {
+      model: liveGatewayModel(),
+      fallbackModel: [],
+      effortLevel: 'high',
+      alwaysThinkingEnabled: true,
+      statusLine: { type: 'command', command: '~/.claude/statusline.sh', padding: 0 },
+      enableAllProjectMcpServers: true,
+      syncClaudeAiPlugins: true,
+      syncClaudeAiSkills: true,
+      autoCompactEnabled: true,
+      autoMemoryEnabled: true,
+      cleanupPeriodDays: 30
+    };
+    let v = defaults[path];
+    if (v === undefined) {
+      if (path.startsWith('permissions.') && /\.(allow|ask|deny|additionalDirectories)$/.test(path)) v = [];
+      else if (path.startsWith('enabledPlugins.')) v = true;
+      else v = '';
+    }
+    setAt(currentDoc(), path, clone(v));
+    markDirty();
+    renderPage();
+  }
+
+  function removeKey(path) {
+    if (!path) return;
+    const leaf = path.replace(/^env\./, '');
+    if (ACCESS_MANAGED_ENV.includes(leaf)) { toast('受管键只读，请打开接入抽屉修改', 'warn'); return; }
+    deleteAt(currentDoc(), path);
+    markDirty();
+    renderPage();
+  }
+
+  function formatJSON() {
+    if (state.jsonError) { toast('先修复 JSON 错误再格式化', 'error'); return; }
+    const ta = $('#json-text');
+    if (!ta) return;
+    try {
+      const parsed = JSON.parse(ta.value);
+      const formatted = JSON.stringify(parsed, null, 2);
+      ta.value = formatted;
+      state.jsonDrafts[currentTarget()] = formatted;
+      state.jsonDirty = true;
+      docs[currentTarget()] = parsed;
+      syncGutter(formatted);
+      recomputeDirty();
+      updateJSONPanels();
+      toast('已格式化', 'success');
+    } catch (err) {
+      state.jsonError = parseJSONError(ta.value, err);
+      updateJSONPanels();
+      recomputeDirty();
+    }
+  }
+
+  function resetJSON() {
+    const target = currentTarget();
+    openModal({
+      title: '重置 JSON 编辑？',
+      sub: '会丢弃当前 JSON 草稿，恢复到上次保存的内容。',
+      body: `<div class="warn-box">${icon('warning', 13)}<div>未保存的修改将丢失。此操作不会写入磁盘。</div></div>`,
+      actions: [
+        { label: '重置', kind: 'danger', action: 'reset-json' },
+        { label: '取消', kind: 'primary', action: 'close', autofocus: true }
+      ]
+    });
+    modalActions['reset-json'] = () => {
+      docs[target] = clone(baseline[target]);
+      state.jsonDrafts[target] = JSON.stringify(docs[target], null, 2);
+      state.jsonError = null;
+      state.jsonDirty = false;
+      state.dirty = false;
+      state.dirtyTarget = null;
+      closeModal();
+      renderPage();
+      toast('已恢复到上次保存内容', 'info');
+    };
+  }
+
+  function toggleMergeDetail(key, btn) {
+    if (state.expanded.has(key)) state.expanded.delete(key);
+    else state.expanded.add(key);
+    const detail = document.querySelector(`[data-detail-key="${cssEscape(key)}"]`);
+    if (detail) detail.hidden = !state.expanded.has(key);
+    if (btn) btn.setAttribute('aria-expanded', String(state.expanded.has(key)));
+  }
+
+  function filterMerge(q) {
+    state.mergeFilter = q;
+    const query = String(q || '').trim().toLowerCase();
+    const rows = $$('.merge-row');
+    const details = $$('.detail-row');
+    let visible = 0;
+    rows.forEach((row) => {
+      const key = (row.dataset.key || '').toLowerCase();
+      const show = !query || key.includes(query);
+      row.style.display = show ? '' : 'none';
+      if (show) visible++;
+      const detail = document.querySelector(`[data-detail-key="${cssEscape(row.dataset.key)}"]`);
+      if (detail) detail.style.display = show ? '' : 'none';
+      if (!show && detail) detail.hidden = true;
+    });
+    const empty = $('#merge-no-result');
+    if (empty) empty.style.display = visible === 0 ? 'block' : 'none';
+  }
+
+  function cssEscape(s) {
+    if (window.CSS && typeof CSS.escape === 'function') return CSS.escape(s);
+    return String(s).replace(/["\\]/g, '\\$&');
+  }
+
+  /* =========================================================
+     18. 说明 / 规则 / 目录选择
+     ========================================================= */
+  function openHelp() {
+    openModal({
+      title: '交互原型使用说明',
+      sub: '所有数据均为假数据，不会读写真实文件。',
+      body: `
+        <div class="help-step"><div class="help-num">1</div><div><b>一个入口</b><br>侧栏「Agent 接入」进入；顶部 Agent 页签默认选中 Claude Code。接入与设置都在这一页。</div></div>
+        <div class="help-step"><div class="help-num">2</div><div><b>接入摘要卡</b><br>卡片显示网关状态、当前接入配置、网关模型和是否已应用。点「编辑接入」打开右侧抽屉，改模型与角色映射。</div></div>
+        <div class="help-step"><div class="help-num">3</div><div><b>应用接入</b><br>抽屉底部「保存并应用」只写受管键；应用后设置区的受管键会刷新。设置区有未保存修改时会先阻止应用。</div></div>
+        <div class="help-step"><div class="help-num">4</div><div><b>编辑设置</b><br>下方「Claude Code 设置」可切换用户级/项目级/企业托管，并编辑权限（含默认开启的「危险模式确认」）、状态栏、插件与 Skills 开关；受管键与插件来源的 Skills 只读。</div></div>
+        <div class="help-step"><div class="help-num">5</div><div><b>看合并结果</b><br>打开「合并预览」，每行显示最终值和来源文件；展开可看各层贡献，权限卡展示 deny → ask → allow。</div></div>
+        <div class="help-step"><div class="help-num">6</div><div><b>试错误路径</b><br>JSON 视图里删掉一个括号看行列错误；在项目层 JSON 中加入 <span class="mono">modelPicker</span> 看 scope 阻断；修改受管 <span class="mono">ANTHROPIC_AUTH_TOKEN</span> 看受管键阻断。</div></div>
+        <div class="help-step"><div class="help-num">7</div><div><b>试脏状态</b><br>改一个设置值后切换层级/项目，会弹「继续编辑 / 放弃修改」，默认安全动作是继续编辑；接入应用遇到未保存设置也会先提示。</div></div>
+      `,
+      width: 560,
+      actions: [{ label: '知道了', kind: 'primary', action: 'close', autofocus: true }]
+    });
+  }
+
+  function openRules() {
+    openModal({
+      title: '作用域规则',
+      sub: '简化版；完整 30 键清单由实现期键注册表维护。',
+      width: 700,
+      body: `<table class="scope-table">
+        <thead><tr><th>键 / 类别</th><th>用户级</th><th>项目共享</th><th>项目本地</th><th>托管</th></tr></thead>
+        <tbody>
+          <tr><td class="key">普通键</td><td class="yes">可写</td><td class="yes">可写</td><td class="yes">可写</td><td class="ro">只读</td></tr>
+          <tr><td class="key">接入投影键（${ACCESS_MANAGED_ENV.length} 个）<br>env.ANTHROPIC_BASE_URL / AUTH_TOKEN / MODEL<br>SMALL_FAST / DEFAULT_* / SUBAGENT</td><td class="no">只读（接入）</td><td class="no">只读 + 覆盖警告</td><td class="no">只读 + 覆盖警告</td><td class="ro">只读</td></tr>
+          <tr><td class="key">autoMode<br>modelPicker<br>sandbox.allowAppleEvents</td><td class="yes">可写</td><td class="no">禁用</td><td class="no">禁用</td><td class="ro">只读</td></tr>
+          <tr><td class="key">skipDangerousModePermissionPrompt<br>syncClaudeAiPlugins<br>syncClaudeAiSkills<br>useAutoModeDuringPlan</td><td class="yes">可写</td><td class="no">禁用</td><td class="yes">可写</td><td class="ro">只读</td></tr>
+          <tr><td class="key">skillOverrides<br>（逐技能状态）</td><td class="yes">可写</td><td class="yes">可写（影响协作者）</td><td class="yes">可写</td><td class="ro">逐键锁定</td></tr>
+          <tr><td class="key">worktree.location</td><td class="yes">可写</td><td class="no">禁用</td><td class="no">禁用</td><td class="ro">只读</td></tr>
+          <tr><td class="key">permissions.defaultMode<br>= auto / bypassPermissions</td><td class="yes">可写且生效</td><td class="no">写了不生效</td><td class="no">写了不生效</td><td class="ro">只读</td></tr>
+          <tr><td class="key">cleanupPeriodDays</td><td class="yes">可写</td><td class="no">禁用</td><td class="no">禁用</td><td class="ro">只读</td></tr>
+          <tr><td class="key">12 个 Global config 键<br>（~/.claude.json）</td><td class="ro" colspan="4">不在本页范围；设置区不读写</td></tr>
+        </tbody>
+      </table>
+      <div class="hint" style="margin-top:9px">${icon('info', 12)} 已有违规键不会静默删除：历史遗留只警告并保留；本次新引入的违规键阻断保存。</div>
+      <div class="hint" style="margin-top:5px">${icon('info', 12)} <span class="mono">skipDangerousModePermissionPrompt</span> 默认 true（AgentSwitch 默认）；合并按「任一层 true 即 true」，项目共享不可写。</div>
+      <div class="hint" style="margin-top:5px">${icon('info', 12)} <span class="mono">skillOverrides</span> 按 Skill 名逐键；项目本地 > 项目共享 > 用户级。插件来源的 Skill 不能单关，需在「MCP 与插件」关闭插件；作者锁定最高只能到「仅手动调用」。</div>`,
+      actions: [{ label: '关闭', kind: 'primary', action: 'close', autofocus: true }]
+    });
+  }
+
+  function openDirectoryPicker() {
+    openModal({
+      title: '选择项目目录',
+      sub: '原型不会真的打开系统目录选择器；可粘贴一个路径体验。',
+      body: `<div class="form-row" style="border-top:0;padding-top:0">
+        <div class="form-label">目录路径</div>
+        <div class="form-control">
+          <input class="input mono" id="custom-dir" placeholder="/Users/caozhang/work/my-project" value="/Users/caozhang/work/java_work/AgentSwitch">
+          <div class="hint">选中后会读取该目录下的 <span class="mono">.claude/settings.json</span> 与仓库根的 <span class="mono">.claude/settings.local.json</span>。</div>
+        </div>
+      </div>`,
+      actions: [
+        { label: '取消', kind: '', action: 'close' },
+        { label: '选择此目录', kind: 'primary', action: 'choose-dir', autofocus: true }
+      ]
+    });
+    modalActions['choose-dir'] = () => {
+      const input = $('#custom-dir');
+      const p = input ? input.value.trim().replace(/[\\/]+$/, '') : '';
+      if (!p) { toast('请填写目录路径', 'warn'); input?.focus(); return; }
+      const existing = allProjects().find((x) => x.path === p);
+      if (existing) {
+        closeModal();
+        requestProjectChange(existing.id);
+        return;
+      }
+      const id = `custom-${Date.now()}`;
+      const project = { id, name: basename(p), path: p, recent: '刚刚', gitRoot: p, note: '自定义目录' };
+      state.customProjects.push(project);
+      closeModal();
+      requestProjectChange(id);
+      toast(`已选择 ${basename(p)}`, 'success');
+    };
+  }
+
+  /* =========================================================
+     19. 初始化
+     ========================================================= */
+  // 图标注入（静态 sidebar）
+  $$('[data-icon]').forEach((el) => {
+    el.innerHTML = ICON_SVG[el.dataset.icon] || '';
+  });
+
+  // 全局默认：避免在页面里写死图标
+  renderPage();
+})();
+</script>
+</body>
+</html>
