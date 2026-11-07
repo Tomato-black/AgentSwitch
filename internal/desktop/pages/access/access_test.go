@@ -462,9 +462,9 @@ func TestClaudeEditorOpensAsDrawer(t *testing.T) {
 	if tt.HasText("← 返回接入") {
 		t.Fatalf("claude 不应再走编辑子页: %v", tt.Texts())
 	}
-	if err := tt.Click("关闭"); err != nil {
-		t.Fatal(err)
-	}
+	// Esc 关闭（页面级有多处同名「关闭」文本——三态分段段名——不能用文本点击；
+	// Esc 路径同时覆盖宿主的 open 写回与草稿标记）。
+	tt.Key(0, ui.KeyEscape)
 	tt.Frame()
 	if st.Access.Form.Open {
 		t.Fatal("close must close the drawer")

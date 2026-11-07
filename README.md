@@ -121,13 +121,13 @@ go tool mygo dev      # 开发运行（热重载）
 go tool mygo build    # 打包
 ```
 
-- Go 1.27+；UI 为 MyGo（v0.6.2）原生视图，无前端工程
+- Go 1.27+；UI 为 MyGo（v0.8.3）原生视图，无前端工程
 - 设计文档：`docs/superpowers/specs/`（按日期命名，功能实现以 spec 为准）
 - 贡献指南：[CONTRIBUTING.md](CONTRIBUTING.md)；架构概览：[ARCHITECTURE.md](ARCHITECTURE.md)
 
 ### 已知问题（Linux）
 
-**亮色主题下窗口文字全白**：MyGo v0.5.1 起 Linux 子像素抗锯齿（`font-antialiasing=rgba`）下的字形着色有缺陷——文字颜色不生效、一律画成白色。应用启动时对本进程把 GTK 的 `gtk-xft-rgba` 设为 `none`（`internal/desktop/fontrender_linux.go`）改用灰度抗锯齿绕开，**不影响系统设置与其他应用**。（v0.6.2 复查上游无对口修复，规避保留）
+**亮色主题下窗口文字全白**：MyGo v0.5.1 起 Linux 子像素抗锯齿（`font-antialiasing=rgba`）下的字形着色有缺陷——文字颜色不生效、一律画成白色。应用启动时对本进程把 GTK 的 `gtk-xft-rgba` 设为 `none`（`internal/desktop/fontrender_linux.go`）改用灰度抗锯齿绕开，**不影响系统设置与其他应用**。（v0.6.2/v0.8.3 两次复查上游均无对口修复——#1025 是旧 cairo 的 LCD 滤镜问题、不同缺陷——规避保留）
 
 ## 从旧版本升级（多 Key / 渠道级路由旧库）
 

@@ -48,6 +48,7 @@ func BuildTheme(dark bool, textScale float32) *ui.Theme {
 		t.AccentHover = ui.Hex("#EA620A")
 		t.AccentPressed = ui.Hex("#DD5A0B")
 		t.AccentText = ui.Hex("#18181B") // 橙底深字：对比度约 7.4:1（2026-10-29 决策）
+		t.InactiveAccent = t.Accent      // mygo v0.8.0 起失焦默认褪灰；托盘驻留常失焦，钉死主操作橙
 		t.Success = ui.Hex("#22C55E")
 		t.Danger = ui.Hex("#EF4444")
 		t.Warning = ui.Hex("#FBBF24")
@@ -68,6 +69,7 @@ func BuildTheme(dark bool, textScale float32) *ui.Theme {
 		t.AccentHover = ui.Hex("#EA620A")
 		t.AccentPressed = ui.Hex("#DD5A0B")
 		t.AccentText = ui.Hex("#18181B") // 橙底深字：对比度约 7.4:1（2026-10-29 决策）
+		t.InactiveAccent = t.Accent      // mygo v0.8.0 起失焦默认褪灰；托盘驻留常失焦，钉死主操作橙
 		t.Success = ui.Hex("#16A34A")
 		t.Danger = ui.Hex("#DC2626")
 		t.Warning = ui.Hex("#B45309") // 原 #D97706 白底仅 3.19:1

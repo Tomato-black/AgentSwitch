@@ -1,12 +1,12 @@
 module AgentSwitch
 
-go 1.27.2
+go 1.27.3
 
 tool github.com/egoist/mygo/cmd/mygo
 
 require (
 	github.com/ebitengine/purego v0.11.1
-	github.com/egoist/mygo v0.6.2
+	github.com/egoist/mygo v0.8.3
 	github.com/pelletier/go-toml/v2 v2.4.3
 	modernc.org/sqlite v1.60.1
 )
@@ -19,6 +19,7 @@ require (
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	golang.org/x/image v0.46.0 // indirect
+	golang.org/x/net v0.59.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	modernc.org/libc v1.77.1 // indirect
