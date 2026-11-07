@@ -440,7 +440,29 @@ func viewTabs(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, 
 	} else if cf.View == "merged" {
 		idx = 2
 	}
-	if ui.Tabs(c, &idx, "表单", "JSON", "合并预览").Changed() {
+	// 视图页签自绘（TabsBase）：选中 = 品牌橙文字 + 粗体 + 3px 橙下划线
+	//（框架主题版只有细下划线，2026-11-07 用户实测选中不明显）。
+	labels := []string{"表单", "JSON", "合并预览"}
+	tabs := ui.TabsBase(c, &idx, len(labels))
+	list := tabs.List.Gap(t.Space(1))
+	list.Children(func() {
+		for i, label := range labels {
+			tab := tabs.Tab(i).Padding(t.Space(2), t.Space(3)).FocusRing(false)
+			on := i == idx
+			tab.TextColor(t.TextMuted)
+			if on {
+				tab.TextColor(t.Accent).FontWeight(600)
+			}
+			tab.Children(func() { ui.Text(c, label).SingleLine() })
+			tab.DrawOver(func(p *ui.Painter, r ui.Rect) {
+				if on {
+					in, h := t.Space(1.5), t.Space(0.75)
+					p.Fill(ui.Rect{r.X + in, r.Y + r.H - h, r.W - 2*in, h}, t.Accent, h/2)
+				}
+			})
+		}
+	})
+	if list.Changed() {
 		if idx == 0 {
 			cf.View = "form"
 		} else if idx == 1 {
