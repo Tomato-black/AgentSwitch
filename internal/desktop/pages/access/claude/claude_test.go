@@ -72,8 +72,9 @@ func TestCloseDrawerKeepsDraft(t *testing.T) {
 }
 
 // TestDrawerCardConfigManagementRenders：编辑既有配置时抽屉渲染配置选择行
-// 与次级操作（复制启动命令/打开终端/备份恢复/删除）；新建草稿不显示
-// EditID 相关次级操作。
+// 与页脚（更多/关闭/仅保存/保存并应用）；次级操作（复制启动命令/打开终端/
+// 备份恢复/删除）收进「更多」菜单，菜单关闭时项不可见；新建草稿不显示
+// EditID 相关菜单与次级操作。
 func TestDrawerCardConfigManagementRenders(t *testing.T) {
 	st, a := uitest.New(t)
 	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
@@ -90,17 +91,29 @@ func TestDrawerCardConfigManagementRenders(t *testing.T) {
 	tt := ui.NewTester(func(c *ui.Context) {
 		DrawerCard(c, c.Theme(), uikit.Softs(c.Theme()), st, acc, true, DrawerHooks{})
 	}, 1000, 1400)
-	for _, want := range []string{"工作", "新建", "复制启动命令", "打开终端", "备份与恢复", "还原最近备份", "删除"} {
+	for _, want := range []string{"工作", "新建", "更多", "关闭", "仅保存", "保存并应用"} {
 		if !tt.HasText(want) {
 			t.Fatalf("missing %q: %v", want, tt.Texts())
 		}
 	}
-	// 新建草稿：无 EditID，不出现次级操作。
+	if tt.HasText("复制启动命令") || tt.HasText("还原最近备份") {
+		t.Fatalf("菜单未打开时不应出现次级操作项: %v", tt.Texts())
+	}
+	if err := tt.Click("更多"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	for _, item := range []string{"复制启动命令", "打开终端", "备份与恢复", "还原最近备份", "删除"} {
+		if !tt.HasText(item) {
+			t.Fatalf("菜单缺少 %q: %v", item, tt.Texts())
+		}
+	}
+	// 新建草稿：无 EditID，菜单与次级操作整体不出现。
 	st.Access.Form = state.AccessForm{Open: true}
 	tt = ui.NewTester(func(c *ui.Context) {
 		DrawerCard(c, c.Theme(), uikit.Softs(c.Theme()), st, acc, true, DrawerHooks{})
 	}, 1000, 1400)
-	if tt.HasText("复制启动命令") || tt.HasText("还原最近备份") {
+	if tt.HasText("更多") || tt.HasText("还原最近备份") {
 		t.Fatalf("新建草稿不应渲染 EditID 次级操作: %v", tt.Texts())
 	}
 }

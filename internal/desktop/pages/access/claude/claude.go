@@ -107,39 +107,37 @@ func DrawerCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State
 				}
 			}
 		})
-		// 次级操作行（编辑既有配置时）：启动命令/终端/备份恢复/删除。
-		if f.EditID != "" {
-			ui.Row(c).Gap(8).Wrap().Children(func() {
-				if gateOK {
-					if uikit.SoftButton(c, t, s, "gray", "复制启动命令").Clicked() {
-						if cmd, err := acc.LaunchCommand(f.EditID); err != nil {
-							f.Msg = "生成启动命令失败：" + err.Error()
-						} else {
-							mygo.Clipboard.Write(transfer.TextData(cmd))
-							f.Msg = "启动命令已复制"
-						}
-					}
-					if uikit.SoftButton(c, t, s, "gray", "打开终端").Clicked() {
-						if err := acc.OpenTerminal(f.EditID); err != nil {
-							f.Msg = "打开终端失败：" + err.Error()
-						} else {
-							f.Msg = ""
-						}
-					}
+		// 次级操作（编辑既有配置时）收进页脚「更多」菜单（mygo v0.7.2+
+		// PopoverMenuButton）：页脚保持原型的 关闭/仅保存/保存并应用；网关
+		// 停止时启动命令/终端置灰而非隐藏，删除为 Danger 红项。
+		drawerSecondaryMenu := func(m *ui.Menu) {
+			if m.Item("复制启动命令").Disabled(!gateOK).Chosen() {
+				if cmd, err := acc.LaunchCommand(f.EditID); err != nil {
+					f.Msg = "生成启动命令失败：" + err.Error()
+				} else {
+					mygo.Clipboard.Write(transfer.TextData(cmd))
+					f.Msg = "启动命令已复制"
 				}
-				if uikit.SoftButton(c, t, s, "gray", "备份与恢复").Clicked() {
-					st.Access.BackupOpen = true
-					st.Access.BackupMsg = ""
-					st.Access.Backups, _ = acc.ListBackups("claude")
+			}
+			if m.Item("打开终端").Disabled(!gateOK).Chosen() {
+				if err := acc.OpenTerminal(f.EditID); err != nil {
+					f.Msg = "打开终端失败：" + err.Error()
+				} else {
+					f.Msg = ""
 				}
-				if uikit.SoftButton(c, t, s, "gray", "还原最近备份").Clicked() {
-					st.Access.RestoreArm = true
-				}
-				if uikit.SoftButton(c, t, s, "danger", "删除").Clicked() {
-					st.Access.DeleteArm = true
-					st.Access.DeleteID = f.EditID
-				}
-			})
+			}
+			if m.Item("备份与恢复").Chosen() {
+				st.Access.BackupOpen = true
+				st.Access.BackupMsg = ""
+				st.Access.Backups, _ = acc.ListBackups("claude")
+			}
+			if m.Item("还原最近备份").Chosen() {
+				st.Access.RestoreArm = true
+			}
+			if m.Item("删除").Danger().Chosen() {
+				st.Access.DeleteArm = true
+				st.Access.DeleteID = f.EditID
+			}
 		}
 
 		uikit.FormRow(c, t, "名称:", func() ui.Element {
@@ -195,6 +193,9 @@ func DrawerCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State
 		uikit.Feedback(c, t, uikit.InferFeedback(f.Msg), f.Msg)
 
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			if f.EditID != "" {
+				ui.PopoverMenuButton(c, "更多", drawerSecondaryMenu)
+			}
 			if !gateOK {
 				ui.Text(c, "网关未运行——先启动网关才能「保存并应用」").TextColor(t.TextMuted)
 			}
