@@ -272,5 +272,25 @@ func parseAccessDoc(appType, raw string) (map[string]any, map[string]string, err
 			}
 		}
 	}
+	// Claude：拒绝设置页领域顶层键（2026-11-07 用户实测）——它们经应用投影
+	// 会覆盖用户在设置页的修改，且被受管集合锁死设置区（存量误粘数据曾致
+	// 「权限无法设置」）。env/model/fallbackModel 与其余定制键照旧。
+	if appType == "claude" {
+		for _, k := range claudeSettingsDomainKeys {
+			if _, ok := doc[k]; ok {
+				return nil, nil, fmt.Errorf("顶层键 %s 由 Claude Code 设置页管理，不能写进接入配置", k)
+			}
+		}
+	}
 	return doc, env, nil
+}
+
+// claudeSettingsDomainKeys 是 Claude Code 设置页领域的顶层键：接入配置不得
+// 携带（应用时会投影进 settings.json 覆盖设置页修改）。
+var claudeSettingsDomainKeys = []string{
+	"permissions", "skillOverrides", "hooks", "statusLine", "enabledPlugins",
+	"enableAllProjectMcpServers", "enabledMcpjsonServers", "disabledMcpjsonServers",
+	"effortLevel", "alwaysThinkingEnabled", "autoCompactEnabled", "autoMemoryEnabled",
+	"cleanupPeriodDays", "syncClaudeAiPlugins", "syncClaudeAiSkills",
+	"skipDangerousModePermissionPrompt",
 }

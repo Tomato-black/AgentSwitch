@@ -2057,3 +2057,20 @@ func TestApplyProjectsTopLevelModelKeys(t *testing.T) {
 		t.Fatalf("受管集合应含两顶层键: %+v", ms.StrongTopLevel)
 	}
 }
+
+// TestParseAccessDocRejectsSettingsDomainKeys（2026-11-07 用户实测）：接入文档
+// 不得携带 Claude Code 设置页领域顶层键（permissions/skillOverrides/hooks 等）
+// ——它们会经应用投影覆盖用户在设置页的修改，且被受管集合锁死设置区
+//（用户真实数据曾误粘 permissions 致「权限无法设置」）。
+func TestParseAccessDocRejectsSettingsDomainKeys(t *testing.T) {
+	for _, key := range []string{"permissions", "skillOverrides", "hooks", "statusLine", "enabledPlugins"} {
+		raw := `{"env":{},"` + key + `":{}}`
+		if _, _, err := parseAccessDoc("claude", raw); err == nil {
+			t.Fatalf("顶层 %s 应拒绝: %s", key, raw)
+		}
+	}
+	// 允许键照旧：env / model / fallbackModel / 其他定制顶层键。
+	if _, _, err := parseAccessDoc("claude", `{"env":{},"model":"my-code","fallbackModel":["a"]}`); err != nil {
+		t.Fatalf("合法键应通过: %v", err)
+	}
+}
