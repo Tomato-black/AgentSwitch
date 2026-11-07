@@ -15,8 +15,9 @@ import (
 	"AgentSwitch/internal/desktop/uikit"
 )
 
-// Section 渲染 Claude Code 设置区。首次进入同步加载当前层；之后的编辑
-// 只写内存，保存时由 bridge 做冲突检测/备份/原子写。
+// Section 渲染 Claude Code 设置区（原型 2026-11-07 §4.1：区块头在卡外 +
+// 当前文件条 + 层级切换 + 视图切换 + 内容卡片流）。首次进入同步加载当前层；
+// 之后的编辑只写内存，保存时由 bridge 做冲突检测/备份/原子写。
 func Section(c *ui.Context, st *state.State) {
 	t := c.Theme()
 	s := uikit.Softs(t)
@@ -26,42 +27,78 @@ func Section(c *ui.Context, st *state.State) {
 		load(st, cfgs)
 	}
 
-	uikit.Card(c, t, func() {
-		ui.Column(c).Gap(10).Children(func() {
-			header(c, t, s, st, cfgs)
-			if !st.ClaudeCfg.Loaded {
-				uikit.Feedback(c, t, uikit.InferFeedback(st.ClaudeCfg.Msg), st.ClaudeCfg.Msg)
-				return
-			}
-			layerSelector(c, t, s, st, cfgs)
-			fileLine(c, t, s, st)
-			if st.ClaudeCfg.Warning != "" {
-				uikit.Feedback(c, t, uikit.FeedbackWarning, st.ClaudeCfg.Warning)
-			}
-			// 结果条与备份面板放在内容区顶部：保存后无需滚到表单底部。
-			saveResultBar(c, t, s, st, cfgs)
-			backupPanel(c, t, s, st, cfgs)
-			viewTabs(c, t, s, st, cfgs)
-			switch st.ClaudeCfg.View {
-			case "json":
-				jsonView(c, t, st)
-			case "merged":
-				mergedView(c, t, st)
-			default:
-				if st.ClaudeCfg.BrokenFile {
-					repairCard(c, t, s, st, cfgs)
-				} else {
-					FormSection(c, st)
-				}
-			}
-			uikit.Feedback(c, t, uikit.InferFeedback(st.ClaudeCfg.Msg), st.ClaudeCfg.Msg)
+	ui.Column(c).Gap(10).Children(func() {
+		// 区块头（卡外）：标题 + 受管键徽章；动作按钮在页面页头（HeaderActions）。
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "Claude Code 设置").Bold().FontSize(t.FontSize + 1)
+			uikit.SoftBadge(c, t, s, "gray", "受管 13 键")
+			ui.Box(c).Grow(1)
 		})
+		ui.Text(c, "分层管理 Claude Code 自身设置；接入投影键只读").TextColor(t.TextMuted)
+		if !st.ClaudeCfg.Loaded {
+			uikit.Feedback(c, t, uikit.InferFeedback(st.ClaudeCfg.Msg), st.ClaudeCfg.Msg)
+			return
+		}
+		fileStrip(c, t, s, st)
+		layerSelector(c, t, s, st, cfgs)
+		if st.ClaudeCfg.Warning != "" {
+			uikit.Feedback(c, t, uikit.FeedbackWarning, st.ClaudeCfg.Warning)
+		}
+		// 结果条与备份面板放在内容区顶部：保存后无需滚到表单底部。
+		saveResultBar(c, t, s, st, cfgs)
+		backupPanel(c, t, s, st, cfgs)
+		viewTabs(c, t, s, st, cfgs)
+		switch st.ClaudeCfg.View {
+		case "json":
+			jsonView(c, t, st)
+		case "merged":
+			mergedView(c, t, st)
+		default:
+			if st.ClaudeCfg.BrokenFile {
+				repairCard(c, t, s, st, cfgs)
+			} else {
+				FormSection(c, st)
+			}
+		}
+		uikit.Feedback(c, t, uikit.InferFeedback(st.ClaudeCfg.Msg), st.ClaudeCfg.Msg)
 	})
 	saveDialog(c, st, cfgs)
 	conflictDialog(c, st, cfgs)
 	restoreBackupDialog(c, st, cfgs)
 	reloadDialog(c, st)
 	rebuildDialog(c, st, cfgs)
+}
+
+// fileStrip 是当前文件条（原型 §4.1）：浅底条内等宽路径 + 状态徽章（有未
+// 保存修改 / JSON 错误 / 只读 / 文件不存在 / 已保存）；JSON 损坏原文与保存
+// 阻断原因紧随其下。
+func fileStrip(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State) {
+	cf := &st.ClaudeCfg
+	ui.Box(c).Radius(10).Background(t.SurfaceHover).Padding(8, 10).Children(func() {
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, cf.Display).Font(uikit.MonoFont).TextColor(t.TextMuted).Grow(1)
+			switch {
+			case cf.BrokenFile || cf.ParseErr != "":
+				uikit.SoftBadge(c, t, s, "danger", "JSON 错误")
+			case cf.Layer == "managed":
+				uikit.SoftBadge(c, t, s, "gray", "只读")
+			case cf.Dirty:
+				uikit.SoftBadge(c, t, s, "warn", "有未保存修改")
+			case !cf.Exists:
+				uikit.SoftBadge(c, t, s, "gray", "文件不存在")
+			default:
+				uikit.SoftBadge(c, t, s, "ok", "已保存")
+			}
+		})
+	})
+	if cf.ParseErr != "" {
+		uikit.Feedback(c, t, uikit.FeedbackError, cf.ParseErr)
+	}
+	if cf.Loaded && cf.Dirty {
+		if reason := saveBlockReason(cf); reason != "" {
+			uikit.Feedback(c, t, uikit.FeedbackError, reason)
+		}
+	}
 }
 
 // repairCard 是损坏 JSON 的只读修复卡（I5）：表单停用说明 + 备份恢复入口 +
@@ -309,19 +346,6 @@ func HeaderActions(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.St
 	}
 }
 
-func header(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, cfgs bridge.ClaudeConfigs) {
-	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, "Claude Code 设置").Bold()
-		uikit.SoftBadge(c, t, s, "gray", "受管 13 键")
-		ui.Box(c).Grow(1)
-	})
-	if st.ClaudeCfg.Loaded && st.ClaudeCfg.Dirty {
-		if reason := saveBlockReason(&st.ClaudeCfg); reason != "" {
-			uikit.Feedback(c, t, uikit.FeedbackError, reason)
-		}
-	}
-}
-
 func layerSelector(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, cfgs bridge.ClaudeConfigs) {
 	cf := &st.ClaudeCfg
 	idx := 0
@@ -375,24 +399,6 @@ func layerSelector(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.St
 		ui.Text(c, "企业托管层只读；本页不写入托管文件").TextColor(t.TextMuted)
 	}
 	_ = s
-}
-
-func fileLine(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State) {
-	cf := &st.ClaudeCfg
-	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, cf.Display).Font(uikit.MonoFont).TextColor(t.TextMuted)
-		if cf.Exists {
-			uikit.SoftBadge(c, t, s, "ok", "已存在")
-		} else {
-			uikit.SoftBadge(c, t, s, "gray", "文件不存在")
-		}
-		if cf.ParseErr != "" {
-			uikit.SoftBadge(c, t, s, "danger", "JSON 错误")
-		}
-	})
-	if cf.ParseErr != "" {
-		uikit.Feedback(c, t, uikit.FeedbackError, cf.ParseErr)
-	}
 }
 
 func viewTabs(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, cfgs bridge.ClaudeConfigs) {

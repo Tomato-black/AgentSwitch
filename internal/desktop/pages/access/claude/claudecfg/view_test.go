@@ -316,3 +316,31 @@ func TestBrokenJSONRawTextSurvivesViewSwitch(t *testing.T) {
 		t.Fatalf("raw text must survive view switch: view=%q text=%q", cf.View, cf.JSONText)
 	}
 }
+
+// TestFileStripStatusBadges（2026-11-07 原型对齐）：文件条状态徽章随文档状态
+// 切换——干净已存在文件显示「已保存」，变脏显示「有未保存修改」，文件不
+// 存在显示「文件不存在」。
+func TestFileStripStatusBadges(t *testing.T) {
+	st, _ := uitest.New(t)
+	home := t.TempDir()
+	st.ClaudeCfg.Home = home
+	file := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte(`{"model":"sonnet"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfgs := bridge.ClaudeConfigs{A: st.Svc.Gateway.A, Home: home}
+	load(st, cfgs)
+	tt := ui.NewTester(func(c *ui.Context) { Section(c, st) }, 1000, 1600)
+	if !tt.HasText("已保存") {
+		t.Fatalf("clean file must show 已保存: %v", tt.Texts())
+	}
+	setString(st.ClaudeCfg.Doc, "model", "opus")
+	RecomputeDirty(&st.ClaudeCfg)
+	tt = ui.NewTester(func(c *ui.Context) { Section(c, st) }, 1000, 1600)
+	if !tt.HasText("有未保存修改") {
+		t.Fatalf("dirty doc must show 有未保存修改: %v", tt.Texts())
+	}
+}
