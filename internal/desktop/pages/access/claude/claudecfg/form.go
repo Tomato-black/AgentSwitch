@@ -107,6 +107,12 @@ var coreManagedEnv = map[string]bool{
 
 func envGroup(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.ClaudeCfgState) {
 	groupCard(c, t, "环境变量", "接入管理的 13 个键只读；其余变量可自由增删", func() {
+		// 列头（原型 §6.6.2 env 表格）：与行布局对齐。
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "变量").Width(310).FontSize(t.FontSize - 2).TextColor(t.TextMuted)
+			ui.Text(c, "值").Grow(1).FontSize(t.FontSize - 2).TextColor(t.TextMuted)
+			ui.Text(c, "来源 / 操作").Width(150).FontSize(t.FontSize - 2).TextColor(t.TextMuted)
+		})
 		managed := map[string]bool{}
 		for _, k := range corecfg.AccessManagedEnv {
 			managed[k] = true

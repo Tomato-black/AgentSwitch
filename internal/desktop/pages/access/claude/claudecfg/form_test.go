@@ -418,3 +418,15 @@ func TestListFieldChipEditor(t *testing.T) {
 		t.Fatal("empty list must delete the key")
 	}
 }
+
+// TestEnvGroupColumnHeaders（2026-11-07 原型对齐）：环境变量卡渲染列头
+// （变量 / 值 / 来源与操作）。
+func TestEnvGroupColumnHeaders(t *testing.T) {
+	st := formTestState(t)
+	tt := ui.NewTester(func(c *ui.Context) { envGroup(c, c.Theme(), uikit.Softs(c.Theme()), &st.ClaudeCfg) }, 1000, 400)
+	for _, want := range []string{"变量", "值", "来源 / 操作"} {
+		if !tt.HasText(want) {
+			t.Fatalf("column header missing %q: %v", want, tt.Texts())
+		}
+	}
+}
