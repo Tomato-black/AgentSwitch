@@ -27,7 +27,7 @@ func main() {
 	a, err := app.Open(app.Options{
 		DBPath:  filepath.Join(dir, "agentswitch.db"),
 		LogPath: filepath.Join(dir, "logs", "app.log"),
-		Version: "0.1.0",
+		Version: "0.1.1",
 		Host:    "127.0.0.1",
 	})
 	if err != nil {
