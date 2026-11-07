@@ -35,7 +35,7 @@ func TestApplyAccessBlockedWhenSettingsDirty(t *testing.T) {
 	st.ClaudeCfg.Dirty = true
 	acc := bridge.AccessConfigs{A: a, Home: t.TempDir()}
 	accesskit.ApplyAsync(st, acc, bridge.AccessConfigView{ID: "cfg-1", Name: "主配置"})
-	if st.Access.ApplyTask.Running {
+	if st.Access.ApplyTask.IsRunning() {
 		t.Fatal("dirty settings must block the apply task")
 	}
 	if !strings.Contains(st.Access.Msg, "未保存") {
@@ -50,7 +50,7 @@ func TestApplyAccessAllowedWhenSettingsClean(t *testing.T) {
 	st.Access.App = "claude"
 	acc := bridge.AccessConfigs{A: a, Home: t.TempDir()}
 	accesskit.ApplyAsync(st, acc, bridge.AccessConfigView{ID: "cfg-1", Name: "主配置"})
-	if !st.Access.ApplyTask.Running {
+	if !st.Access.ApplyTask.IsRunning() {
 		t.Fatalf("clean settings must allow apply, msg=%q", st.Access.Msg)
 	}
 }

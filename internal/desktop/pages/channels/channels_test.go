@@ -481,12 +481,12 @@ func TestDetailDirtyBlocksTestAndFetch(t *testing.T) {
 		t.Fatal("expected dirty detail")
 	}
 	testDetail(st)
-	if st.Channels.TestTask.Running || !strings.Contains(st.Channels.TestMsg, "未保存") {
-		t.Fatalf("test should be blocked: running=%v msg=%q", st.Channels.TestTask.Running, st.Channels.TestMsg)
+	if st.Channels.TestTask.IsRunning() || !strings.Contains(st.Channels.TestMsg, "未保存") {
+		t.Fatalf("test should be blocked: running=%v msg=%q", st.Channels.TestTask.IsRunning(), st.Channels.TestMsg)
 	}
 	fetchModels(st)
-	if st.Channels.FetchTask.Running || !strings.Contains(st.Channels.TestMsg, "未保存") {
-		t.Fatalf("fetch should be blocked: running=%v msg=%q", st.Channels.FetchTask.Running, st.Channels.TestMsg)
+	if st.Channels.FetchTask.IsRunning() || !strings.Contains(st.Channels.TestMsg, "未保存") {
+		t.Fatalf("fetch should be blocked: running=%v msg=%q", st.Channels.FetchTask.IsRunning(), st.Channels.TestMsg)
 	}
 }
 

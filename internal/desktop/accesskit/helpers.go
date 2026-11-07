@@ -190,7 +190,7 @@ func ModelSummary(app, settingsJSON, fallback string) string {
 // `codex debug models` 或写多个文件，不能占用渲染帧。应用中的行显示
 // BusyRow，其余行的应用按钮禁用；完成后回主线程写 Access.Msg。
 func ApplyAsync(st *state.State, acc bridge.AccessConfigs, v bridge.AccessConfigView) {
-	if st.Access.ApplyTask.Running {
+	if st.Access.ApplyTask.IsRunning() {
 		return
 	}
 	if st.Access.App == "claude" && st.ClaudeCfg.Dirty {

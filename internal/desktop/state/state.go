@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 
 	"AgentSwitch/internal/bridge"
 	"AgentSwitch/internal/claudecfg"
@@ -358,16 +359,64 @@ type SettingsState struct {
 // Async 是一次后台任务的状态。字段只在 UI 主线程读写：任务在 goroutine
 // 执行，完成经 State.Dispatch 回到主线程更新。
 type Async struct {
-	Running bool
-	Label   string // 进行中文案（如「正在拉取模型…」）
-	Err     string // 失败信息；取消不算失败
+	mu      sync.Mutex
+	running bool
+	label   string // 进行中文案（如「正在拉取模型…」）
+	errMsg  string // 失败信息；取消不算失败
 	cancel  context.CancelFunc
+}
+
+// IsRunning 报告任务是否进行中（跨线程安全：完成回调可能在异步 goroutine
+// 写状态，UI/测试在主线程读——2026-11-07 ubuntu -race 暴露）。
+func (a *Async) IsRunning() bool {
+	if a == nil {
+		return false
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.running
+}
+
+// BusyLabel 返回进行中文案（BusyRow 显示用）。
+func (a *Async) BusyLabel() string {
+	if a == nil {
+		return ""
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.label
+}
+
+// ErrText 返回失败信息（取消不算失败；用于结果条/错误提示）。
+func (a *Async) ErrText() string {
+	if a == nil {
+		return ""
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.errMsg
+}
+
+// State 返回任务的一致快照（进行中标志/文案/失败信息）。
+func (a *Async) State() (running bool, label, errMsg string) {
+	if a == nil {
+		return false, "", ""
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.running, a.label, a.errMsg
 }
 
 // Cancel 请求取消当前任务（按住确认/点击取消时调用）。
 func (a *Async) Cancel() {
-	if a != nil && a.cancel != nil {
-		a.cancel()
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	cancel := a.cancel
+	a.mu.Unlock()
+	if cancel != nil {
+		cancel()
 	}
 }
 
@@ -375,20 +424,24 @@ func (a *Async) Cancel() {
 // 错误；完成后经 Dispatch 回主线程更新 Async 并调用 done。已在运行时不
 // 重复启动。泛型 T 让拉取结果（[]string）与测试结果（文案）都能直接带出。
 func RunAsync[T any](s *State, a *Async, label string, work func(context.Context) (T, error), done func(T, error)) {
-	if s == nil || a == nil || a.Running {
+	if s == nil || a == nil || a.IsRunning() {
 		return
 	}
-	a.Running, a.Label, a.Err = true, label, ""
 	ctx, cancel := context.WithCancel(context.Background())
+	a.mu.Lock()
+	a.running, a.label, a.errMsg = true, label, ""
 	a.cancel = cancel
+	a.mu.Unlock()
 	go func() {
 		result, err := work(ctx)
 		finish := func() {
-			a.Running = false
+			a.mu.Lock()
+			a.running = false
 			a.cancel = nil
 			if err != nil && !errors.Is(err, context.Canceled) {
-				a.Err = err.Error()
+				a.errMsg = err.Error()
 			}
+			a.mu.Unlock()
 			if done != nil {
 				done(result, err)
 			}

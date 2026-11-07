@@ -42,8 +42,9 @@ func TestApplyAsyncCompletes(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("apply did not finish")
 	}
-	if st.Access.ApplyTask.Running || st.Access.ApplyID != "" {
-		t.Fatalf("task state not cleared: %+v id=%q", st.Access.ApplyTask, st.Access.ApplyID)
+	if st.Access.ApplyTask.IsRunning() || st.Access.ApplyID != "" {
+		run, label, errMsg := st.Access.ApplyTask.State()
+		t.Fatalf("task state not cleared: run=%v label=%q err=%q id=%q", run, label, errMsg, st.Access.ApplyID)
 	}
 	if !strings.Contains(st.Access.Msg, "已应用") {
 		t.Fatalf("msg = %q", st.Access.Msg)

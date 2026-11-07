@@ -425,9 +425,9 @@ func claudeSummaryCard(c *ui.Context, st *state.State, acc bridge.AccessConfigs,
 							label = "重新应用"
 						}
 						switch {
-						case st.Access.ApplyTask.Running && st.Access.ApplyID == cur.ID:
-							uikit.BusyRow(c, t, st.Access.ApplyTask.Label, nil)
-						case st.Access.ApplyTask.Running:
+						case st.Access.ApplyTask.IsRunning() && st.Access.ApplyID == cur.ID:
+							uikit.BusyRow(c, t, st.Access.ApplyTask.BusyLabel(), nil)
+						case st.Access.ApplyTask.IsRunning():
 							uikit.SoftButton(c, t, s, "gray", label).Disabled(true)
 						default:
 							if uikit.SoftButton(c, t, s, "act", label).Clicked() {
@@ -516,9 +516,10 @@ func configRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State,
 					label = "重新应用"
 				}
 				switch {
-				case st.Access.ApplyTask.Running && st.Access.ApplyID == v.ID:
-					uikit.BusyRow(c, t, st.Access.ApplyTask.Label, nil)
-				case st.Access.ApplyTask.Running:
+				case st.Access.ApplyTask.IsRunning() && st.Access.ApplyID == v.ID:
+					_, busyLabel, _ := st.Access.ApplyTask.State()
+					uikit.BusyRow(c, t, busyLabel, nil)
+				case st.Access.ApplyTask.IsRunning():
 					uikit.SoftButton(c, t, s, "gray", label).Disabled(true)
 				default:
 					if uikit.SoftButton(c, t, s, "act", label).Clicked() {

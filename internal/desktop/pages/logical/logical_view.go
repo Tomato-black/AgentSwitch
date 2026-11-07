@@ -88,9 +88,10 @@ func listView(c *ui.Context, st *state.State) {
 								uikit.SoftBadge(c, t, s, "warn", "冷却中")
 							}
 							switch {
-							case st.Logical.TestTask.Running && st.Logical.TestModelID == model.ID:
-								uikit.BusyRow(c, t, st.Logical.TestTask.Label, nil)
-							case st.Logical.TestTask.Running:
+							case st.Logical.TestTask.IsRunning() && st.Logical.TestModelID == model.ID:
+								_, busyLabel, _ := st.Logical.TestTask.State()
+								uikit.BusyRow(c, t, busyLabel, nil)
+							case st.Logical.TestTask.IsRunning():
 								uikit.SoftButton(c, t, s, "gray", "测试模型").Disabled(true)
 							default:
 								if uikit.SoftButton(c, t, s, "gray", "测试模型").Clicked() {

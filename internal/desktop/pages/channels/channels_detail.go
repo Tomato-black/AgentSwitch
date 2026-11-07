@@ -79,8 +79,8 @@ func detailView(c *ui.Context, st *state.State) {
 				ui.Column(c).Gap(12).Children(func() {
 					ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 						ui.Text(c, "建议模型").Bold().Grow(1)
-						if st.Channels.FetchTask.Running {
-							uikit.BusyRow(c, t, st.Channels.FetchTask.Label, st.Channels.FetchTask.Cancel)
+						if st.Channels.FetchTask.IsRunning() {
+							uikit.BusyRow(c, t, st.Channels.FetchTask.BusyLabel(), st.Channels.FetchTask.Cancel)
 						} else {
 							btn := uikit.SoftButton(c, t, s, "act", "拉取模型")
 							if dirty {
@@ -99,8 +99,8 @@ func detailView(c *ui.Context, st *state.State) {
 				if uikit.PillButton(c, t, "保存").Clicked() {
 					saveDetail(st)
 				}
-				if st.Channels.TestTask.Running {
-					uikit.BusyRow(c, t, st.Channels.TestTask.Label, st.Channels.TestTask.Cancel)
+				if st.Channels.TestTask.IsRunning() {
+					uikit.BusyRow(c, t, st.Channels.TestTask.BusyLabel(), st.Channels.TestTask.Cancel)
 				} else {
 					btn := uikit.SoftButton(c, t, s, "act", "测试连通")
 					if dirty {
@@ -109,8 +109,8 @@ func detailView(c *ui.Context, st *state.State) {
 						testDetail(st)
 					}
 				}
-				if st.Channels.BalanceTask.Running {
-					uikit.BusyRow(c, t, st.Channels.BalanceTask.Label, st.Channels.BalanceTask.Cancel)
+				if st.Channels.BalanceTask.IsRunning() {
+					uikit.BusyRow(c, t, st.Channels.BalanceTask.BusyLabel(), st.Channels.BalanceTask.Cancel)
 				} else if balanceBtn := uikit.SoftButton(c, t, s, "gray", "查余额"); balanceBtn.Clicked() {
 					state.RunAsync(st, &st.Channels.BalanceTask, "正在查询余额…",
 						func(ctx context.Context) (bridge.BalanceResult, error) {

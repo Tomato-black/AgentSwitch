@@ -417,7 +417,9 @@ func TestRestoreClaudeConfigBackupValidatesMetaTarget(t *testing.T) {
 
 func TestSaveClaudeConfigConcurrent(t *testing.T) {
 	home := t.TempDir()
-	writeClaudeSettings(t, home, `{"model":"v0"}`)
+	// 初值与任何 goroutine 的目标值不同（v0 曾与 goroutine 0 的写值撞车，
+	// 触发「没有需要保存的修改」而非预期的 成功/冲突 二分——ubuntu -race 暴露）。
+	writeClaudeSettings(t, home, `{"model":"base"}`)
 	cfgs := ClaudeConfigs{A: tempApp(t), Home: home}
 	req := ReadLayerRequest{Kind: claudecfg.ScopeUser}
 	var wg sync.WaitGroup

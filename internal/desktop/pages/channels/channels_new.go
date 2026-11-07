@@ -83,8 +83,9 @@ func newView(c *ui.Context, st *state.State) {
 				ui.Column(c).Gap(12).Children(func() {
 					ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 						ui.Text(c, "建议模型").Bold().Grow(1)
-						if st.Channels.FetchTask.Running {
-							uikit.BusyRow(c, t, st.Channels.FetchTask.Label, st.Channels.FetchTask.Cancel)
+						if st.Channels.FetchTask.IsRunning() {
+							_, busyLabel, _ := st.Channels.FetchTask.State()
+							uikit.BusyRow(c, t, busyLabel, st.Channels.FetchTask.Cancel)
 						} else if uikit.SoftButton(c, t, s, "act", "拉取模型").Clicked() {
 							fetchModelsDraft(st)
 						}
