@@ -121,24 +121,15 @@ func TestFormInheritedKeyShowsSourceAndOverrideDoesNotCopy(t *testing.T) {
 		"effortLevel": {Path: "effortLevel", Value: "high", Source: corecfg.ScopeManaged},
 	}
 	tt := renderForm(st, 1200, 4000)
-	if !tt.HasText("继承自下层") || !tt.HasText("来源：企业托管") {
+	if !tt.HasText("下层：high（来源：企业托管）") {
 		t.Fatalf("inherited source missing: %v", tt.Texts())
 	}
-	if !tt.HasText("high") {
-		t.Fatalf("inherited value missing: %v", tt.Texts())
-	}
-	if err := tt.Click("覆盖"); err != nil {
-		t.Fatalf("click override: %v", err)
-	}
-	tt.Frame()
+	// 直接可编辑：缺键不写入继承值（控件空/继承态起步）。
 	if v, ok := cf.Doc["effortLevel"]; ok {
-		t.Fatalf("override must not write inherited value, got %v", v)
+		t.Fatalf("缺键不得抄入继承值, got %v", v)
 	}
 	if cf.Dirty {
-		t.Fatal("override alone must not dirty the document")
-	}
-	if !cf.Overrides["effortLevel"] {
-		t.Fatalf("override marker missing: %v", cf.Overrides)
+		t.Fatal("无编辑不得变脏")
 	}
 }
 
@@ -432,25 +423,32 @@ func TestEnvGroupColumnHeaders(t *testing.T) {
 	}
 }
 
-// TestInheritedRowsShowFieldLabels（2026-11-07 用户实测：无法修改权限）：缺键
-// 的「继承自下层」行必须渲染字段标签——此前该行无标签，权限卡四行规则长得
-// 一模一样，用户无从识别与修改。
-func TestInheritedRowsShowFieldLabels(t *testing.T) {
+// TestInheritedFieldsDirectlyEditable（2026-11-07 用户实测：无法设置权限）：
+// 缺键字段直接渲染编辑控件（无「覆盖」按钮门槛）——标签 + 控件在树中，
+// 下层有值时显示「下层：」提示行。
+func TestInheritedFieldsDirectlyEditable(t *testing.T) {
 	st := formTestState(t)
+	ensureFormState(&st.ClaudeCfg)
+	st.ClaudeCfg.MergeEntries = map[string]corecfg.MergedEntry{
+		"permissions.ask": {Path: "permissions.ask", Value: []any{"Write"}, Source: corecfg.ScopeUser},
+	}
 	tt := ui.NewTester(func(c *ui.Context) {
 		permissionGroup(c, c.Theme(), uikit.Softs(c.Theme()), &st.ClaudeCfg)
-	}, 1000, 600)
-	for _, want := range []string{"默认模式", "允许规则", "询问规则", "拒绝规则", "附加目录"} {
+	}, 1000, 800)
+	for _, want := range []string{"默认模式", "允许规则", "询问规则", "拒绝规则", "附加目录", "下层：", "添加"} {
 		if !tt.HasText(want) {
-			t.Fatalf("缺键继承行缺标签 %q: %v", want, tt.Texts())
+			t.Fatalf("missing %q: %v", want, tt.Texts())
 		}
 	}
-	// 状态栏组同样（statusLineGroup 的继承行带「状态栏」标签）。
+	if tt.HasText("覆盖") {
+		t.Fatalf("不应再有覆盖按钮: %v", tt.Texts())
+	}
+	// 状态栏组同样直接渲染。
 	tt = ui.NewTester(func(c *ui.Context) {
 		statusLineGroup(c, c.Theme(), uikit.Softs(c.Theme()), &st.ClaudeCfg)
 	}, 1000, 600)
-	if !tt.HasText("状态栏") {
-		t.Fatalf("缺键继承行缺标签 %q: %v", "状态栏", tt.Texts())
+	if !tt.HasText("状态栏") || tt.HasText("覆盖") {
+		t.Fatalf("状态栏应直接渲染: %v", tt.Texts())
 	}
 }
 
@@ -458,7 +456,7 @@ func TestInheritedRowsShowFieldLabels(t *testing.T) {
 // 修改——继承行带标签可定位 → 点行尾「覆盖」→ 输入规则 → 「添加」落文档。
 func TestPermissionRuleAddViaUI(t *testing.T) {
 	st := formTestState(t)
-	ensureFormState(&st.ClaudeCfg) // 直渲 group 绕过 FormSection，需自备 Overrides 等
+	ensureFormState(&st.ClaudeCfg)
 	tt := ui.NewTester(func(c *ui.Context) {
 		permissionGroup(c, c.Theme(), uikit.Softs(c.Theme()), &st.ClaudeCfg)
 	}, 1000, 800)

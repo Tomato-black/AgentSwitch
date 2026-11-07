@@ -388,17 +388,12 @@ func statusLineGroup(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.
 			})
 			return
 		}
-		if _, ok := corecfg.Get(cf.Doc, path); !ok && !cf.Overrides[path] {
-			if inheritedRow(c, t, s, cf, path, "状态栏") {
-				// 「覆盖」后本帧继续渲染空白控件。
-			} else {
-				return
-			}
-		}
+		_ = path // statusLine 缺键直接渲染空控件（下方继承提示）
 		statusLineInput(c, t, cf, "type", "类型", "command / static")
 		statusLineInput(c, t, cf, "command", "命令", "例如 ~/.claude/statusline.sh")
 		statusLineInput(c, t, cf, "text", "静态文本", "type=static 时显示")
 		statusLineInput(c, t, cf, "padding", "内边距", "整数，例如 0")
+		inheritHint(c, t, cf, "statusLine")
 	})
 }
 
@@ -584,11 +579,6 @@ func stringField(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.Clau
 		})
 		return
 	}
-	if _, ok := corecfg.Get(cf.Doc, path); !ok && !cf.Overrides[path] {
-		if !inheritedRow(c, t, s, cf, path, label) {
-			return
-		}
-	}
 	cur := stringAt(cf.Doc, path)
 	uikit.FormRow(c, t, label, func() ui.Element {
 		in := ui.TextInput(c, &cur).Placeholder(placeholder)
@@ -598,6 +588,7 @@ func stringField(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.Clau
 		}
 		return in
 	})
+	inheritHint(c, t, cf, path)
 }
 
 // bool 三态分段的段序（继承 / 开启 / 关闭）。
@@ -670,11 +661,6 @@ func enumField(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.Claude
 		})
 		return
 	}
-	if _, ok := corecfg.Get(cf.Doc, path); !ok && !cf.Overrides[path] {
-		if !inheritedRow(c, t, s, cf, path, label) {
-			return
-		}
-	}
 	cur := stringAt(cf.Doc, path)
 	if cur == "" {
 		cur = inheritLabel
@@ -694,6 +680,7 @@ func enumField(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.Claude
 		}
 		RecomputeDirty(cf)
 	}
+	inheritHint(c, t, cf, path)
 }
 
 // orderedChipPaths 是顺序有语义的列表键（fallbackModel 按序尝试），chip 带
@@ -708,11 +695,6 @@ func listField(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.Claude
 			ui.Text(c, reason).FontSize(t.FontSize - 2).TextColor(t.TextMuted)
 		})
 		return
-	}
-	if _, ok := corecfg.Get(cf.Doc, path); !ok && !cf.Overrides[path] {
-		if !inheritedRow(c, t, s, cf, path, label) {
-			return
-		}
 	}
 	items := listItems(cf.Doc, path)
 	uikit.FormRowRaw(c, t, label, func() {
@@ -741,6 +723,7 @@ func listField(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.Claude
 			})
 		})
 	})
+	inheritHint(c, t, cf, path)
 }
 
 // chip 渲染一枚列表项：可选 ↑（顺序键）+ mono 文本 + ×。
@@ -842,14 +825,6 @@ func intField(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.ClaudeC
 		})
 		return
 	}
-	if _, ok := corecfg.Get(cf.Doc, path); !ok && !cf.Overrides[path] {
-		if !inheritedRow(c, t, s, cf, path, label) {
-			if hint != "" {
-				ui.Text(c, hint).FontSize(t.FontSize - 2).TextColor(t.TextMuted)
-			}
-			return
-		}
-	}
 	cur := intText(cf.Doc, path)
 	uikit.FormRow(c, t, label, func() ui.Element {
 		in := ui.TextInput(c, &cur).Placeholder(hint)
@@ -858,28 +833,18 @@ func intField(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.ClaudeC
 		}
 		return in
 	})
+	inheritHint(c, t, cf, path)
 }
 
-// inheritedRow 渲染缺键的「继承自下层」行：带字段标签（FormRowRaw 对齐，
-// 2026-11-07 用户实测——此前无标签，权限卡四行规则不可识别、无从修改），
-// 显示继承值/来源与「覆盖」按钮。
-func inheritedRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.ClaudeCfgState, path, label string) bool {
+// inheritHint 在编辑控件下方渲染继承信息（只读提示，2026-11-07 用户实测：
+// 去掉「覆盖」门槛后，继承值降为提示行——不写进当前层）。
+func inheritHint(c *ui.Context, t *ui.Theme, cf *state.ClaudeCfgState, path string) {
 	entry, ok := cf.MergeEntries[path]
-	uikit.FormRowRaw(c, t, label, func() {
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			if ok {
-				ui.Text(c, "继承自下层").TextColor(t.TextMuted)
-				ui.Text(c, "来源："+sourceLabel(entry.Source)).FontSize(t.FontSize - 2).TextColor(t.TextMuted)
-				ui.Text(c, displayValue(path, entry.Value)).Font(uikit.MonoFont).Grow(1)
-			} else {
-				ui.Text(c, "当前层未设置").TextColor(t.TextMuted).Grow(1)
-			}
-			if uikit.SoftButton(c, t, s, "gray", "覆盖").Clicked() {
-				cf.Overrides[path] = true
-			}
-		})
-	})
-	return cf.Overrides[path]
+	if !ok {
+		return
+	}
+	ui.Text(c, "下层："+displayValue(path, entry.Value)+"（来源："+sourceLabel(entry.Source)+"）").
+		FontSize(t.FontSize - 2).TextColor(t.TextMuted)
 }
 
 func effectiveText(cf *state.ClaudeCfgState, path string) string {
