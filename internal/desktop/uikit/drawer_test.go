@@ -45,3 +45,28 @@ func TestDrawerCloseButtonFlipsOpen(t *testing.T) {
 		t.Fatal("close button must flip *open to false")
 	}
 }
+
+// TestDrawerEscAndMaskClose（终审 Important#4 钉住）：Esc 与遮罩点击都关闭
+// 抽屉，且只翻 open 位、不动调用方状态。
+func TestDrawerEscAndMaskClose(t *testing.T) {
+	open := true
+	tt := ui.NewTester(func(c *ui.Context) {
+		Drawer(c, c.Theme(), &open, "接入配置", "写入受管键", func() { ui.Text(c, "抽屉正文") })
+	}, 1000, 1600)
+	tt.Key(0, ui.KeyEscape)
+	tt.Frame()
+	if open {
+		t.Fatal("Escape must close the drawer")
+	}
+
+	open = true
+	tt = ui.NewTester(func(c *ui.Context) {
+		Drawer(c, c.Theme(), &open, "接入配置", "写入受管键", func() { ui.Text(c, "抽屉正文") })
+	}, 1000, 1600)
+	// 抽屉面板宽 560 贴右缘（x≈440 起）；左侧点遮罩。
+	tt.ClickAt(50, 800)
+	tt.Frame()
+	if open {
+		t.Fatal("mask click must close the drawer")
+	}
+}

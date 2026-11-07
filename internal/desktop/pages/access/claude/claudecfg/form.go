@@ -628,15 +628,15 @@ func boolField(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.Claude
 		return sel
 	})
 	if changed {
+		// 写路径走 setBoolChoice（终审 Important#5：测试与生产不得各走一份）。
 		switch choice {
 		case 1:
-			corecfg.Set(cf.Doc, path, true)
+			setBoolChoice(cf, path, true)
 		case 2:
-			corecfg.Set(cf.Doc, path, false)
+			setBoolChoice(cf, path, false)
 		default:
-			corecfg.Delete(cf.Doc, path)
+			setBoolChoice(cf, path, nil)
 		}
-		RecomputeDirty(cf)
 	}
 	if entry, ok := cf.MergeEntries[path]; ok {
 		b, _ := entry.Value.(bool)

@@ -54,8 +54,9 @@ func drawerSelect(st *state.State, acc bridge.AccessConfigs, hooks DrawerHooks, 
 	applyDrawerSwitch(st, hooks, target)
 }
 
-// confirmDrawerSwitch 是 dirty 切换确认后的执行入口；也用于直接执行。
-func confirmDrawerSwitch(st *state.State, hooks DrawerHooks) {
+// ConfirmDrawerSwitch 是 dirty 切换确认后的执行入口（宿主在抽屉开/关两态
+// 都可调用）：执行 DrawerSwitchID 挂起的切换并清武装。
+func ConfirmDrawerSwitch(st *state.State, hooks DrawerHooks) {
 	target := st.Access.DrawerSwitchID
 	st.Access.DrawerSwitchArm = false
 	st.Access.DrawerSwitchID = ""
@@ -215,16 +216,6 @@ func DrawerCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State
 			}
 		})
 
-		// dirty 草稿切换/新建的确认框（取消默认聚焦）。
-		if st.Access.DrawerSwitchArm {
-			uikit.ConfirmDialog(c, t, uikit.ConfirmOpts{
-				Open:    &st.Access.DrawerSwitchArm,
-				Title:   "放弃未保存的接入修改？",
-				Message: "抽屉里的名称/模型/角色映射修改尚未保存，切换配置将丢弃这些修改。",
-				CancelLabel: "取消", ConfirmLabel: "放弃并切换", Danger: true,
-				OnConfirm: func() { confirmDrawerSwitch(st, hooks) },
-			})
-		}
 	})
 }
 

@@ -154,7 +154,7 @@ func TestDrawerSelectSwitch(t *testing.T) {
 	if switched != "" {
 		t.Fatal("dirty switch must not switch before confirm")
 	}
-	confirmDrawerSwitch(st, hooks)
+	ConfirmDrawerSwitch(st, hooks)
 	if st.Access.DrawerSwitchArm {
 		t.Fatal("confirm must disarm")
 	}
@@ -168,7 +168,7 @@ func TestDrawerSelectSwitch(t *testing.T) {
 	if !st.Access.DrawerSwitchArm || newDraft {
 		t.Fatal("dirty new-draft must arm confirm and not switch")
 	}
-	confirmDrawerSwitch(st, hooks2)
+	ConfirmDrawerSwitch(st, hooks2)
 	if !newDraft {
 		t.Fatal("confirm must apply the new-draft switch")
 	}

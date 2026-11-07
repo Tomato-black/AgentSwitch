@@ -131,8 +131,11 @@ func (s ClaudeConfigs) ManagedSetForClaude() (claudecfg.ManagedSet, error) {
 	}
 	docs := make([]map[string]any, 0, len(configs))
 	env := map[string]string{}
-	if raw, err := s.A.Store().Settings().Get("access.global.claude"); err == nil && raw != "" {
-		_ = json.Unmarshal([]byte(raw), &env)
+	// claude 全局配置已下线（2026-11-07）：globalEnv 恒空，残留键不进受管集合。
+	if g, err := globalEnv(s.A, "claude"); err == nil {
+		for k, v := range g {
+			env[k] = v
+		}
 	}
 	for _, c := range configs {
 		var doc map[string]any

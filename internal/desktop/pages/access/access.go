@@ -275,6 +275,8 @@ func Page(c *ui.Context, st *state.State) {
 				deleteConfirm(c, st, acc)
 				// 还原备份确认（覆盖 live 文件前先备份当前状态，可再次恢复）
 				restoreConfirm(c, st, acc)
+				// 抽屉配置切换/新建确认（草稿保护，抽屉开/关两态都可达）
+				drawerSwitchConfirm(c, st, acc)
 			})
 		})
 	})
@@ -295,20 +297,50 @@ func Page(c *ui.Context, st *state.State) {
 	}
 }
 
+// openAccessEditor 打开 Claude 接入抽屉的编辑目标（终审 Important#3）：
+// 同目标的保留草稿直接恢复不清表单；不同目标（含新建草稿）有未保存修改时
+// 武装切换确认（确认框在 Page 层渲染，抽屉关闭态也可达），确认后才切换。
+func openAccessEditor(st *state.State, acc bridge.AccessConfigs, id string) {
+	if st.Access.Form.Dirty("claude") {
+		if st.Access.Form.EditID == id {
+			st.Access.Form.Open = true
+			return
+		}
+		st.Access.DrawerSwitchArm = true
+		st.Access.DrawerSwitchID = id
+		return
+	}
+	st.Access.Form = state.AccessForm{Open: true, EditID: id}
+	preloadForm(st, acc)
+}
+
 // claudeOpenAccess 注入设置区受管键行的「打开接入」回调：打开当前应用配置
 // 的抽屉（无已应用配置时打开新建草稿）。
 func claudeOpenAccess(st *state.State, acc bridge.AccessConfigs) {
 	st.ClaudeCfg.OpenAccess = func() {
 		for _, v := range acc.List("claude") {
 			if v.IsCurrent {
-				st.Access.Form = state.AccessForm{Open: true, EditID: v.ID}
-				preloadForm(st, acc)
+				openAccessEditor(st, acc, v.ID)
 				return
 			}
 		}
-		st.Access.Form = state.AccessForm{Open: true}
-		preloadForm(st, acc)
+		openAccessEditor(st, acc, "")
 	}
+}
+
+// drawerSwitchConfirm 是抽屉配置切换/新建的确认框（抽屉开/关两态都渲染；
+// 取消默认聚焦）。confirmDrawerSwitch 的目标由 DrawerSwitchID 挂起。
+func drawerSwitchConfirm(c *ui.Context, st *state.State, acc bridge.AccessConfigs) {
+	if !st.Access.DrawerSwitchArm {
+		return
+	}
+	uikit.ConfirmDialog(c, c.Theme(), uikit.ConfirmOpts{
+		Open:    &st.Access.DrawerSwitchArm,
+		Title:   "放弃未保存的接入修改？",
+		Message: "名称/模型/角色映射修改尚未保存，切换配置将丢弃这些修改。",
+		CancelLabel: "取消", ConfirmLabel: "放弃并切换", Danger: true,
+		OnConfirm: func() { claude.ConfirmDrawerSwitch(st, claudeDrawerHooks(st, acc)) },
+	})
 }
 
 // claudeDrawerHooks 返回抽屉的配置切换/新建回调：重置表单为编辑（或新建）
@@ -460,8 +492,7 @@ func claudeSummaryCard(c *ui.Context, st *state.State, acc bridge.AccessConfigs,
 				ui.Box(c).Grow(1)
 				if cur != nil {
 					if uikit.SoftButton(c, t, s, "gray", "编辑接入").Clicked() {
-						st.Access.Form = state.AccessForm{Open: true, EditID: cur.ID}
-						preloadForm(st, acc)
+						openAccessEditor(st, acc, cur.ID)
 					}
 					if gateOK {
 						label := "应用接入"
@@ -511,6 +542,9 @@ func claudeSummaryCard(c *ui.Context, st *state.State, acc bridge.AccessConfigs,
 			if !gateOK {
 				ui.Text(c, "网关不可用：先启动网关再应用接入").TextColor(t.TextMuted)
 			}
+			// 接入操作反馈（应用失败/阻断提示/删除与还原结果）唯一渲染位：
+			// 列表卡移除后由摘要卡承接，否则主操作失败毫无解释（终审 Critical#1）。
+			uikit.Feedback(c, t, uikit.InferFeedback(st.Access.Msg), st.Access.Msg)
 		})
 	})
 }

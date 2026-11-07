@@ -1961,3 +1961,54 @@ func TestListBackupsAndRestoreSelected(t *testing.T) {
 		t.Fatalf("restored live = %s", b)
 	}
 }
+
+// TestGlobalConfigClaudeRetiredComposePaths 回归（终审 Critical#2）：残留
+// access.global.claude 不得绕过 GlobalConfig 混入合成——PreviewClaudeLive、
+// Apply 的 live/派生文件与受管集合计算都必须剔除。
+func TestGlobalConfigClaudeRetiredComposePaths(t *testing.T) {
+	a := tempApp(t)
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "m", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Store().Settings().Set("access.global.claude", `{"HTTPS_PROXY":"http://p:1"}`); err != nil {
+		t.Fatal(err)
+	}
+	// PreviewClaudeLive 不含残留全局值。
+	raw, err := acc.PreviewClaudeLive("lm1", `{"env":{"CUSTOM":"x"}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(raw, "HTTPS_PROXY") {
+		t.Fatalf("PreviewClaudeLive 混入残留全局值: %s", raw)
+	}
+	// Apply 写入的 live 与派生持久文件不含残留全局值。
+	v, err := acc.Create("claude", "工作", "lm1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := acc.Apply(v.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := acc.LaunchCommand(v.ID); err != nil {
+		t.Fatal(err)
+	}
+	live, _ := os.ReadFile(filepath.Join(acc.Home, ".claude", "settings.json"))
+	if strings.Contains(string(live), "HTTPS_PROXY") {
+		t.Fatalf("live 混入残留全局值: %s", live)
+	}
+	persist, _ := os.ReadFile(filepath.Join(acc.Home, ".agentswitch", "access", "claude", v.ID+".json"))
+	if strings.Contains(string(persist), "HTTPS_PROXY") {
+		t.Fatalf("派生文件混入残留全局值: %s", persist)
+	}
+	// 受管集合计算不受残留键影响。
+	ms, err := (ClaudeConfigs{A: a, Home: acc.Home}).ManagedSetForClaude()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range ms.WeakEnv {
+		if k == "env.HTTPS_PROXY" {
+			t.Fatalf("受管集合仍含残留全局键: %v", ms.WeakEnv)
+		}
+	}
+}

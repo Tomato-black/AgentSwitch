@@ -11,6 +11,7 @@ import (
 
 	"AgentSwitch/internal/bridge"
 	"AgentSwitch/internal/desktop/accesskit"
+	"AgentSwitch/internal/desktop/pages/access/claude"
 	"AgentSwitch/internal/desktop/state"
 	"AgentSwitch/internal/desktop/uitest"
 	"AgentSwitch/internal/storage"
@@ -524,5 +525,67 @@ func TestClaudeTabDropsConfigListCard(t *testing.T) {
 	tt = ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
 	if !tt.HasText("实际配置") || !tt.HasText("＋ 新建配置") {
 		t.Fatalf("codex 页签应保留列表卡: %v", tt.Texts())
+	}
+}
+
+// TestClaudeTabShowsAccessMessages（终审 Critical#1）：claude 页签必须渲染
+// st.Access.Msg——应用失败/应用阻断提示/删除与还原结果此前随列表卡移除而
+// 丢失，主操作失败时用户得不到任何解释。
+func TestClaudeTabShowsAccessMessages(t *testing.T) {
+	st, a := uitest.New(t)
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	st.Page = "access"
+	st.Access.App = "claude"
+	st.Access.Msg = "应用失败：示例错误"
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
+	if !tt.HasText("应用失败：示例错误") {
+		t.Fatalf("st.Access.Msg 在 claude 页签不可见: %v", tt.Texts())
+	}
+}
+
+// TestReenterKeepsDraft（终审 Important#3）：草稿保留后点「编辑接入」/「打开
+// 接入」不得静默丢弃草稿——同目标直接恢复草稿；不同目标武装切换确认，
+// 确认后才切换并加载。
+func TestReenterKeepsDraft(t *testing.T) {
+	st, a := uitest.New(t)
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	st.Access.App = "claude"
+	acc := configs(st)
+	v1, err := acc.Create("claude", "工作", "lm1", "{}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v2, err := acc.Create("claude", "备用", "lm1", "{}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 草稿：编辑 v1 有未保存修改，抽屉已关闭（Draft 置位）。
+	st.Access.Form = state.AccessForm{Open: false, Draft: true, EditID: v1.ID, Name: "工作改名"}
+	st.Access.Form.Baseline = st.Access.Form.Signature("claude") + "-old"
+
+	// 同目标：恢复草稿，不清表单。
+	openAccessEditor(st, acc, v1.ID)
+	if !st.Access.Form.Open || st.Access.Form.Name != "工作改名" {
+		t.Fatalf("同目标重进必须恢复草稿: %+v", st.Access.Form)
+	}
+
+	// 不同目标：武装切换确认，确认前不清草稿。
+	st.Access.Form.Open = false
+	openAccessEditor(st, acc, v2.ID)
+	if !st.Access.DrawerSwitchArm || st.Access.DrawerSwitchID != v2.ID {
+		t.Fatalf("不同目标必须武装切换确认: arm=%v id=%q", st.Access.DrawerSwitchArm, st.Access.DrawerSwitchID)
+	}
+	if st.Access.Form.Name != "工作改名" {
+		t.Fatal("确认前不得清草稿")
+	}
+
+	// 确认后切换并加载目标配置。
+	claude.ConfirmDrawerSwitch(st, claudeDrawerHooks(st, acc))
+	if st.Access.DrawerSwitchArm || st.Access.Form.EditID != v2.ID || st.Access.Form.Name != "备用" {
+		t.Fatalf("确认后应切换并加载目标: %+v", st.Access.Form)
 	}
 }

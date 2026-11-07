@@ -125,13 +125,9 @@ func (s AccessConfigs) PreviewClaudeLive(logicalModelID, settingsJSON string) (s
 	if err != nil {
 		return "", err
 	}
-	global := map[string]string{}
-	if rawGlobal, err := s.A.Store().Settings().Get("access.global.claude"); err != nil {
+	global, err := globalEnv(s.A, "claude") // claude 恒空（全局配置下线，2026-11-07）
+	if err != nil {
 		return "", err
-	} else if rawGlobal != "" {
-		if err := json.Unmarshal([]byte(rawGlobal), &global); err != nil {
-			return "", err
-		}
 	}
 	env, err := composeAccessEnv("claude", Gateway{A: s.A}.Status(), lm.Name, global, docEnv)
 	if err != nil {

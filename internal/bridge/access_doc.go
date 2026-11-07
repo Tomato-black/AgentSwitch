@@ -28,15 +28,9 @@ func (s AccessConfigs) composeFor(c storage.AccessConfig) (map[string]string, ma
 		}
 		return nil, nil, "", err
 	}
-	raw, err := s.A.Store().Settings().Get("access.global." + c.AppType)
+	global, err := globalEnv(s.A, c.AppType) // claude 恒空（全局配置下线，2026-11-07）
 	if err != nil {
 		return nil, nil, "", err
-	}
-	var global map[string]string
-	if raw != "" { // Settings Get 缺失返回 ("", nil) → 视为无全局配置
-		if err := json.Unmarshal([]byte(raw), &global); err != nil {
-			return nil, nil, "", err
-		}
 	}
 	doc, docEnv, err := parseAccessDoc(c.AppType, c.Settings)
 	if err != nil {
