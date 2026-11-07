@@ -44,10 +44,11 @@ func keepTray(t *mygo.Tray) { appTray = t }
 type uiState struct {
 	*state.State
 	alerts *alertState
+	Zoom   int // 缩放档位下标（zoom.go；随窗口会话，不持久化）
 }
 
 func newUIState(svc state.Services) *uiState {
-	u := &uiState{State: state.New(svc), alerts: newAlertState()}
+	u := &uiState{State: state.New(svc), alerts: newAlertState(), Zoom: zoomOne}
 	u.Schedule = afterEvent
 	return u
 }
@@ -64,6 +65,17 @@ func newUIState(svc state.Services) *uiState {
 // cc-switch 的中性灰选中冲突（spec §3.4），自绘列底色用 sidebarColor。
 func (u *uiState) view(c *ui.Context) {
 	c.SetTheme(uikit.BuildTheme(c.Theme().Dark, c.Preferences().TextScale))
+	// 全局浏览器式缩放（mygo v0.7.0）：Cmd/Ctrl +=/-/0（Shift+= 即 +）；
+	// 文字/矢量按缩放档位清晰重绘。每帧重设（档位是唯一状态）。
+	switch {
+	case c.Shortcut(ui.Cmd, ui.KeyEqual) || c.Shortcut(ui.Cmd|ui.Shift, ui.KeyEqual):
+		u.Zoom = zoomStep(u.Zoom, 1)
+	case c.Shortcut(ui.Cmd, ui.KeyMinus):
+		u.Zoom = zoomStep(u.Zoom, -1)
+	case c.Shortcut(ui.Cmd, ui.Key0):
+		u.Zoom = zoomOne
+	}
+	c.SetZoom(zoomAt(u.Zoom))
 	t := c.Theme()
 	// 根 Row 必须 Fill()（宽高 100%）：仅 Grow(1) 只撑主轴（宽），高度仍是
 	// 内容自然高——整窗内容居中悬空、上下留白。侧栏固定宽 + FillHeight 撑满
