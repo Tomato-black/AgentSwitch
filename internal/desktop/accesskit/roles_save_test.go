@@ -114,7 +114,7 @@ func TestAccessSaveFormCodexUsesFirstModel(t *testing.T) {
 		DocJSON:     `{"models":["my-code","second"],"env":{}}`,
 	}
 	acc := bridge.AccessConfigs{A: a}
-	saveForm(st, acc)
+	SaveFormWithApply(st, acc, false)
 	if st.Access.Form.Msg != "" {
 		t.Fatalf("保存应成功: %q", st.Access.Form.Msg)
 	}
@@ -131,7 +131,7 @@ func TestAccessSaveFormCodexRejectsEmptyList(t *testing.T) {
 	st.Access.App = "codex"
 	st.Access.Form = state.AccessForm{Open: true, Name: "cfg"}
 	acc := bridge.AccessConfigs{A: a}
-	saveForm(st, acc)
+	SaveFormWithApply(st, acc, false)
 	if st.Access.Form.Msg != "请至少添加一个模型" {
 		t.Fatalf("空列表应报错: %q", st.Access.Form.Msg)
 	}
@@ -161,7 +161,7 @@ func TestSaveFormAndApplyWritesLive(t *testing.T) {
 	}
 	done := make(chan struct{})
 	st.Dispatch = func(fn func()) { fn(); close(done) }
-	saveFormWithApply(st, bridge.AccessConfigs{A: a}, true)
+	SaveFormWithApply(st, bridge.AccessConfigs{A: a}, true)
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
@@ -196,7 +196,7 @@ func TestInvalidDocJSONBlocksSave(t *testing.T) {
 	if !tt.HasText("配置 JSON 无效") {
 		t.Fatalf("invalid JSON error missing: %v", tt.Texts())
 	}
-	saveForm(st, bridge.AccessConfigs{A: a})
+	SaveFormWithApply(st, bridge.AccessConfigs{A: a}, false)
 	if !strings.Contains(st.Access.Form.Msg, "配置 JSON 无效") {
 		t.Fatalf("save must be rejected: %q", st.Access.Form.Msg)
 	}
@@ -234,7 +234,7 @@ func TestSaveOnlyOnCurrentShowsApplyHint(t *testing.T) {
 		Open: true, EditID: v.ID, Name: "cfg", ModelLabel: "my-code",
 		DocJSON: `{"env":{"CUSTOM":"x"}}`,
 	}
-	saveFormWithApply(st, acc, false)
+	SaveFormWithApply(st, acc, false)
 	if !strings.Contains(st.Access.Msg, "点击「应用」") {
 		t.Fatalf("仅保存应提示点击应用：%q", st.Access.Msg)
 	}

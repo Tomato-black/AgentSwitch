@@ -172,6 +172,7 @@ type ClaudeCfgState struct {
 // bridge 归一化。角色行/Codex 模型列表均由 DocJSON 双向同步。
 type AccessForm struct {
 	Open        bool
+	Draft       bool // 抽屉已关但草稿仍在（claude，2026-11-07）：Dirty 仍计真
 	EditID      string // 非空 = 编辑该配置
 	Name        string
 	ModelLabel  string // 选中的逻辑模型名（保存时映射回 ID）
@@ -230,9 +231,10 @@ func (f *AccessForm) Signature(app string) string {
 	return app + "\x00" + f.Name + "\x00" + f.ModelLabel + "\x00" + f.DocJSON
 }
 
-// Dirty 报告编辑器是否有未保存修改（未打开视为干净）。
+// Dirty 报告编辑器是否有未保存修改（未打开且无草稿视为干净；claude 抽屉
+// 关闭后草稿仍计真，摘要卡显示「有未保存的接入更改」）。
 func (f *AccessForm) Dirty(app string) bool {
-	return f.Open && f.Signature(app) != f.Baseline
+	return (f.Open || f.Draft) && f.Signature(app) != f.Baseline
 }
 
 // Signature 返回 Desktop 角色表单的内容签名（名称/四角色/1M 勾选）。

@@ -105,16 +105,16 @@ func EditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State
 						uikit.SoftButton(c, t, s, "gray", "仅保存").Disabled(true)
 					} else {
 						if uikit.PillButton(c, t, "保存并应用").Clicked() {
-							saveFormWithApply(st, acc, true)
+							SaveFormWithApply(st, acc, true)
 						}
 						if uikit.SoftButton(c, t, s, "gray", "仅保存").Clicked() {
-							saveForm(st, acc)
+							SaveFormWithApply(st, acc, false)
 						}
 					}
 				} else if docErr != nil {
 					uikit.PillButton(c, t, "保存").Disabled(true)
 				} else if uikit.PillButton(c, t, "保存").Clicked() {
-					saveForm(st, acc)
+					SaveFormWithApply(st, acc, false)
 				}
 				if uikit.SoftButton(c, t, s, "gray", "取消").Clicked() {
 					CloseEditor(st)
@@ -175,14 +175,10 @@ func RepreviewForm(st *state.State, acc bridge.AccessConfigs) {
 	f.Msg = ""
 }
 
-// saveForm 校验并仅保存表单；文档原文送 bridge（parse+归一化错误内联）。
-func saveForm(st *state.State, acc bridge.AccessConfigs) {
-	saveFormWithApply(st, acc, false)
-}
-
-// saveFormWithApply 是保存主路径：apply 为真时保存后立刻异步「应用」到
-// Agent 配置文件（P1-1 保存/应用断点）。仅保存保留给需要先检查配置的用户。
-func saveFormWithApply(st *state.State, acc bridge.AccessConfigs, apply bool) {
+// SaveFormWithApply 是保存主路径（导出供各 Agent 抽屉/编辑器共用）：
+// apply 为真时保存后立刻异步「应用」到 Agent 配置文件（P1-1 保存/应用
+// 断点）。仅保存保留给需要先检查配置的用户。
+func SaveFormWithApply(st *state.State, acc bridge.AccessConfigs, apply bool) {
 	f := &st.Access.Form
 	if err := ValidateDocJSON(f.DocJSON); err != nil {
 		f.Msg = err.Error()

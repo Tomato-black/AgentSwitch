@@ -55,7 +55,9 @@ func Page(c *ui.Context, st *state.State) {
 
 	// 编辑器是独立子页（2026-10-29 决策 D2）：打开时只渲染编辑器 + 返回，
 	// 不再把长表单追加在列表末尾；返回/取消统一走 CloseEditor 的脏检查。
-	if st.Access.App != "guide" && (st.Access.Form.Open || st.Access.DesktopForm.Open) {
+	// 例外（2026-11-07 原型对齐）：Claude 的编辑接入改为右侧抽屉，主页面
+	// 照常渲染（抽屉在 Page 末尾挂载）。
+	if st.Access.App != "guide" && st.Access.App != "claude" && (st.Access.Form.Open || st.Access.DesktopForm.Open) {
 		editorPage(c, st, acc, gateOK)
 		return
 	}
@@ -272,10 +274,25 @@ func Page(c *ui.Context, st *state.State) {
 			})
 		})
 	})
+	// Claude 接入抽屉（2026-11-07 原型对齐）：Form.Open 即抽屉打开；Esc/
+	// 遮罩/头钮只翻 open 位，写回时若因此关闭则按内容差异置 Draft（关闭
+	// 保留草稿，摘要卡显示「有未保存的接入更改」）。
+	if st.Access.App == "claude" {
+		open := st.Access.Form.Open
+		uikit.Drawer(c, t, &open, "接入配置", "写入受管键到 ~/.claude/settings.json（写前备份）", func() {
+			claude.DrawerCard(c, t, s, st, acc, gateOK)
+		})
+		if st.Access.Form.Open != open {
+			st.Access.Form.Open = open
+			if !open {
+				st.Access.Form.Draft = st.Access.Form.Signature("claude") != st.Access.Form.Baseline
+			}
+		}
+	}
 }
 
-// editorPage 是接入编辑器的独立子页：页头返回 + 当前 Agent 标题，正文只
-// 渲染对应编辑器（Claude/Codex/Claude Desktop）。
+// editorPage 是接入编辑器的独立子页（claude 已改为抽屉，仅剩 Codex /
+// Claude Desktop）：页头返回 + 当前 Agent 标题，正文只渲染对应编辑器。
 func editorPage(c *ui.Context, st *state.State, acc bridge.AccessConfigs, gateOK bool) {
 	t := c.Theme()
 	s := uikit.Softs(t)
@@ -293,10 +310,8 @@ func editorPage(c *ui.Context, st *state.State, acc bridge.AccessConfigs, gateOK
 			ui.Column(c).Gap(12).Children(func() {
 				if st.Access.App == "claude_desktop" {
 					claudedesktop.EditorCard(c, t, s, st, acc, gateOK)
-				} else if st.Access.App == "codex" {
-					codex.EditorCard(c, t, s, st, acc, gateOK)
 				} else {
-					claude.EditorCard(c, t, s, st, acc, gateOK)
+					codex.EditorCard(c, t, s, st, acc, gateOK)
 				}
 			})
 		})

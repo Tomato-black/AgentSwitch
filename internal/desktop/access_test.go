@@ -44,9 +44,11 @@ func TestAccessCodexPageMentionsDesktop(t *testing.T) {
 
 // TestAccessPageScrollsWhenEditorOpen 回归：编辑器打开后接入页内容超出视口，
 // 页面必须可纵向滚动到底部的保存按钮（此前缺 Scroll 容器，底部内容不可达）。
+// Claude 编辑器已改为右侧抽屉（2026-11-07），编辑子页回归走 codex。
 func TestAccessPageScrollsWhenEditorOpen(t *testing.T) {
 	u, _ := testUI(t)
 	u.Page = "access"
+	u.Access.App = "codex"
 	u.Access.Form = state.AccessForm{Open: true}
 	tt := ui.NewTester(u.view, 900, 600)
 	before, ok := tt.Find("保存")

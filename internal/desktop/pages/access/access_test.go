@@ -235,13 +235,14 @@ func TestAccessDeleteRequiresConfirm(t *testing.T) {
 }
 
 // TestEditorBackDirtyGuard 覆盖编辑器独立子页的返回确认：有未保存修改时
-// 返回只武装 NavArm（弹窗由壳层渲染），确认后才关闭并清空。
+// 返回只武装 NavArm（弹窗由壳层渲染），确认后才关闭并清空。编辑子页仅剩
+// codex / claude_desktop 使用（claude 已改为右侧抽屉，2026-11-07）。
 func TestEditorBackDirtyGuard(t *testing.T) {
 	st, _ := uitest.New(t)
 	st.Page = "access"
-	st.Access.App = "claude"
+	st.Access.App = "codex"
 	st.Access.Form = state.AccessForm{Open: true, Name: "draft", DocJSON: `{}`}
-	st.Access.Form.Baseline = st.Access.Form.Signature("claude")
+	st.Access.Form.Baseline = st.Access.Form.Signature("codex")
 	st.Access.Form.Name = "draft-changed" // 未保存修改
 	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
 	if !tt.HasText("← 返回接入") {
@@ -433,5 +434,37 @@ func TestSummaryCardMetaRow(t *testing.T) {
 		if !tt.HasText(want) {
 			t.Fatalf("missing %q: %v", want, tt.Texts())
 		}
+	}
+}
+
+// TestClaudeEditorOpensAsDrawer（2026-11-07 原型对齐）：Claude 页签的编辑
+// 接入是右侧抽屉——主页面（摘要卡/设置区）不被替换，抽屉标题「接入配置」；
+// 点关闭后抽屉收起且草稿标记保留。
+func TestClaudeEditorOpensAsDrawer(t *testing.T) {
+	st, a := uitest.New(t)
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	st.Page = "access"
+	st.Access.App = "claude"
+	st.Access.Form = state.AccessForm{Open: true, ModelLabel: "my-code", DocJSON: `{"env":{}}`}
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
+	for _, want := range []string{"Claude Code 接入", "Claude Code 设置", "接入配置", "名称:", "保存并应用"} {
+		if !tt.HasText(want) {
+			t.Fatalf("missing %q: %v", want, tt.Texts())
+		}
+	}
+	if tt.HasText("← 返回接入") {
+		t.Fatalf("claude 不应再走编辑子页: %v", tt.Texts())
+	}
+	if err := tt.Click("关闭"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if st.Access.Form.Open {
+		t.Fatal("close must close the drawer")
+	}
+	if !st.Access.Form.Draft {
+		t.Fatal("close must keep the draft flag")
 	}
 }
