@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"AgentSwitch/internal/bridge"
+	"AgentSwitch/internal/claudecfg"
 	"AgentSwitch/internal/telemetry"
 )
 
@@ -100,6 +101,24 @@ type ClaudeCfgState struct {
 	FallbackInput string
 	DangerInput   bool
 	SkillStates   map[string]string
+
+	// 配置页表单的只读派生数据：受管集合与跨层合并来源。由 load 一次性
+	// 计算，渲染帧只读，避免逐帧查库。
+	Managed      claudecfg.ManagedSet
+	MergeEntries map[string]claudecfg.MergedEntry
+	Violations   []claudecfg.Violation
+
+	// Overrides 记录用户在当前层点过「覆盖」的路径：控件从空白开始编辑，
+	// 而不是把继承值抄进当前文件。Reveal 是敏感值「显示」开关（按路径）。
+	Overrides map[string]bool
+	Reveal    map[string]bool
+
+	// 环境变量与插件的新增行输入（跨帧保存）。
+	EnvExpanded bool
+	EnvNewKey   string
+	EnvNewValue string
+	PluginNew   string
+	FormMsg     string
 
 	Projects []bridge.ClaudeProject
 	Skills   []bridge.SkillView

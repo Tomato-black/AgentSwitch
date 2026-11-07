@@ -1,0 +1,253 @@
+package claudecfg
+
+import (
+	"encoding/json"
+	"testing"
+
+	"github.com/egoist/mygo/ui"
+
+	corecfg "AgentSwitch/internal/claudecfg"
+	"AgentSwitch/internal/desktop/state"
+	"AgentSwitch/internal/desktop/uitest"
+)
+
+func formTestState(t *testing.T) *state.State {
+	t.Helper()
+	st, _ := uitest.New(t)
+	cf := &st.ClaudeCfg
+	cf.Loaded = true
+	cf.Layer = "user"
+	cf.Sub = "shared"
+	cf.Doc = map[string]any{}
+	cf.Baseline = map[string]any{}
+	return st
+}
+
+func renderForm(st *state.State, width, height int) *ui.Tester {
+	return ui.NewTester(func(c *ui.Context) {
+		FormSection(c, st)
+	}, width, height)
+}
+
+func TestFormSectionRendersSevenGroups(t *testing.T) {
+	st := formTestState(t)
+	st.ClaudeCfg.Doc = map[string]any{
+		"model":                 "opus",
+		"fallbackModel":         []any{"sonnet"},
+		"effortLevel":           "high",
+		"alwaysThinkingEnabled": true,
+		"env": map[string]any{
+			"ANTHROPIC_BASE_URL":         "http://127.0.0.1:17890",
+			"ANTHROPIC_AUTH_TOKEN":       "secret-token-value",
+			"ANTHROPIC_MODEL":            "my-code",
+			"ANTHROPIC_SMALL_FAST_MODEL": "my-code",
+			"MY_FLAG":                    "1",
+		},
+		"permissions": map[string]any{
+			"defaultMode": "default",
+			"allow":       []any{"Bash(go test:*)"},
+		},
+		"statusLine": map[string]any{
+			"type":    "command",
+			"command": "~/.claude/statusline.sh",
+			"padding": json.Number("0"),
+		},
+		"enableAllProjectMcpServers": true,
+		"enabledMcpjsonServers":      []any{"fs"},
+		"enabledPlugins":             map[string]any{"foo@market": true},
+		"skillOverrides":             map[string]any{"claude-api": "off"},
+		"autoCompactEnabled":         true,
+		"autoMemoryEnabled":          false,
+		"cleanupPeriodDays":          json.Number("45"),
+	}
+	st.ClaudeCfg.Baseline = cloneDoc(st.ClaudeCfg.Doc)
+
+	tt := renderForm(st, 1200, 4000)
+	for _, want := range []string{
+		"模型与响应", "环境变量", "权限", "状态栏", "MCP 与插件", "Skills", "记忆与上下文",
+		"ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL",
+		"由 AgentSwitch 接入管理", "危险模式确认", "启用全部项目 MCP 服务器",
+		"foo@market", "清理周期",
+	} {
+		if !tt.HasText(want) {
+			t.Fatalf("missing %q in %v", want, tt.Texts())
+		}
+	}
+	// 接入投影键默认折叠，只常显核心三键。
+	if tt.HasText("ANTHROPIC_SMALL_FAST_MODEL") {
+		t.Fatalf("projected managed keys must stay collapsed: %v", tt.Texts())
+	}
+	// 敏感值遮蔽。
+	if !tt.HasText("••") {
+		t.Fatalf("managed secret must be masked, got %v", tt.Texts())
+	}
+	if !tt.HasText("类型") || !tt.HasText("命令") || !tt.HasText("内边距") {
+		t.Fatalf("statusLine subfields must render: %v", tt.Texts())
+	}
+}
+
+func TestFormSectionExpandsProjectedManagedEnv(t *testing.T) {
+	st := formTestState(t)
+	st.ClaudeCfg.EnvExpanded = true
+	tt := renderForm(st, 1200, 5000)
+	if !tt.HasText("ANTHROPIC_SMALL_FAST_MODEL") {
+		t.Fatalf("expanded managed keys missing: %v", tt.Texts())
+	}
+	if !tt.HasText("收起接入投影键") {
+		t.Fatalf("collapse action missing: %v", tt.Texts())
+	}
+}
+
+func TestFormSectionProjectSharedDisablesDangerMode(t *testing.T) {
+	st := formTestState(t)
+	st.ClaudeCfg.Layer = "project"
+	st.ClaudeCfg.Sub = "shared"
+	tt := renderForm(st, 1200, 4000)
+	if !tt.HasText("项目共享不能设置危险模式确认") {
+		t.Fatalf("project-shared danger mode must be disabled with reason: %v", tt.Texts())
+	}
+}
+
+func TestFormInheritedKeyShowsSourceAndOverrideDoesNotCopy(t *testing.T) {
+	st := formTestState(t)
+	cf := &st.ClaudeCfg
+	cf.MergeEntries = map[string]corecfg.MergedEntry{
+		"model": {Path: "model", Value: "opus", Source: corecfg.ScopeManaged},
+	}
+	tt := renderForm(st, 1200, 4000)
+	if !tt.HasText("继承自下层") || !tt.HasText("来源：企业托管") {
+		t.Fatalf("inherited source missing: %v", tt.Texts())
+	}
+	if !tt.HasText("opus") {
+		t.Fatalf("inherited value missing: %v", tt.Texts())
+	}
+	if err := tt.Click("覆盖"); err != nil {
+		t.Fatalf("click override: %v", err)
+	}
+	tt.Frame()
+	if v, ok := cf.Doc["model"]; ok {
+		t.Fatalf("override must not write inherited value, got %v", v)
+	}
+	if cf.Dirty {
+		t.Fatal("override alone must not dirty the document")
+	}
+	if !cf.Overrides["model"] {
+		t.Fatalf("override marker missing: %v", cf.Overrides)
+	}
+}
+
+func TestDangerModeTriStateWritesDoc(t *testing.T) {
+	st := formTestState(t)
+	cf := &st.ClaudeCfg
+
+	setDangerChoice(cf, dangerSkip)
+	if v, _ := cf.Doc["skipDangerousModePermissionPrompt"].(bool); !v {
+		t.Fatalf("skip choice must write true: %v", cf.Doc)
+	}
+	if !cf.Dirty {
+		t.Fatal("skip choice must dirty document")
+	}
+
+	setDangerChoice(cf, dangerShow)
+	if v, _ := cf.Doc["skipDangerousModePermissionPrompt"].(bool); v {
+		t.Fatalf("show choice must write false: %v", cf.Doc)
+	}
+
+	setDangerChoice(cf, dangerInherit)
+	if _, ok := cf.Doc["skipDangerousModePermissionPrompt"]; ok {
+		t.Fatalf("inherit choice must delete key: %v", cf.Doc)
+	}
+	if cf.Dirty {
+		t.Fatal("deleting back to baseline must clear dirty")
+	}
+}
+
+func TestStatusLineObjectEdits(t *testing.T) {
+	st := formTestState(t)
+	cf := &st.ClaudeCfg
+
+	setStatusLineField(cf, "type", "command")
+	setStatusLineField(cf, "command", "~/.claude/statusline.sh")
+	obj, ok := cf.Doc["statusLine"].(map[string]any)
+	if !ok {
+		t.Fatalf("statusLine object missing: %v", cf.Doc)
+	}
+	if obj["type"] != "command" || obj["command"] != "~/.claude/statusline.sh" {
+		t.Fatalf("statusLine fields = %v", obj)
+	}
+	if !cf.Dirty {
+		t.Fatal("statusLine edit must dirty document")
+	}
+
+	setStatusLineField(cf, "command", "")
+	obj = cf.Doc["statusLine"].(map[string]any)
+	if _, ok := obj["command"]; ok {
+		t.Fatalf("empty field must delete: %v", obj)
+	}
+
+	setStatusLineField(cf, "type", "")
+	if _, ok := cf.Doc["statusLine"]; ok {
+		t.Fatalf("empty statusLine must be removed: %v", cf.Doc)
+	}
+}
+
+func TestMemoryIntegerField(t *testing.T) {
+	st := formTestState(t)
+	cf := &st.ClaudeCfg
+
+	setIntField(cf, "cleanupPeriodDays", "60")
+	if got, _ := cf.Doc["cleanupPeriodDays"].(int); got != 60 {
+		t.Fatalf("cleanupPeriodDays = %v", cf.Doc["cleanupPeriodDays"])
+	}
+	if !cf.Dirty {
+		t.Fatal("memory edit must dirty document")
+	}
+
+	setIntField(cf, "cleanupPeriodDays", "abc")
+	if cf.FormMsg == "" {
+		t.Fatal("invalid integer must set form message")
+	}
+	if got, _ := cf.Doc["cleanupPeriodDays"].(int); got != 60 {
+		t.Fatalf("invalid integer must not change doc: %v", cf.Doc["cleanupPeriodDays"])
+	}
+
+	setIntField(cf, "cleanupPeriodDays", "")
+	if _, ok := cf.Doc["cleanupPeriodDays"]; ok {
+		t.Fatalf("empty integer must delete key: %v", cf.Doc)
+	}
+	if cf.Dirty {
+		t.Fatal("deleting back to baseline must clear dirty")
+	}
+}
+
+func TestListFieldWritesStringArray(t *testing.T) {
+	st := formTestState(t)
+	cf := &st.ClaudeCfg
+
+	setListField(cf, "permissions.allow", "Bash(go test:*), Read, ")
+	got, _ := corecfg.Get(cf.Doc, "permissions.allow")
+	arr, ok := got.([]any)
+	if !ok || len(arr) != 2 || arr[0] != "Bash(go test:*)" || arr[1] != "Read" {
+		t.Fatalf("permissions.allow = %#v", got)
+	}
+
+	setListField(cf, "permissions.allow", "")
+	if _, ok := corecfg.Get(cf.Doc, "permissions.allow"); ok {
+		t.Fatalf("empty list must delete key: %v", cf.Doc)
+	}
+}
+
+func TestPluginToggleWritesObjectBool(t *testing.T) {
+	st := formTestState(t)
+	cf := &st.ClaudeCfg
+
+	setPluginEnabled(cf, "bar@market", true)
+	setPluginEnabled(cf, "foo@market", false)
+	m, ok := cf.Doc["enabledPlugins"].(map[string]any)
+	if !ok {
+		t.Fatalf("enabledPlugins missing: %v", cf.Doc)
+	}
+	if m["bar@market"] != true || m["foo@market"] != false {
+		t.Fatalf("enabledPlugins = %v", m)
+	}
+}

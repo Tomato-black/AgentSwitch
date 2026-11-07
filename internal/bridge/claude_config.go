@@ -159,10 +159,17 @@ func (s ClaudeConfigs) ClaudeConfigOverview() (ClaudeConfigOverview, error) {
 
 // MergeClaudeConfig 返回当前用户/项目/托管层的合并结果（只读预览）。
 func (s ClaudeConfigs) MergeClaudeConfig(project string) (map[string]any, error) {
+	merged, _, err := s.MergeClaudeConfigView(project)
+	return merged, err
+}
+
+// MergeClaudeConfigView 返回合并文档与按叶子路径索引的来源信息，供设置区
+// 表单显示「继承自下层」及合并预览显示来源徽章。
+func (s ClaudeConfigs) MergeClaudeConfigView(project string) (map[string]any, map[string]claudecfg.MergedEntry, error) {
 	home, err := s.home()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	merged, _ := claudecfg.Merge(s.claudeLayers(home, project))
-	return merged, nil
+	merged, entries := claudecfg.Merge(s.claudeLayers(home, project))
+	return merged, entries, nil
 }
