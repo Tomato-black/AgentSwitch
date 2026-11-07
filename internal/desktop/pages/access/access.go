@@ -73,7 +73,7 @@ func Page(c *ui.Context, st *state.State) {
 		// 区块头（2026-11-07 用户裁定），页头不挂页签专属按钮。
 		subtitle := "为每个 Agent 管理网关接入与实际配置"
 		if st.Access.App == "claude" {
-			subtitle = "把 Claude Code 接到 AgentSwitch，并在同一页管理它的设置"
+			subtitle = "把 Claude Code 接到 AgentSwitch 网关" // 设置已拆独立页（2026-11-07），不再称「同一页」
 		}
 		uikit.PageHeader(c, t, uikit.PageHeaderOpts{
 			Title:    "Agent 接入",
@@ -685,8 +685,6 @@ func switchTab(st *state.State, acc bridge.AccessConfigs, app string) {
 	st.Access.Msg = ""
 	st.Access.Form = state.AccessForm{}
 	st.Access.DesktopForm = state.DesktopForm{}
-	// Claude 设置区草稿随页签丢弃（保留注入 Home；下次进入重新加载）。
-	st.ClaudeCfg = state.ClaudeCfgState{Home: st.ClaudeCfg.Home}
 	if app == "codex" {
 		reloadGlobal(st, acc)
 	}

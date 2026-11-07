@@ -430,3 +430,82 @@ func TestEnvGroupColumnHeaders(t *testing.T) {
 		}
 	}
 }
+
+// TestInheritedRowsShowFieldLabels（2026-11-07 用户实测：无法修改权限）：缺键
+// 的「继承自下层」行必须渲染字段标签——此前该行无标签，权限卡四行规则长得
+// 一模一样，用户无从识别与修改。
+func TestInheritedRowsShowFieldLabels(t *testing.T) {
+	st := formTestState(t)
+	tt := ui.NewTester(func(c *ui.Context) {
+		permissionGroup(c, c.Theme(), uikit.Softs(c.Theme()), &st.ClaudeCfg)
+	}, 1000, 600)
+	for _, want := range []string{"默认模式", "允许规则", "询问规则", "拒绝规则", "附加目录"} {
+		if !tt.HasText(want) {
+			t.Fatalf("缺键继承行缺标签 %q: %v", want, tt.Texts())
+		}
+	}
+	// 模型组同样（回退模型/推理强度是 listField/enumField 的继承行）。
+	tt = ui.NewTester(func(c *ui.Context) {
+		modelGroup(c, c.Theme(), uikit.Softs(c.Theme()), &st.ClaudeCfg)
+	}, 1000, 600)
+	for _, want := range []string{"主模型", "回退模型", "推理强度"} {
+		if !tt.HasText(want) {
+			t.Fatalf("缺键继承行缺标签 %q: %v", want, tt.Texts())
+		}
+	}
+}
+
+// TestPermissionRuleAddViaUI（2026-11-07 用户实测回归）：权限规则经 UI 全流程
+// 修改——继承行带标签可定位 → 点行尾「覆盖」→ 输入规则 → 「添加」落文档。
+func TestPermissionRuleAddViaUI(t *testing.T) {
+	st := formTestState(t)
+	ensureFormState(&st.ClaudeCfg) // 直渲 group 绕过 FormSection，需自备 Overrides 等
+	tt := ui.NewTester(func(c *ui.Context) {
+		permissionGroup(c, c.Theme(), uikit.Softs(c.Theme()), &st.ClaudeCfg)
+	}, 1000, 800)
+	tt.Frame()
+	lb, ok := tt.Find("允许规则")
+	if !ok {
+		t.Fatalf("允许规则标签缺失: %v", tt.Texts())
+	}
+	// 「覆盖」按钮在行右端（FormRowRaw 标签列后）；步长 10 全宽扫点。
+	clicked := false
+	for x := lb.X + 120; x < 1000; x += 10 {
+		tt.ClickAt(x, lb.Y+lb.H/2)
+		tt.Frame()
+		if tt.HasText("添加") {
+			clicked = true
+			break
+		}
+	}
+	if !clicked {
+		t.Fatalf("点不到覆盖按钮: %v", tt.Texts())
+	}
+	// 添加行输入框（标签列下方几档内）：逐档点击后输入完整规则，
+	// ChipInputs 命中即定位成功。
+	typed := false
+	for _, dy := range []float32{30, 45, 60, 75, 90} {
+		tt.ClickAt(300, lb.Y+dy)
+		tt.Type("Bash(git push:*)")
+		tt.Frame()
+		if st.ClaudeCfg.ChipInputs != nil && st.ClaudeCfg.ChipInputs["permissions.allow"] == "Bash(git push:*)" {
+			typed = true
+			break
+		}
+	}
+	if !typed {
+		t.Fatalf("规则输入未落: ChipInputs=%v", st.ClaudeCfg.ChipInputs)
+	}
+	if err := tt.Click("添加"); err != nil {
+		t.Fatalf("点添加失败: %v", err)
+	}
+	tt.Frame()
+	got, _ := corecfg.Get(st.ClaudeCfg.Doc, "permissions.allow")
+	arr, _ := got.([]any)
+	if len(arr) != 1 || arr[0] != "Bash(git push:*)" {
+		t.Fatalf("添加未落文档: %v", got)
+	}
+	if !st.ClaudeCfg.Dirty {
+		t.Fatal("添加后应变脏")
+	}
+}

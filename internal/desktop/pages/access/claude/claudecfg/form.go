@@ -388,7 +388,7 @@ func statusLineGroup(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.
 			return
 		}
 		if _, ok := corecfg.Get(cf.Doc, path); !ok && !cf.Overrides[path] {
-			if inheritedRow(c, t, s, cf, path) {
+			if inheritedRow(c, t, s, cf, path, "状态栏") {
 				// 「覆盖」后本帧继续渲染空白控件。
 			} else {
 				return
@@ -584,7 +584,7 @@ func stringField(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.Clau
 		return
 	}
 	if _, ok := corecfg.Get(cf.Doc, path); !ok && !cf.Overrides[path] {
-		if !inheritedRow(c, t, s, cf, path) {
+		if !inheritedRow(c, t, s, cf, path, label) {
 			return
 		}
 	}
@@ -670,7 +670,7 @@ func enumField(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.Claude
 		return
 	}
 	if _, ok := corecfg.Get(cf.Doc, path); !ok && !cf.Overrides[path] {
-		if !inheritedRow(c, t, s, cf, path) {
+		if !inheritedRow(c, t, s, cf, path, label) {
 			return
 		}
 	}
@@ -709,7 +709,7 @@ func listField(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.Claude
 		return
 	}
 	if _, ok := corecfg.Get(cf.Doc, path); !ok && !cf.Overrides[path] {
-		if !inheritedRow(c, t, s, cf, path) {
+		if !inheritedRow(c, t, s, cf, path, label) {
 			return
 		}
 	}
@@ -842,7 +842,7 @@ func intField(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.ClaudeC
 		return
 	}
 	if _, ok := corecfg.Get(cf.Doc, path); !ok && !cf.Overrides[path] {
-		if !inheritedRow(c, t, s, cf, path) {
+		if !inheritedRow(c, t, s, cf, path, label) {
 			if hint != "" {
 				ui.Text(c, hint).FontSize(t.FontSize - 2).TextColor(t.TextMuted)
 			}
@@ -859,20 +859,24 @@ func intField(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.ClaudeC
 	})
 }
 
-func inheritedRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.ClaudeCfgState, path string) bool {
+// inheritedRow 渲染缺键的「继承自下层」行：带字段标签（FormRowRaw 对齐，
+// 2026-11-07 用户实测——此前无标签，权限卡四行规则不可识别、无从修改），
+// 显示继承值/来源与「覆盖」按钮。
+func inheritedRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.ClaudeCfgState, path, label string) bool {
 	entry, ok := cf.MergeEntries[path]
-	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-		if ok {
-			ui.Text(c, "继承自下层").TextColor(t.TextMuted)
-			ui.Text(c, "来源："+sourceLabel(entry.Source)).FontSize(t.FontSize - 2).TextColor(t.TextMuted)
-			ui.Text(c, displayValue(path, entry.Value)).Font(uikit.MonoFont).Grow(1)
-		} else {
-			ui.Text(c, "当前层未设置").TextColor(t.TextMuted).Grow(1)
-		}
-		if uikit.SoftButton(c, t, s, "gray", "覆盖").Clicked() {
-			cf.Overrides[path] = true
-			return
-		}
+	uikit.FormRowRaw(c, t, label, func() {
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			if ok {
+				ui.Text(c, "继承自下层").TextColor(t.TextMuted)
+				ui.Text(c, "来源："+sourceLabel(entry.Source)).FontSize(t.FontSize - 2).TextColor(t.TextMuted)
+				ui.Text(c, displayValue(path, entry.Value)).Font(uikit.MonoFont).Grow(1)
+			} else {
+				ui.Text(c, "当前层未设置").TextColor(t.TextMuted).Grow(1)
+			}
+			if uikit.SoftButton(c, t, s, "gray", "覆盖").Clicked() {
+				cf.Overrides[path] = true
+			}
+		})
 	})
 	return cf.Overrides[path]
 }

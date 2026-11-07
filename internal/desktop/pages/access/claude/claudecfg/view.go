@@ -455,9 +455,20 @@ func viewTabs(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, 
 		for i, label := range labels {
 			tab := tabs.Tab(i).Padding(t.Space(2), t.Space(3)).FocusRing(false)
 			on := i == idx
-			tab.TextColor(t.TextMuted)
-			if on {
+			switch {
+			case on:
 				tab.TextColor(t.Accent).FontWeight(600)
+			case tab.Hovered() || tab.FocusVisible():
+				tab.TextColor(t.Text) // hover/焦点可见（终审 Important#1）
+			default:
+				tab.TextColor(t.TextMuted)
+			}
+			// 内建焦点环已关（FocusRing(false)），用透明/焦点色边框补画，
+			// 键盘方向键移动焦点时可见（a11y）。
+			if tab.FocusVisible() {
+				tab.Border(2, t.Focus)
+			} else {
+				tab.Border(2, ui.RGBA(0, 0, 0, 0))
 			}
 			tab.Children(func() { ui.Text(c, label).SingleLine() })
 			tab.DrawOver(func(p *ui.Painter, r ui.Rect) {

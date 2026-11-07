@@ -402,7 +402,7 @@ func TestPageHeaderAgentAccess(t *testing.T) {
 	st.Page = "access"
 	st.Access.App = "claude"
 	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
-	for _, want := range []string{"Agent 接入", "并在同一页管理它的设置", "打开设置页"} {
+	for _, want := range []string{"Agent 接入", "把 Claude Code 接到 AgentSwitch 网关", "打开设置页"} {
 		if !tt.HasText(want) {
 			t.Fatalf("missing %q: %v", want, tt.Texts())
 		}
