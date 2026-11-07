@@ -38,6 +38,9 @@ func Section(c *ui.Context, st *state.State) {
 			if st.ClaudeCfg.Warning != "" {
 				uikit.Feedback(c, t, uikit.FeedbackWarning, st.ClaudeCfg.Warning)
 			}
+			// 结果条与备份面板放在内容区顶部：保存后无需滚到表单底部。
+			saveResultBar(c, t, s, st, cfgs)
+			backupPanel(c, t, s, st, cfgs)
 			viewTabs(c, t, s, st, cfgs)
 			switch st.ClaudeCfg.View {
 			case "json":
@@ -51,6 +54,8 @@ func Section(c *ui.Context, st *state.State) {
 		})
 	})
 	saveDialog(c, st, cfgs)
+	conflictDialog(c, st, cfgs)
+	restoreBackupDialog(c, st, cfgs)
 }
 
 func ensure(cf *state.ClaudeCfgState) {
@@ -327,66 +332,6 @@ func FormRow(c *ui.Context, t *ui.Theme, label string, field func() ui.Element) 
 
 func FormRowRaw(c *ui.Context, t *ui.Theme, label string, field func()) {
 	uikit.FormRowRaw(c, t, label, field)
-}
-
-func saveDialog(c *ui.Context, st *state.State, cfgs bridge.ClaudeConfigs) {
-	cf := &st.ClaudeCfg
-	changed := corecfg.Diff(cf.Baseline, cf.Doc)
-	msg := "目标文件：" + cf.Display + "\n变更 " + itoa(len(changed)) + " 个键"
-	if len(changed) > 0 {
-		msg += "：" + strings.Join(changed, "、")
-	}
-	msg += "\n写入前会备份当前文件；只改这些键，其余设置原样保留。"
-	uikit.ConfirmDialog(c, c.Theme(), uikit.ConfirmOpts{
-		Open: &cf.SaveArm, Title: "保存 Claude Code 设置？", Message: msg,
-		ConfirmLabel: "保存", OnConfirm: func() { performSave(st, cfgs) },
-	})
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b []byte
-	for n > 0 {
-		b = append([]byte{byte('0' + n%10)}, b...)
-		n /= 10
-	}
-	return string(b)
-}
-
-func performSave(st *state.State, cfgs bridge.ClaudeConfigs) {
-	cf := &st.ClaudeCfg
-	// JSON 语法错误、本次引入的 scope 违规、非法 skillOverrides 与受管键
-	// 修改都在这里统一阻断，并给出具体路径与原因。
-	if reason := saveBlockReason(cf); reason != "" {
-		cf.Msg = reason
-		return
-	}
-	if cf.Layer == "user" {
-		if _, ok := cf.Doc["skipDangerousModePermissionPrompt"]; !ok {
-			cf.Doc["skipDangerousModePermissionPrompt"] = true
-		}
-	}
-	req := bridge.SaveClaudeConfigRequest{
-		Kind:         scopeOf(cf.Layer, cf.Sub),
-		Project:      cf.Project,
-		Sub:          cf.Sub,
-		Document:     cf.Doc,
-		ExpectedHash: cf.Hash,
-		Create:       !cf.Exists,
-	}
-	if cf.Exists && cf.Hash == "" {
-		req.ExpectedHash = ""
-	}
-	res, err := cfgs.SaveClaudeConfigLayer(req)
-	if err != nil {
-		cf.Msg = err.Error()
-		return
-	}
-	cf.Msg = "已保存 " + strings.Join(res.Changed, ", ")
-	cf.Loaded = false
-	load(st, cfgs)
 }
 
 func scopeOf(layer, sub string) corecfg.ScopeKind {

@@ -63,6 +63,11 @@ func RecomputeDirty(cf *state.ClaudeCfgState) {
 	cf.Dirty = !reflect.DeepEqual(cf.Doc, cf.Baseline)
 	// 成功编辑后清除上一次的字段校验提示；非法输入路径不调用本函数。
 	cf.FormMsg = ""
+	// 保存结果条持续到下一次编辑：一旦重新变脏就收起，避免旧备份路径
+	// 与当前未保存内容并列误导用户。
+	if cf.Dirty {
+		cf.ResultVisible = false
+	}
 }
 
 // formText 是各分组的小标题（现有设置区卡片内的次级标题）。

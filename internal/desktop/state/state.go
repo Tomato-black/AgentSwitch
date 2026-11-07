@@ -132,6 +132,26 @@ type ClaudeCfgState struct {
 	FormMsg     string
 	SaveArm     bool
 
+	// 保存结果条（成功保存/恢复后显示，直到下一次编辑或手动关闭）。
+	Result         *bridge.SaveResult
+	ResultVisible  bool
+	ResultRestore  bool
+	ResultHeadline string
+
+	// 保存冲突对话框：保存时磁盘 Hash 与打开时不一致，允许重新加载或
+	// 以 ConflictDiskHash 为 ExpectedHash 覆盖写入。
+	ConflictArm      bool
+	ConflictPath     string
+	ConflictDiskHash string
+
+	// 当前层备份列表与恢复确认（ID 即 RestoreClaudeConfigBackup 的入参）。
+	BackupOpen   bool
+	Backups      []bridge.ClaudeBackupInfo
+	BackupMsg    string
+	RestoreArm   bool
+	RestoreID    string
+	RestoreLabel string
+
 	Projects []bridge.ClaudeProject
 	Skills   []bridge.SkillView
 	SkillErr string

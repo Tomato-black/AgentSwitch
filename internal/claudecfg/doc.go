@@ -134,9 +134,34 @@ func diffMap(a, b map[string]any, prefix string, out *[]string) {
 			diffMap(ma, mb, path, out)
 			continue
 		}
+		// 一侧缺整棵子树时展开叶子，与 Validate/leafPaths 的路径粒度一致。
+		if oka && !okb && isMapA {
+			leavesInto(ma, path, out)
+			continue
+		}
+		if !oka && okb && isMapB {
+			leavesInto(mb, path, out)
+			continue
+		}
 		if !oka || !okb || !reflect.DeepEqual(va, vb) {
 			*out = append(*out, path)
 		}
+	}
+}
+
+// leavesInto 把子树的全部叶子路径追加进 out；空对象按一个叶子处理。
+func leavesInto(m map[string]any, prefix string, out *[]string) {
+	if len(m) == 0 {
+		*out = append(*out, prefix)
+		return
+	}
+	for k, v := range m {
+		path := prefix + "." + k
+		if child, ok := v.(map[string]any); ok {
+			leavesInto(child, path, out)
+			continue
+		}
+		*out = append(*out, path)
 	}
 }
 

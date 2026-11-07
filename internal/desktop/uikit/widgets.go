@@ -313,6 +313,100 @@ func EmptyStateBare(c *ui.Context, t *ui.Theme, o EmptyStateOpts) {
 	})
 }
 
+// RichDialogAction 是 RichDialog 的一个动作按钮。Danger 使用软红底
+// （危险动作应放在 Actions 末位）；Primary 使用品牌橙主钮；Default 标记
+// 安全动作（取消/继续编辑）作为初始焦点。点击后对话框先关闭，再执行
+// OnClick，便于回调里打开下一个对话框。
+type RichDialogAction struct {
+	Label   string
+	Danger  bool
+	Primary bool
+	Default bool
+	OnClick func()
+}
+
+// RichDialogOpts 是 RichDialog 的入参：标题、可选副标题、任意 body 视图
+// 与 N 个动作按钮。Body 直接渲染在标题与动作行之间，可放路径、chip、
+// 徽章等富内容。
+type RichDialogOpts struct {
+	Open     *bool
+	Title    string
+	Subtitle string
+	Body     func()
+	Actions  []RichDialogAction
+	Width    float32
+}
+
+// RichDialog 是 ConfirmDialog 的富内容版本：复用同一 DialogBase 壳、遮罩
+// 与焦点管理，但 body 可任意组合控件、动作数量不限。安全默认不变——未
+// 显式标记 Default 时，焦点落在第一个非危险动作；危险动作按调用方顺序
+// 渲染（应放末位）。ConfirmDialog 保持原样，现有调用方零改动。
+func RichDialog(c *ui.Context, t *ui.Theme, o RichDialogOpts) {
+	if o.Open == nil || !*o.Open {
+		return
+	}
+	width := o.Width
+	if width <= 0 {
+		width = 480
+	}
+	focusIdx := -1
+	for i, action := range o.Actions {
+		if action.Default {
+			focusIdx = i
+			break
+		}
+	}
+	if focusIdx == -1 {
+		for i, action := range o.Actions {
+			if !action.Danger {
+				focusIdx = i
+				break
+			}
+		}
+	}
+	if focusIdx == -1 && len(o.Actions) > 0 {
+		focusIdx = 0
+	}
+	s := Softs(t)
+	ui.DialogBase(c, o.Open, func(backdrop, panel ui.Element) {
+		backdrop.Background(ui.RGBA(0, 0, 0, 0.45))
+		panel.Width(width).Radius(12).Background(t.Surface).Border(1, t.Border).
+			Padding(t.Space(5)).Children(func() {
+			ui.Column(c).Gap(t.Space(3)).Children(func() {
+				ui.Text(c, o.Title).Bold().FontSize(t.FontSize + 2)
+				if o.Subtitle != "" {
+					ui.Text(c, o.Subtitle).TextColor(t.TextMuted)
+				}
+				if o.Body != nil {
+					o.Body()
+				}
+				ui.Row(c).Gap(t.Space(2)).Justify(ui.End).Children(func() {
+					for i, action := range o.Actions {
+						var btn ui.Element
+						switch {
+						case action.Danger:
+							btn = SoftButton(c, t, s, "danger", action.Label)
+						case action.Primary:
+							btn = PillButton(c, t, action.Label)
+						default:
+							btn = SoftButton(c, t, s, "gray", action.Label)
+						}
+						if i == focusIdx {
+							btn.AutoFocus()
+						}
+						if btn.Clicked() {
+							*o.Open = false
+							if action.OnClick != nil {
+								action.OnClick()
+							}
+						}
+					}
+				})
+			})
+		})
+	})
+}
+
 // ConfirmOpts 是统一确认框入参。Danger 为真时确认按钮用软红底，不再使用
 // 品牌橙主样式；取消按钮恒居末位并自动聚焦，Enter 只会触发取消。
 type ConfirmOpts struct {
