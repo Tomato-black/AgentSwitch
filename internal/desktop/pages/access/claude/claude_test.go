@@ -72,3 +72,29 @@ func TestEditorModelKeysSection(t *testing.T) {
 		t.Fatalf("行状态回填错误: %q %v", st.Access.Form.ModelKey, st.Access.Form.FallbackModels)
 	}
 }
+
+// TestEditorModelKeyDropdown（2026-11-07 用户指令）：主模型是下拉（含
+//「（跟随网关）」哨兵）；文档带 model 时回显对应选项。
+func TestEditorModelKeyDropdown(t *testing.T) {
+	st, a := uitest.New(t)
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	acc := bridge.AccessConfigs{A: a, Home: t.TempDir()}
+	if _, err := acc.Create("claude", "工作", "lm1", `{"env":{}}`); err != nil {
+		t.Fatal(err)
+	}
+	v := acc.List("claude")[0]
+	st.Access.App = "claude"
+	st.Access.Form = state.AccessForm{Open: true, EditID: v.ID, Name: "工作", ModelLabel: "my-code", DocJSON: v.Settings}
+	st.Access.Form.Baseline = st.Access.Form.Signature("claude")
+	tt := ui.NewTester(func(c *ui.Context) {
+		EditorCard(c, c.Theme(), uikit.Softs(c.Theme()), st, acc, true)
+	}, 1000, 1400)
+	if !tt.HasText("（跟随网关）") {
+		t.Fatalf("主模型下拉缺「跟随网关」选项: %v", tt.Texts())
+	}
+	if !tt.HasText("主模型:") {
+		t.Fatalf("缺主模型行: %v", tt.Texts())
+	}
+}

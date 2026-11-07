@@ -169,14 +169,24 @@ func modelKeysSection(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state
 	ui.Text(c, "Claude 模型选择").Bold()
 	ui.Text(c, "留空＝跟随网关（ANTHROPIC_MODEL）；值需为网关可路由的逻辑模型名").TextColor(t.TextMuted)
 
+	// 主模型是下拉（2026-11-07 用户指令）：选项＝（跟随网关）哨兵 + 逻辑模型；
+	// 哨兵＝删 model 键（跟随 ANTHROPIC_MODEL）。
+	followGateway := "（跟随网关）"
 	uikit.FormRow(c, t, "主模型:", func() ui.Element {
 		cur := f.ModelKey
-		in := ui.TextInput(c, &cur).Grow(1).Placeholder(f.ModelLabel)
-		if in.Changed() {
-			f.ModelKey = cur
-			accesskit.PatchModelKey(f, cur)
+		if cur == "" {
+			cur = followGateway
 		}
-		return in
+		sel := ui.Select(c, &cur, append([]string{followGateway}, labels...)).Grow(1)
+		if sel.Changed() {
+			v := cur
+			if v == followGateway {
+				v = ""
+			}
+			f.ModelKey = v
+			accesskit.PatchModelKey(f, v)
+		}
+		return sel
 	})
 	uikit.FormRowRaw(c, t, "回退模型:", func() {
 		ui.Column(c).Gap(6).Children(func() {
