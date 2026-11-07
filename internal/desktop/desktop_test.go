@@ -9,6 +9,7 @@ import (
 	"AgentSwitch/internal/app"
 	"AgentSwitch/internal/bridge"
 	"AgentSwitch/internal/desktop/state"
+	"AgentSwitch/internal/desktop/uikit"
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 )
@@ -257,5 +258,14 @@ func TestCloseModalTrayFallback(t *testing.T) {
 	tt := ui.NewTester(u.view, 900, 700)
 	if !tt.HasText("再次启动 AgentSwitch") {
 		t.Fatalf("tray fallback text missing: %v", tt.Texts())
+	}
+}
+
+// TestMenuIconFromUIKitSVG（2026-11-07 组件升级）：uikit 的 *ui.SVG 经
+// mygo.NewMenuIconSVG 可转托盘菜单图标（template 单色模板；ui.SVG 天然满足
+// SVGImage 接口）。
+func TestMenuIconFromUIKitSVG(t *testing.T) {
+	if ic := menuIcon(uikit.IconAccess); ic == nil {
+		t.Fatal("menuIcon 应返回非 nil（uikit SVG → MenuIcon）")
 	}
 }

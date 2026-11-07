@@ -39,6 +39,17 @@ var appTray *mygo.Tray
 // keepTray 记录托盘强引用（见 appTray）。
 func keepTray(t *mygo.Tray) { appTray = t }
 
+// menuIcon 把 uikit SVG 转菜单图标（mygo v0.8.1 NewMenuIconSVG：ui.SVG 天然
+// 满足 SVGImage 接口；template=true 单色模板随明暗主题）。失败返回 nil 降级
+// 纯文字——图标是装饰，不阻塞托盘创建。
+func menuIcon(svg *ui.SVG) *mygo.MenuIcon {
+	ic, err := mygo.NewMenuIconSVG(svg, true)
+	if err != nil {
+		return nil
+	}
+	return ic
+}
+
 // uiState 是根包的 UI 状态适配器：嵌入共享 state（壳层 + 各页状态），
 // 下列过渡字段在 T4–T12 迁移中逐页迁出（页面搬走后删除）。
 type uiState struct {
@@ -164,7 +175,7 @@ func Run(a *app.App) error {
 			IconIsTemplate: runtime.GOOS == "darwin",
 			ToolTip:        "AgentSwitch",
 			Menu: mygo.NewMenu([]*mygo.MenuItem{
-				{Label: "打开主窗口", Click: func(*mygo.MenuItem, *mygo.Window) {
+				{Label: "打开主窗口", Icon: menuIcon(uikit.IconAccess), Click: func(*mygo.MenuItem, *mygo.Window) {
 					if w := win.Load(); !needsReopen(w) {
 						// 隐藏型窗口要先 Show 才会回来；Restore 兼顾最小化态。
 						// 必须推迟出菜单点击事件，否则 Show 触发的帧会提交到
