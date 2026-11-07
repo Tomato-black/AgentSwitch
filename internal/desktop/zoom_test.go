@@ -19,6 +19,11 @@ func TestZoomSteps(t *testing.T) {
 	if one < 0 {
 		t.Fatalf("档位表必须含 1.0: %v", zoomSteps)
 	}
+	// 漂移保护（终审 minor）：1.0 的下标必须与 zoomOne 常量一致——
+	// newUIState 默认值与 Cmd+0 复位都指向 zoomOne，档位表调整挪位会静默错档。
+	if one != zoomOne {
+		t.Fatalf("1.0 档位下标 %d 与 zoomOne=%d 漂移", one, zoomOne)
+	}
 	if zoomAt(one) != 1 {
 		t.Fatalf("zoomAt(基准位) = %v", zoomAt(one))
 	}
