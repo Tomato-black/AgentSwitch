@@ -468,3 +468,30 @@ func TestClaudeEditorOpensAsDrawer(t *testing.T) {
 		t.Fatal("close must keep the draft flag")
 	}
 }
+
+// TestClaudeDrawerHooksPreload：抽屉切换回调走宿主 preloadForm——EditID 换为
+// 目标配置并回填名称/文档；NewDraft 清空 EditID。
+func TestClaudeDrawerHooksPreload(t *testing.T) {
+	st, a := uitest.New(t)
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	st.Access.App = "claude"
+	acc := configs(st)
+	if _, err := acc.Create("claude", "工作", "lm1", "{}"); err != nil {
+		t.Fatal(err)
+	}
+	v2, err := acc.Create("claude", "备用", "lm1", "{}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := claudeDrawerHooks(st, acc)
+	h.SwitchTo(v2.ID)
+	if st.Access.Form.EditID != v2.ID || st.Access.Form.Name != "备用" || !st.Access.Form.Open {
+		t.Fatalf("SwitchTo must preload the target config: %+v", st.Access.Form)
+	}
+	h.NewDraft()
+	if st.Access.Form.EditID != "" || st.Access.Form.Name != "" || !st.Access.Form.Open {
+		t.Fatalf("NewDraft must reset to a fresh draft: %+v", st.Access.Form)
+	}
+}

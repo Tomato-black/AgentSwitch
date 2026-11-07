@@ -280,7 +280,7 @@ func Page(c *ui.Context, st *state.State) {
 	if st.Access.App == "claude" {
 		open := st.Access.Form.Open
 		uikit.Drawer(c, t, &open, "接入配置", "写入受管键到 ~/.claude/settings.json（写前备份）", func() {
-			claude.DrawerCard(c, t, s, st, acc, gateOK)
+			claude.DrawerCard(c, t, s, st, acc, gateOK, claudeDrawerHooks(st, acc))
 		})
 		if st.Access.Form.Open != open {
 			st.Access.Form.Open = open
@@ -288,6 +288,21 @@ func Page(c *ui.Context, st *state.State) {
 				st.Access.Form.Draft = st.Access.Form.Signature("claude") != st.Access.Form.Baseline
 			}
 		}
+	}
+}
+
+// claudeDrawerHooks 返回抽屉的配置切换/新建回调：重置表单为编辑（或新建）
+// 状态并预载文档（宿主职责——claude 子包不反向依赖本包）。
+func claudeDrawerHooks(st *state.State, acc bridge.AccessConfigs) claude.DrawerHooks {
+	return claude.DrawerHooks{
+		SwitchTo: func(id string) {
+			st.Access.Form = state.AccessForm{Open: true, EditID: id}
+			preloadForm(st, acc)
+		},
+		NewDraft: func() {
+			st.Access.Form = state.AccessForm{Open: true}
+			preloadForm(st, acc)
+		},
 	}
 }
 

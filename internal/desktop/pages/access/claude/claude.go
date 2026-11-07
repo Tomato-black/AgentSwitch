@@ -8,6 +8,8 @@ package claude
 import (
 	"fmt"
 
+	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/transfer"
 	"github.com/egoist/mygo/ui"
 
 	"AgentSwitch/internal/bridge"
@@ -16,13 +18,129 @@ import (
 	"AgentSwitch/internal/desktop/uikit"
 )
 
-// DrawerCard 渲染 Claude 接入抽屉正文（原型 2026-11-07 §6.2.2）：名称 +
-// 默认模型/1M + 角色映射 + 受管键只读预览 + 变更对比 + 底部
+// newDraftOption 是抽屉配置下拉的「新建草稿」伪选项（EditID 为空的草稿）。
+const newDraftOption = "（新建草稿）"
+
+// DrawerHooks 让宿主接入页注入抽屉的配置切换/新建回调（宿主负责重置表单
+// 并预载文档；claude 子包不反向依赖宿主）。
+type DrawerHooks struct {
+	SwitchTo func(id string) // 切换到既有配置（EditID=id）
+	NewDraft func()          // 切换到新建草稿（EditID 置空）
+}
+
+// drawerSelect 处理配置下拉的选择变化：目标与当前一致时无操作；dirty 草稿
+// 先武装确认（DrawerSwitchID 空=新建草稿），干净则直接切换。
+func drawerSelect(st *state.State, acc bridge.AccessConfigs, hooks DrawerHooks, name string) {
+	target := "" // 「（新建草稿）」
+	if name != newDraftOption {
+		for _, v := range acc.List("claude") {
+			if v.Name == name {
+				target = v.ID
+				break
+			}
+		}
+		if target == "" {
+			return // 未知选项：忽略
+		}
+	}
+	if target == st.Access.Form.EditID {
+		return
+	}
+	if st.Access.Form.Dirty("claude") {
+		st.Access.DrawerSwitchArm = true
+		st.Access.DrawerSwitchID = target
+		return
+	}
+	applyDrawerSwitch(st, hooks, target)
+}
+
+// confirmDrawerSwitch 是 dirty 切换确认后的执行入口；也用于直接执行。
+func confirmDrawerSwitch(st *state.State, hooks DrawerHooks) {
+	target := st.Access.DrawerSwitchID
+	st.Access.DrawerSwitchArm = false
+	st.Access.DrawerSwitchID = ""
+	applyDrawerSwitch(st, hooks, target)
+}
+
+func applyDrawerSwitch(st *state.State, hooks DrawerHooks, target string) {
+	if target == "" {
+		if hooks.NewDraft != nil {
+			hooks.NewDraft()
+		}
+		return
+	}
+	if hooks.SwitchTo != nil {
+		hooks.SwitchTo(target)
+	}
+}
+
+// DrawerCard 渲染 Claude 接入抽屉正文（原型 2026-11-07 §6.2.2）：配置选择 +
+// 新建、名称、默认模型/1M、角色映射、受管键只读预览、变更对比与底部
 // 关闭/仅保存/保存并应用。角色行编辑直接写回内存文档（DocJSON），保存时
 // 经 bridge 归一化；文档无手编入口后恒为合法 JSON，保存路径仍会再校验。
-func DrawerCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, acc bridge.AccessConfigs, gateOK bool) {
+func DrawerCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, acc bridge.AccessConfigs, gateOK bool, hooks DrawerHooks) {
 	f := &st.Access.Form
 	ui.Column(c).Gap(10).Children(func() {
+		// 配置行：下拉（既有配置 + 新建草稿伪选项）+「新建」。
+		list := acc.List("claude")
+		names := make([]string, 0, len(list))
+		cur := newDraftOption
+		for _, v := range list {
+			names = append(names, v.Name)
+			if v.ID == f.EditID {
+				cur = v.Name
+			}
+		}
+		uikit.FormRowRaw(c, t, "接入配置:", func() {
+			options := append([]string{newDraftOption}, names...)
+			sel := ui.Select(c, &cur, options).Grow(1)
+			if sel.Changed() {
+				drawerSelect(st, acc, hooks, cur)
+			}
+			if uikit.SoftButton(c, t, s, "gray", "新建").Clicked() {
+				if st.Access.Form.Dirty("claude") {
+					st.Access.DrawerSwitchArm = true
+					st.Access.DrawerSwitchID = ""
+				} else if hooks.NewDraft != nil {
+					hooks.NewDraft()
+				}
+			}
+		})
+		// 次级操作行（编辑既有配置时）：启动命令/终端/备份恢复/删除。
+		if f.EditID != "" {
+			ui.Row(c).Gap(8).Wrap().Children(func() {
+				if gateOK {
+					if uikit.SoftButton(c, t, s, "gray", "复制启动命令").Clicked() {
+						if cmd, err := acc.LaunchCommand(f.EditID); err != nil {
+							f.Msg = "生成启动命令失败：" + err.Error()
+						} else {
+							mygo.Clipboard.Write(transfer.TextData(cmd))
+							f.Msg = "启动命令已复制"
+						}
+					}
+					if uikit.SoftButton(c, t, s, "gray", "打开终端").Clicked() {
+						if err := acc.OpenTerminal(f.EditID); err != nil {
+							f.Msg = "打开终端失败：" + err.Error()
+						} else {
+							f.Msg = ""
+						}
+					}
+				}
+				if uikit.SoftButton(c, t, s, "gray", "备份与恢复").Clicked() {
+					st.Access.BackupOpen = true
+					st.Access.BackupMsg = ""
+					st.Access.Backups, _ = acc.ListBackups("claude")
+				}
+				if uikit.SoftButton(c, t, s, "gray", "还原最近备份").Clicked() {
+					st.Access.RestoreArm = true
+				}
+				if uikit.SoftButton(c, t, s, "danger", "删除").Clicked() {
+					st.Access.DeleteArm = true
+					st.Access.DeleteID = f.EditID
+				}
+			})
+		}
+
 		uikit.FormRow(c, t, "名称:", func() ui.Element {
 			return ui.TextInput(c, &f.Name).Grow(1)
 		})
@@ -96,6 +214,17 @@ func DrawerCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State
 				accesskit.SaveFormWithApply(st, acc, true)
 			}
 		})
+
+		// dirty 草稿切换/新建的确认框（取消默认聚焦）。
+		if st.Access.DrawerSwitchArm {
+			uikit.ConfirmDialog(c, t, uikit.ConfirmOpts{
+				Open:    &st.Access.DrawerSwitchArm,
+				Title:   "放弃未保存的接入修改？",
+				Message: "抽屉里的名称/模型/角色映射修改尚未保存，切换配置将丢弃这些修改。",
+				CancelLabel: "取消", ConfirmLabel: "放弃并切换", Danger: true,
+				OnConfirm: func() { confirmDrawerSwitch(st, hooks) },
+			})
+		}
 	})
 }
 
