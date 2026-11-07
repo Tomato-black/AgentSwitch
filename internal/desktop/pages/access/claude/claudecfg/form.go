@@ -184,6 +184,9 @@ func customEnvRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.Cla
 	sensitive := corecfg.IsSensitivePath(path)
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, key).Font(uikit.MonoFont).Width(310)
+		if isWeakManagedEnv(cf, path) {
+			uikit.SoftBadge(c, t, s, "warn", "接入应用可能覆盖")
+		}
 		if sensitive && !cf.Reveal[key] {
 			ui.Text(c, corecfg.MaskSecret(value)).Font(uikit.MonoFont).Grow(1)
 			if uikit.SoftButton(c, t, s, "gray", "显示").Clicked() {
@@ -732,6 +735,12 @@ func fieldBlocked(cf *state.ClaudeCfgState, path string) (bool, string) {
 			return true, "项目共享不能设置该键；请切到用户级或项目本地"
 		}
 	}
+	// 接入投影的强受管顶层键（含子路径）任何层都只读（I4）。
+	for _, k := range cf.Managed.StrongTopLevel {
+		if path == k || strings.HasPrefix(path, k+".") {
+			return true, "接入投影键由「接入」管理，请到接入页修改"
+		}
+	}
 	spec, ok := corecfg.Lookup(path)
 	if !ok {
 		return false, ""
@@ -740,6 +749,17 @@ func fieldBlocked(cf *state.ClaudeCfgState, path string) (bool, string) {
 		return true, "该键不支持写入当前层级"
 	}
 	return false, ""
+}
+
+// isWeakManagedEnv 报告 path（形如 env.KEY）是否弱受管：可编辑，但接入
+// 「应用」后会覆盖该值。
+func isWeakManagedEnv(cf *state.ClaudeCfgState, path string) bool {
+	for _, k := range cf.Managed.WeakEnv {
+		if k == path {
+			return true
+		}
+	}
+	return false
 }
 
 func sourceLabel(k corecfg.ScopeKind) string {

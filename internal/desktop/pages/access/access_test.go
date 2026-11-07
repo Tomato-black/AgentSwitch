@@ -16,6 +16,35 @@ import (
 	"AgentSwitch/internal/storage"
 )
 
+// TestTabDirtyIncludesClaudeCfg 回归（I1）：Claude 页签的 Claude Code 设置区
+// 有未保存修改时页签切换也要确认；确认切换后该区草稿被丢弃。
+func TestTabDirtyIncludesClaudeCfg(t *testing.T) {
+	st, _ := uitest.New(t)
+	st.Access.App = "claude"
+	if tabDirty(st) {
+		t.Fatal("clean claude config must not block tab switch")
+	}
+	st.ClaudeCfg.Home = "/tmp/home"
+	st.ClaudeCfg.Dirty = true
+	if !tabDirty(st) {
+		t.Fatal("dirty claude config must block tab switch")
+	}
+	requestTab(st, configs(st), "codex")
+	if !st.Access.SwitchArm || st.Access.SwitchTo != "codex" {
+		t.Fatalf("dirty switch must arm confirm: %+v", st.Access)
+	}
+	if st.Access.App != "claude" {
+		t.Fatal("tab must not change before confirm")
+	}
+	switchTab(st, configs(st), "codex")
+	if st.Access.App != "codex" || st.ClaudeCfg.Dirty {
+		t.Fatalf("confirmed switch must discard draft: app=%q cfg=%+v", st.Access.App, st.ClaudeCfg)
+	}
+	if st.ClaudeCfg.Home != "/tmp/home" {
+		t.Fatalf("injected Home must survive: %q", st.ClaudeCfg.Home)
+	}
+}
+
 // TestAccessRepreviewForm 覆盖基线变化后的表单重预览（Important#1）：按当前
 // 表单模型重新合成、成功清空旧消息、失败内联「预览失败：」。
 func TestAccessRepreviewForm(t *testing.T) {

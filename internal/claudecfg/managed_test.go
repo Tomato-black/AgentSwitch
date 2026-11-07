@@ -42,12 +42,12 @@ func TestMergeManagedDocs(t *testing.T) {
 		"managedMcpServers": map[string]any{"fs": map[string]any{"command": "fs", "timeout": 30}},
 	}
 	drop1 := map[string]any{
-		"model":           "opus", // 标量后写覆盖
+		"model": "opus", // 标量后写覆盖
 		"permissions": map[string]any{ // 对象逐键合并（未提及键保留）
 			"allow": []any{"Read"}, // 数组并集去重
 		},
-		"env": map[string]any{"B": "override", "C": "3"},
-		"fallbackModel": []any{"haiku"}, // 整值替换（不并集）
+		"env":             map[string]any{"B": "override", "C": "3"},
+		"fallbackModel":   []any{"haiku"}, // 整值替换（不并集）
 		"availableModels": []any{"opus", "sonnet"},
 		"managedMcpServers": map[string]any{ // 同名 fs 整值替换、新增 srv
 			"fs":  map[string]any{"command": "fs2"},
@@ -102,8 +102,8 @@ func TestMergeManagedDocsScalarTypeChangeAndNumbers(t *testing.T) {
 
 func TestMergeManagedDocsDoesNotMutateInputs(t *testing.T) {
 	base := map[string]any{
-		"env":                   map[string]any{"A": "1"},
-		"managedMcpServers":     map[string]any{"fs": map[string]any{"command": "fs"}},
+		"env":                    map[string]any{"A": "1"},
+		"managedMcpServers":      map[string]any{"fs": map[string]any{"command": "fs"}},
 		"extraKnownMarketplaces": map[string]any{"m1": map[string]any{"source": "x"}},
 	}
 	drop := map[string]any{

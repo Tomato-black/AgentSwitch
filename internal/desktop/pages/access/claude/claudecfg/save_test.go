@@ -266,6 +266,36 @@ func TestUserSaveDoesNotInjectDangerousSkip(t *testing.T) {
 	}
 }
 
+// TestSaveDialogWarnsWeakManagedEnvKeys 回归（I4）：弱受管 env 键在变更列表中
+// 时，确认框给出「接入应用可能覆盖」警告行。
+func TestSaveDialogWarnsWeakManagedEnvKeys(t *testing.T) {
+	st, cfgs, _ := loadedUserState(t)
+	cf := &st.ClaudeCfg
+	cf.Managed = corecfg.ManagedSet{WeakEnv: []string{"env.HTTPS_PROXY"}}
+	corecfg.Set(cf.Doc, "env.HTTPS_PROXY", "http://proxy:8080")
+	RecomputeDirty(cf)
+	cf.SaveArm = true
+
+	tt := renderSaveDialog(st, cfgs)
+	if !tt.HasText("接入应用可能覆盖") {
+		t.Fatalf("weak-managed warning missing: %v", tt.Texts())
+	}
+	if !tt.HasText("env.HTTPS_PROXY") {
+		t.Fatalf("weak-managed key must be listed: %v", tt.Texts())
+	}
+
+	// 无弱受管变更时不出现警告行。
+	cf2 := &st.ClaudeCfg
+	cf2.Doc = cloneDoc(cf2.Baseline)
+	corecfg.Set(cf2.Doc, "model", "opus")
+	RecomputeDirty(cf2)
+	cf2.SaveArm = true
+	tt = renderSaveDialog(st, cfgs)
+	if tt.HasText("接入应用可能覆盖") {
+		t.Fatalf("warning must not appear without weak changes: %v", tt.Texts())
+	}
+}
+
 func TestConflictDialogOverwritesWithDiskHash(t *testing.T) {
 	st, _, file := loadedUserState(t)
 	cf := &st.ClaudeCfg

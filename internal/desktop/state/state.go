@@ -152,6 +152,16 @@ type ClaudeCfgState struct {
 	RestoreID    string
 	RestoreLabel string
 
+	// ReloadArm 是「放弃未保存修改」确认框 open 位：刷新/切层/切项目在有
+	// 未保存修改时先武装，PendingReload 存确认后要执行的动作（I1）。
+	ReloadArm     bool
+	PendingReload func()
+
+	// BrokenFile：磁盘文件不是合法 JSON 时的只读修复态（I5）——表单停用、
+	// JSON 视图只读显示原文；RebuildArm 是「用空配置重建」危险确认 open 位。
+	BrokenFile bool
+	RebuildArm bool
+
 	Projects []bridge.ClaudeProject
 	Skills   []bridge.SkillView
 	SkillErr string
@@ -424,9 +434,16 @@ func (s *State) DirtyCurrent() bool {
 			return s.Channels.Signature() != s.Channels.Baseline
 		}
 	case "access":
-		return s.Access.Form.Dirty(s.Access.App) || s.Access.DesktopForm.Dirty()
+		return s.Access.Form.Dirty(s.Access.App) || s.Access.DesktopForm.Dirty() ||
+			claudeCfgDirty(s)
 	}
 	return false
+}
+
+// claudeCfgDirty 报告 Claude Code 设置区是否有未保存编辑（I1：此前侧栏切页
+// 感知不到该区的 Dirty）。非 Claude 页签恒干净。
+func claudeCfgDirty(s *State) bool {
+	return s.Access.App == "claude" && s.ClaudeCfg.Dirty
 }
 
 // Go 切换页面/子视图：有未保存编辑时先武装确认（NavArm），确认后 Navigate。
@@ -476,6 +493,9 @@ func (s *State) discardDrafts() {
 		s.Access.Form = AccessForm{}
 		s.Access.DesktopForm = DesktopForm{}
 		s.Access.ApplyID = ""
+		// Claude 设置区草稿一并丢弃（保留测试注入的 Home；Loaded 归 false，
+		// 下次进入重新加载）。
+		s.ClaudeCfg = ClaudeCfgState{Home: s.ClaudeCfg.Home}
 	}
 }
 

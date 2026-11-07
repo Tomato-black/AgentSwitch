@@ -85,6 +85,40 @@ func TestGoDirtyGuard(t *testing.T) {
 	}
 }
 
+// TestGoDirtyGuardClaudeCfg 回归（I1）：接入页 Claude 页签的设置区有未保存
+// 修改时，侧栏切页必须武装确认；确认后草稿连同表单一起丢弃（Home 保留）。
+func TestGoDirtyGuardClaudeCfg(t *testing.T) {
+	s := &State{Page: "access"}
+	s.Access.App = "claude"
+	if s.DirtyCurrent() {
+		t.Fatal("clean settings section must not block nav")
+	}
+	s.ClaudeCfg.Home = "/tmp/home"
+	s.ClaudeCfg.Dirty = true
+	if !s.DirtyCurrent() {
+		t.Fatal("dirty claude config must block sidebar nav")
+	}
+	s.Go("channels", nil)
+	if !s.NavArm || s.NavTo != "channels" {
+		t.Fatalf("dirty goto must arm confirm: %+v", s)
+	}
+	s.Navigate(s.NavTo, nil)
+	if s.ClaudeCfg.Dirty || s.ClaudeCfg.Loaded {
+		t.Fatalf("navigate must discard claude config draft: %+v", s.ClaudeCfg)
+	}
+	if s.ClaudeCfg.Home != "/tmp/home" {
+		t.Fatalf("injected Home must survive discard: %q", s.ClaudeCfg.Home)
+	}
+
+	// 非 Claude 页签不受该区脏状态影响。
+	s = &State{Page: "access"}
+	s.Access.App = "codex"
+	s.ClaudeCfg.Dirty = true
+	if s.DirtyCurrent() {
+		t.Fatal("codex tab must ignore claude config dirty flag")
+	}
+}
+
 func TestNewDefaultsToChannelsWhenEmpty(t *testing.T) {
 	a, err := app.Open(app.Options{
 		DBPath:  filepath.Join(t.TempDir(), "s.db"),

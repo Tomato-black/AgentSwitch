@@ -48,7 +48,11 @@ func Section(c *ui.Context, st *state.State) {
 			case "merged":
 				mergedView(c, t, st)
 			default:
-				FormSection(c, st)
+				if st.ClaudeCfg.BrokenFile {
+					repairCard(c, t, s, st, cfgs)
+				} else {
+					FormSection(c, st)
+				}
 			}
 			uikit.Feedback(c, t, uikit.InferFeedback(st.ClaudeCfg.Msg), st.ClaudeCfg.Msg)
 		})
@@ -56,6 +60,121 @@ func Section(c *ui.Context, st *state.State) {
 	saveDialog(c, st, cfgs)
 	conflictDialog(c, st, cfgs)
 	restoreBackupDialog(c, st, cfgs)
+	reloadDialog(c, st)
+	rebuildDialog(c, st, cfgs)
+}
+
+// repairCard 是损坏 JSON 的只读修复卡（I5）：表单停用说明 + 备份恢复入口 +
+// 「用空配置重建」（托管层只读，不提供重建）。
+func repairCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, cfgs bridge.ClaudeConfigs) {
+	cf := &st.ClaudeCfg
+	uikit.Feedback(c, t, uikit.FeedbackError,
+		"文件不是合法 JSON，表单已停用：可切到 JSON 视图查看原文，从备份恢复，或用空配置重建（损坏内容会先备份）。")
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		if uikit.SoftButton(c, t, s, "gray", "备份与恢复").Clicked() {
+			openBackups(st, cfgs)
+		}
+		if cf.Layer != "managed" {
+			if uikit.SoftButton(c, t, s, "danger", "用空配置重建").Clicked() {
+				cf.RebuildArm = true
+			}
+		}
+	})
+}
+
+// rebuildDialog 是「用空配置重建」的二次危险确认；确认后以空文档覆盖损坏
+// 文件（bridge 先备份损坏内容），并重载当前层。
+func rebuildDialog(c *ui.Context, st *state.State, cfgs bridge.ClaudeConfigs) {
+	cf := &st.ClaudeCfg
+	if !cf.RebuildArm {
+		return
+	}
+	t := c.Theme()
+	uikit.RichDialog(c, t, uikit.RichDialogOpts{
+		Open:     &cf.RebuildArm,
+		Title:    "用空配置重建？",
+		Subtitle: cf.File,
+		Width:    520,
+		Body: func() {
+			ui.Text(c, "当前文件不是合法 JSON，无法按键合并保存。重建将以空对象 {} 覆盖整个文件；损坏的原文会先自动备份一份，可从「备份与恢复」找回。").TextColor(t.TextMuted)
+		},
+		Actions: []uikit.RichDialogAction{
+			{Label: "取消", Default: true},
+			{Label: "重建", Danger: true, OnClick: func() { rebuildBrokenFile(st, cfgs) }},
+		},
+	})
+}
+
+// rebuildBrokenFile 以空文档覆盖损坏文件（走 bridge 的 Rebuild 保存路径）。
+func rebuildBrokenFile(st *state.State, cfgs bridge.ClaudeConfigs) {
+	cf := &st.ClaudeCfg
+	res, err := cfgs.SaveClaudeConfigLayer(bridge.SaveClaudeConfigRequest{
+		Kind:         scopeOf(cf.Layer, cf.Sub),
+		Project:      cf.Project,
+		Sub:          cf.Sub,
+		Document:     map[string]any{},
+		ExpectedHash: cf.Hash,
+		Create:       !cf.Exists,
+		Rebuild:      true,
+		Changed:      []string{"(rebuild)"},
+	})
+	if err != nil {
+		cf.Msg = err.Error()
+		return
+	}
+	applySaveResult(st, cfgs, res, "已重建")
+}
+
+// guardReload 是设置区统一的未保存修改守卫（I1）：干净时直接执行动作；
+// 有修改时武装「放弃未保存修改」确认框，确认后才执行（刷新/切层/切项目/
+// 切共享-本地共用）。
+func guardReload(st *state.State, action func()) {
+	cf := &st.ClaudeCfg
+	if !cf.Dirty {
+		action()
+		return
+	}
+	cf.PendingReload = action
+	cf.ReloadArm = true
+}
+
+// switchLayer 切层/切项目/切子层：经脏守卫后应用变更并重新加载。
+func switchLayer(st *state.State, cfgs bridge.ClaudeConfigs, apply func(cf *state.ClaudeCfgState)) {
+	guardReload(st, func() {
+		apply(&st.ClaudeCfg)
+		st.ClaudeCfg.Doc = nil
+		st.ClaudeCfg.Loaded = false
+		load(st, cfgs)
+	})
+}
+
+// reloadDialog 是「放弃未保存修改」确认框：继续编辑为默认焦点，放弃修改为
+// 危险动作居末位。
+func reloadDialog(c *ui.Context, st *state.State) {
+	cf := &st.ClaudeCfg
+	if !cf.ReloadArm {
+		return
+	}
+	t := c.Theme()
+	uikit.RichDialog(c, t, uikit.RichDialogOpts{
+		Open:     &cf.ReloadArm,
+		Title:    "放弃未保存的修改？",
+		Subtitle: cf.Display,
+		Width:    480,
+		Body: func() {
+			ui.Text(c, "当前层有未保存的修改；重新加载或切换将丢弃这些修改（可先点「保存设置」）。").TextColor(t.TextMuted)
+		},
+		Actions: []uikit.RichDialogAction{
+			{Label: "继续编辑", Default: true},
+			{Label: "放弃修改", Danger: true, OnClick: func() {
+				action := cf.PendingReload
+				cf.PendingReload = nil
+				if action != nil {
+					action()
+				}
+			}},
+		},
+	})
 }
 
 func ensure(cf *state.ClaudeCfgState) {
@@ -76,6 +195,8 @@ func ensure(cf *state.ClaudeCfgState) {
 func load(st *state.State, cfgs bridge.ClaudeConfigs) {
 	cf := &st.ClaudeCfg
 	cf.Msg = ""
+	cf.ParseErr = ""
+	cf.BrokenFile = false
 	if cf.Projects == nil {
 		cf.Projects, _ = cfgs.ListClaudeProjects()
 	}
@@ -125,11 +246,14 @@ func load(st *state.State, cfgs bridge.ClaudeConfigs) {
 	cf.Violations = view.Violations
 	cf.Overrides = map[string]bool{}
 	cf.Reveal = map[string]bool{}
-	cf.ParseErr = ""
 	if view.ParseError != "" {
+		// 只读修复态（I5）：JSON 视图显示磁盘原文，表单停用，保存阻断。
 		cf.ParseErr = view.ParseError
+		cf.BrokenFile = true
+		cf.JSONText = view.RawJSON
+	} else {
+		cf.JSONText = pretty(view.Doc)
 	}
-	cf.JSONText = pretty(view.Doc)
 	cf.MergeText = ""
 	if merged, entries, err := cfgs.MergeClaudeConfigView(cf.Project); err == nil {
 		cf.MergeText = pretty(merged)
@@ -171,7 +295,7 @@ func header(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, cf
 		uikit.SoftBadge(c, t, s, "gray", "受管 13 键")
 		ui.Box(c).Grow(1)
 		if uikit.SoftButton(c, t, s, "gray", "刷新").Clicked() {
-			load(st, cfgs)
+			guardReload(st, func() { load(st, cfgs) })
 		}
 		canSave := st.ClaudeCfg.Loaded && st.ClaudeCfg.Layer != "managed" && st.ClaudeCfg.Dirty &&
 			saveBlockReason(&st.ClaudeCfg) == ""
@@ -199,21 +323,13 @@ func layerSelector(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.St
 		idx = 2
 	}
 	if ui.Tabs(c, &idx, "用户级", "项目级", "企业托管").Changed() {
-		if cf.Dirty {
-			cf.Msg = "有未保存修改；请先保存或点「刷新」放弃"
-			return
+		layer := "user"
+		if idx == 1 {
+			layer = "project"
+		} else if idx == 2 {
+			layer = "managed"
 		}
-		switch idx {
-		case 1:
-			cf.Layer = "project"
-		case 2:
-			cf.Layer = "managed"
-		default:
-			cf.Layer = "user"
-		}
-		cf.Doc = nil
-		cf.Loaded = false
-		load(st, cfgs)
+		switchLayer(st, cfgs, func(cf *state.ClaudeCfgState) { cf.Layer = layer })
 	}
 	if cf.Layer == "project" {
 		paths := make([]string, 0, len(cf.Projects))
@@ -223,14 +339,7 @@ func layerSelector(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.St
 		if len(paths) > 0 {
 			project := cf.Project
 			if ui.Select(c, &project, paths).Changed() && project != cf.Project {
-				if cf.Dirty {
-					cf.Msg = "有未保存修改；请先保存或点「刷新」放弃"
-					return
-				}
-				cf.Project = project
-				cf.Doc = nil
-				cf.Loaded = false
-				load(st, cfgs)
+				switchLayer(st, cfgs, func(cf *state.ClaudeCfgState) { cf.Project = project })
 			}
 		} else {
 			ui.Text(c, "未读取到最近项目；可手动输入项目目录").TextColor(t.TextMuted)
@@ -238,14 +347,8 @@ func layerSelector(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.St
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.TextInput(c, &cf.ProjectInput).Grow(1).Placeholder("/path/to/project")
 			if uikit.SoftButton(c, t, s, "gray", "打开").Clicked() && strings.TrimSpace(cf.ProjectInput) != "" && cf.ProjectInput != cf.Project {
-				if cf.Dirty {
-					cf.Msg = "有未保存修改；请先保存或点「刷新」放弃"
-					return
-				}
-				cf.Project = strings.TrimSpace(cf.ProjectInput)
-				cf.Doc = nil
-				cf.Loaded = false
-				load(st, cfgs)
+				target := strings.TrimSpace(cf.ProjectInput)
+				switchLayer(st, cfgs, func(cf *state.ClaudeCfgState) { cf.Project = target })
 			}
 		})
 		sub := 0
@@ -253,18 +356,11 @@ func layerSelector(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.St
 			sub = 1
 		}
 		if ui.Tabs(c, &sub, "共享 .claude/settings.json", "本地 .claude/settings.local.json").Changed() {
-			if cf.Dirty {
-				cf.Msg = "有未保存修改；请先保存或点「刷新」放弃"
-				return
-			}
+			next := "shared"
 			if sub == 1 {
-				cf.Sub = "local"
-			} else {
-				cf.Sub = "shared"
+				next = "local"
 			}
-			cf.Doc = nil
-			cf.Loaded = false
-			load(st, cfgs)
+			switchLayer(st, cfgs, func(cf *state.ClaudeCfgState) { cf.Sub = next })
 		}
 	}
 	if cf.Layer == "managed" {
@@ -303,8 +399,9 @@ func viewTabs(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, 
 		if idx == 0 {
 			cf.View = "form"
 		} else if idx == 1 {
-			if cf.View != "json" {
+			if cf.View != "json" && !cf.BrokenFile {
 				// 从表单切回 JSON 时按当前 Doc 重建文本，避免显示旧快照。
+				// 损坏文件例外：JSON 视图必须保留磁盘原文（I5）。
 				cf.JSONText = pretty(cf.Doc)
 				cf.ParseErr = ""
 				cf.JSONHint = ""

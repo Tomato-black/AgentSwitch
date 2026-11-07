@@ -2,6 +2,7 @@ package claudecfg
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -249,5 +250,58 @@ func TestPluginToggleWritesObjectBool(t *testing.T) {
 	}
 	if m["bar@market"] != true || m["foo@market"] != false {
 		t.Fatalf("enabledPlugins = %v", m)
+	}
+}
+
+// TestFieldBlockedByStrongManagedTopLevel 回归（I4）：接入投影的强受管顶层键
+// （含子路径）在表单中只读，理由指明去接入页修改。
+func TestFieldBlockedByStrongManagedTopLevel(t *testing.T) {
+	st := formTestState(t)
+	st.ClaudeCfg.Managed = corecfg.ManagedSet{StrongTopLevel: []string{"statusLine", "permissions"}}
+	for _, path := range []string{"statusLine", "statusLine.command", "permissions", "permissions.allow"} {
+		blocked, reason := fieldBlocked(&st.ClaudeCfg, path)
+		if !blocked {
+			t.Fatalf("%s must be blocked by managed projection", path)
+		}
+		if !strings.Contains(reason, "接入投影") || !strings.Contains(reason, "接入") {
+			t.Fatalf("reason must point to the access page: %q", reason)
+		}
+	}
+	// 非受管键不受影响。
+	if blocked, _ := fieldBlocked(&st.ClaudeCfg, "model"); blocked {
+		t.Fatal("unrelated key must stay editable")
+	}
+
+	// 渲染层面：状态栏组显示锁定理由，不出现输入框。
+	st.ClaudeCfg.Doc = map[string]any{"model": "opus"}
+	tt := renderForm(st, 1200, 3000)
+	if !tt.HasText("接入投影") {
+		t.Fatalf("blocked reason must render: %v", tt.Texts())
+	}
+	if tt.HasText("静态文本") {
+		t.Fatalf("statusLine inputs must not render for managed keys: %v", tt.Texts())
+	}
+}
+
+// TestCustomEnvRowShowsWeakManagedBadge 回归（I4）：弱受管 env 键的自定义行
+// 显示「接入应用可能覆盖」警告徽章（仅该行，非弱受管行不带）。
+func TestCustomEnvRowShowsWeakManagedBadge(t *testing.T) {
+	st := formTestState(t)
+	cf := &st.ClaudeCfg
+	cf.Doc = map[string]any{"env": map[string]any{"HTTPS_PROXY": "http://proxy", "FREE_KEY": "x"}}
+	cf.Baseline = cloneDoc(cf.Doc)
+	cf.Managed = corecfg.ManagedSet{WeakEnv: []string{"env.HTTPS_PROXY"}}
+	tt := renderForm(st, 1200, 3000)
+	if !tt.HasText("接入应用可能覆盖") {
+		t.Fatalf("weak-managed warning badge missing: %v", tt.Texts())
+	}
+	count := 0
+	for _, text := range tt.Texts() {
+		if text == "接入应用可能覆盖" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("badge must appear exactly once (only the weak row): %d in %v", count, tt.Texts())
 	}
 }

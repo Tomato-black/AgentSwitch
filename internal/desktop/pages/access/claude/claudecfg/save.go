@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -77,6 +78,9 @@ func saveDialogBody(c *ui.Context, t *ui.Theme, cf *state.ClaudeCfgState, change
 			})
 		})
 		dialogKV(c, t, "备份目录", backupRootDisplay(cf))
+		if weak := weakManagedChangedKeys(cf, changed); len(weak) > 0 {
+			ui.Text(c, strings.Join(weak, ", ")+"：接入应用可能覆盖此值").TextColor(t.Warning)
+		}
 		ui.Row(c).Gap(6).Children(func() {
 			ui.Text(c, "生效范围").TextColor(t.TextMuted)
 			for _, label := range effectLabels(changed) {
@@ -99,6 +103,25 @@ func dialogKV(c *ui.Context, t *ui.Theme, label, value string) {
 		ui.Text(c, label).TextColor(t.TextMuted)
 		ui.Text(c, value).Font(uikit.MonoFont).SingleLine()
 	})
+}
+
+// weakManagedChangedKeys 返回变更列表中属于弱受管 env 的键（I4）：保存不
+// 阻断，但要在确认框警告「接入应用可能覆盖」。
+func weakManagedChangedKeys(cf *state.ClaudeCfgState, changed []string) []string {
+	if len(cf.Managed.WeakEnv) == 0 || len(changed) == 0 {
+		return nil
+	}
+	weak := make(map[string]bool, len(cf.Managed.WeakEnv))
+	for _, k := range cf.Managed.WeakEnv {
+		weak[k] = true
+	}
+	var out []string
+	for _, path := range changed {
+		if weak[path] {
+			out = append(out, path)
+		}
+	}
+	return out
 }
 
 func backupRootDisplay(cf *state.ClaudeCfgState) string {

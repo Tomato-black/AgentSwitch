@@ -549,9 +549,11 @@ func deleteConfirm(c *ui.Context, st *state.State, acc bridge.AccessConfigs) {
 	})
 }
 
-// tabDirty 报告接入页是否存在未保存的编辑器内容（两套表单任一）。
+// tabDirty 报告接入页是否存在未保存的编辑器内容（两套表单任一；Claude
+// 页签还计入 Claude Code 设置区的未保存修改，I1）。
 func tabDirty(st *state.State) bool {
-	return st.Access.Form.Dirty(st.Access.App) || st.Access.DesktopForm.Dirty()
+	return st.Access.Form.Dirty(st.Access.App) || st.Access.DesktopForm.Dirty() ||
+		(st.Access.App == "claude" && st.ClaudeCfg.Dirty)
 }
 
 // requestTab 处理页签点击：干净则立即切换；有未保存编辑则武装确认弹窗。
@@ -575,6 +577,8 @@ func switchTab(st *state.State, acc bridge.AccessConfigs, app string) {
 	st.Access.Form = state.AccessForm{}
 	st.Access.DesktopForm = state.DesktopForm{}
 	st.Access.RowMore = ""
+	// Claude 设置区草稿随页签丢弃（保留注入 Home；下次进入重新加载）。
+	st.ClaudeCfg = state.ClaudeCfgState{Home: st.ClaudeCfg.Home}
 	if app == "claude" || app == "codex" {
 		reloadGlobal(st, acc)
 	}

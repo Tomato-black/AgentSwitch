@@ -52,7 +52,8 @@ func (e *ConflictError) Error() string {
 }
 
 // SaveClaudeConfigRequest 是一次分层保存请求。Changed 为空时按 Document 与
-// 磁盘基线自动 diff。
+// 磁盘基线自动 diff。Rebuild 允许以空基线覆盖损坏（非法 JSON）的磁盘文件
+// ——「用空配置重建」专用；损坏内容写入前仍会先备份。
 type SaveClaudeConfigRequest struct {
 	Kind         claudecfg.ScopeKind
 	Project      string
@@ -62,6 +63,7 @@ type SaveClaudeConfigRequest struct {
 	Changed      []string
 	ExpectedHash string
 	Create       bool
+	Rebuild      bool
 }
 
 // SaveResult 是保存结果。
@@ -122,11 +124,16 @@ func (s ClaudeConfigs) SaveClaudeConfigLayer(req SaveClaudeConfigRequest) (SaveR
 	if readErr == nil {
 		exists = true
 		doc, err := claudecfg.ParseDoc(b)
-		if err != nil {
+		switch {
+		case err == nil:
+			base = doc.Raw
+			diskHash = doc.Hash
+		case req.Rebuild:
+			// 损坏文件以空文档为基线重建（ExpectedHash 仍须等于磁盘的空
+			// Hash，绝不静默覆盖合法文件；写入前先备份损坏内容）。
+		default:
 			return SaveResult{}, fmt.Errorf("当前文件不是合法 JSON：%w", err)
 		}
-		base = doc.Raw
-		diskHash = doc.Hash
 	} else if !errors.Is(readErr, fs.ErrNotExist) {
 		return SaveResult{}, readErr
 	} else if !req.Create {

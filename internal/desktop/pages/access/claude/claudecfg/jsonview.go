@@ -21,7 +21,9 @@ const jsonParseDebounce = 300 * time.Millisecond
 func jsonView(c *ui.Context, t *ui.Theme, st *state.State) {
 	cf := &st.ClaudeCfg
 	s := uikit.Softs(t)
-	readOnly := cf.Layer == "managed"
+	// 只读：托管层，以及磁盘文件损坏的修复态（I5——原文只可查看，修复走
+	// 备份恢复或「用空配置重建」）。
+	readOnly := cf.Layer == "managed" || cf.BrokenFile
 
 	uikit.Feedback(c, t, uikit.FeedbackWarning,
 		"JSON 视图显示明文（含密钥）；截图或分享前请遮蔽。日志与遥测不会记录值。")

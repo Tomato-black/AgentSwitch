@@ -455,3 +455,50 @@ func TestSaveClaudeConfigConcurrent(t *testing.T) {
 		t.Fatalf("corrupted file: %#v", got)
 	}
 }
+
+// TestSaveClaudeConfigRebuildBrokenJSON 回归（I5）：损坏（非法 JSON）文件正常
+// 保存被拒；Rebuild=true 时以空文档覆盖，损坏内容先备份，可再恢复。
+func TestSaveClaudeConfigRebuildBrokenJSON(t *testing.T) {
+	home := t.TempDir()
+	path := writeClaudeSettings(t, home, `{"model":"sonnet", BROKEN`)
+	cfgs := ClaudeConfigs{A: tempApp(t), Home: home}
+	req := ReadLayerRequest{Kind: claudecfg.ScopeUser}
+
+	// 正常保存对损坏文件报错，不覆盖。
+	if _, err := cfgs.SaveClaudeConfigLayer(SaveClaudeConfigRequest{
+		Kind: claudecfg.ScopeUser, Document: map[string]any{}, ExpectedHash: "",
+	}); err == nil || !strings.Contains(err.Error(), "不是合法 JSON") {
+		t.Fatalf("plain save must refuse broken file: %v", err)
+	}
+
+	// Rebuild 以空基线覆盖：ExpectedHash 空与磁盘（解析失败的空 Hash）一致。
+	res, err := cfgs.SaveClaudeConfigLayer(SaveClaudeConfigRequest{
+		Kind: claudecfg.ScopeUser, Document: map[string]any{},
+		ExpectedHash: "", Changed: []string{"(rebuild)"}, Rebuild: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := readClaudeTestDoc(t, path); len(got) != 0 {
+		t.Fatalf("rebuilt file must be empty object: %#v", got)
+	}
+	// 损坏内容已备份，恢复可找回。
+	if res.BackupPath == "" {
+		t.Fatal("rebuild must back up the broken content first")
+	}
+	broken, err := os.ReadFile(res.BackupPath)
+	if err != nil || !strings.Contains(string(broken), "BROKEN") {
+		t.Fatalf("backup must hold the broken content: %s %v", broken, err)
+	}
+
+	// Rebuild 不放过合法文件：ExpectedHash 空对真实磁盘 Hash 仍报冲突。
+	view := mustReadClaudeLayer(t, cfgs, req)
+	_, err = cfgs.SaveClaudeConfigLayer(SaveClaudeConfigRequest{
+		Kind: claudecfg.ScopeUser, Document: map[string]any{}, ExpectedHash: "", Rebuild: true,
+	})
+	var ce *ConflictError
+	if !errors.As(err, &ce) {
+		t.Fatalf("rebuild over valid file must conflict, got %v", err)
+	}
+	_ = view
+}
