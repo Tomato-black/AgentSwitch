@@ -17,14 +17,16 @@ import (
 )
 
 // navItems 是侧栏导航的四项：id 即 uiState.page 的分发 id（pageView 消费），
-// label 供渲染与测试点击。顺序即展示序（spec §6.1：逻辑模型/渠道/接入/设置）。
+// label 供渲染与测试点击。顺序即展示序（spec §6.1：逻辑模型/渠道/接入/设置；
+// 接入项 2026-11-07 改名「Agent 接入」——接入与 Claude Code 设置合并后的
+// 唯一入口，需求 2026-11-07 §3.2）。
 var navItems = []struct {
 	id, label string
 	icon      *ui.SVG
 }{
 	{"logical", "逻辑模型", uikit.IconLogical},
 	{"channels", "渠道", uikit.IconChannels},
-	{"access", "接入", uikit.IconAccess},
+	{"access", "Agent 接入", uikit.IconAccess},
 	{"settings", "设置", uikit.IconSettings},
 }
 

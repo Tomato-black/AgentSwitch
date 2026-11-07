@@ -21,6 +21,11 @@ func TestNavItemSet(t *testing.T) {
 			t.Fatalf("navItems[%d].id = %q, want %q", i, navItems[i].id, w)
 		}
 	}
+	// 2026-11-07 原型对齐：接入导航改名「Agent 接入」（合并接入与设置的唯一
+	// 入口，需求 §3.2）。
+	if navItems[2].label != "Agent 接入" {
+		t.Fatalf("access nav label = %q, want %q", navItems[2].label, "Agent 接入")
+	}
 }
 
 // TestShellFullHeightLayout 覆盖 cc-switch 式全高铺满（截图回归）：侧栏
