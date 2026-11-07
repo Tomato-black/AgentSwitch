@@ -335,9 +335,9 @@ func drawerSwitchConfirm(c *ui.Context, st *state.State, acc bridge.AccessConfig
 		return
 	}
 	uikit.ConfirmDialog(c, c.Theme(), uikit.ConfirmOpts{
-		Open:    &st.Access.DrawerSwitchArm,
-		Title:   "放弃未保存的接入修改？",
-		Message: "名称/模型/角色映射修改尚未保存，切换配置将丢弃这些修改。",
+		Open:        &st.Access.DrawerSwitchArm,
+		Title:       "放弃未保存的接入修改？",
+		Message:     "名称/模型/角色映射修改尚未保存，切换配置将丢弃这些修改。",
 		CancelLabel: "取消", ConfirmLabel: "放弃并切换", Danger: true,
 		OnConfirm: func() { claude.ConfirmDrawerSwitch(st, claudeDrawerHooks(st, acc)) },
 	})
@@ -600,45 +600,31 @@ func configRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State,
 				st.Access.Form = state.AccessForm{Open: true, EditID: v.ID}
 				preloadForm(st, acc)
 			}
-			moreLabel := "更多"
-			if st.Access.RowMore == v.ID {
-				moreLabel = "收起"
-			}
-			if uikit.SoftButton(c, t, s, "gray", moreLabel).Clicked() {
-				if st.Access.RowMore == v.ID {
-					st.Access.RowMore = ""
-				} else {
-					st.Access.RowMore = v.ID
-				}
-			}
-		})
-		// 次级操作收纳在「更多」展开行：主次分明，窄窗可换行。
-		if st.Access.RowMore == v.ID {
-			ui.Row(c).Gap(8).Wrap().Children(func() {
-				if gateOK {
-					if uikit.SoftButton(c, t, s, "gray", "复制启动命令").Clicked() {
-						cmd, err := acc.LaunchCommand(v.ID)
-						if err != nil {
-							st.Access.Msg = "生成启动命令失败：" + err.Error()
-						} else {
-							mygo.Clipboard.Write(transfer.TextData(cmd))
-							st.Access.Msg = "启动命令已复制"
-						}
-					}
-					if uikit.SoftButton(c, t, s, "gray", "打开终端").Clicked() {
-						if err := acc.OpenTerminal(v.ID); err != nil {
-							st.Access.Msg = "打开终端失败：" + err.Error()
-						} else {
-							st.Access.Msg = ""
-						}
+			// 次级操作走主题化菜单（mygo v0.7.2+ PopoverMenuButton：键盘 +
+			// 读屏支持；网关停止时菜单项置灰而非隐藏；删除为 Danger 红项）。
+			ui.PopoverMenuButton(c, "更多", func(m *ui.Menu) {
+				if m.Item("复制启动命令").Disabled(!gateOK).Chosen() {
+					cmd, err := acc.LaunchCommand(v.ID)
+					if err != nil {
+						st.Access.Msg = "生成启动命令失败：" + err.Error()
+					} else {
+						mygo.Clipboard.Write(transfer.TextData(cmd))
+						st.Access.Msg = "启动命令已复制"
 					}
 				}
-				if uikit.SoftButton(c, t, s, "danger", "删除").Clicked() {
+				if m.Item("打开终端").Disabled(!gateOK).Chosen() {
+					if err := acc.OpenTerminal(v.ID); err != nil {
+						st.Access.Msg = "打开终端失败：" + err.Error()
+					} else {
+						st.Access.Msg = ""
+					}
+				}
+				if m.Item("删除").Danger().Chosen() {
 					st.Access.DeleteArm = true
 					st.Access.DeleteID = v.ID
 				}
 			})
-		}
+		})
 	})
 }
 

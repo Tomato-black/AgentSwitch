@@ -195,12 +195,20 @@ func TestAccessDeleteRequiresConfirm(t *testing.T) {
 	// 列表卡用例走 codex（claude 的删除入口在接入抽屉，2026-11-07）。
 	st.Access.App = "codex"
 	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 800)
-	// 次级操作收纳在「更多」：删除按钮展开后才可见。
+	// 次级操作收纳在「更多」菜单：菜单关闭时项不可见。
 	if tt.HasText("删除") {
-		t.Fatalf("删除按钮应在「更多」里: %v", tt.Texts())
+		t.Fatalf("删除项应在「更多」菜单里: %v", tt.Texts())
 	}
 	if err := tt.Click("更多"); err != nil {
 		t.Fatal(err)
+	}
+	tt.Frame()
+	// 菜单语义（2026-11-07 组件升级）：网关停止时菜单项仍显示（框架置灰），
+	// 与旧「展开行隐藏按钮」不同。
+	for _, item := range []string{"复制启动命令", "打开终端", "删除"} {
+		if !tt.HasText(item) {
+			t.Fatalf("菜单缺少 %q: %v", item, tt.Texts())
+		}
 	}
 	if err := tt.Click("删除"); err != nil {
 		t.Fatal(err)
@@ -218,7 +226,10 @@ func TestAccessDeleteRequiresConfirm(t *testing.T) {
 	if got := acc.List("codex"); len(got) != 1 {
 		t.Fatalf("取消后应保留: %+v", got)
 	}
-	// 再次武装并确认删除（「更多」仍处于展开态）。
+	// 再次武装并确认删除（菜单选中后即关闭，需重开）。
+	if err := tt.Click("更多"); err != nil {
+		t.Fatal(err)
+	}
 	if err := tt.Click("删除"); err != nil {
 		t.Fatal(err)
 	}
