@@ -70,13 +70,14 @@ func RecomputeDirty(cf *state.ClaudeCfgState) {
 	}
 }
 
-// formText 是各分组的小标题（现有设置区卡片内的次级标题）。
-func formText(c *ui.Context, t *ui.Theme, title, hint string) {
-	ui.Column(c).Gap(3).Children(func() {
-		ui.Text(c, title).Bold()
-		if hint != "" {
-			ui.Text(c, hint).FontSize(t.FontSize - 2).TextColor(t.TextMuted)
-		}
+// groupCard 渲染表单一组的独立卡片（原型 2026-11-07 §4.1 卡片流）：
+// Card + 区块标题/说明，body 是组内字段。取代旧的单卡内 formText 小标题。
+func groupCard(c *ui.Context, t *ui.Theme, title, hint string, body func()) {
+	uikit.Card(c, t, func() {
+		ui.Column(c).Gap(8).Children(func() {
+			uikit.SectionTitle(c, t, title, hint)
+			body()
+		})
 	})
 }
 
@@ -85,12 +86,13 @@ func formText(c *ui.Context, t *ui.Theme, title, hint string) {
 // ---------------------------------------------------------------------------
 
 func modelGroup(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.ClaudeCfgState) {
-	formText(c, t, "模型与响应", "主模型、回退模型、推理强度与常驻思考")
-	stringField(c, t, s, cf, "model", "主模型", "例如 my-code / sonnet / opus")
-	listField(c, t, s, cf, "fallbackModel", "回退模型", "逗号分隔，按顺序尝试")
-	enumField(c, t, s, cf, "effortLevel", "推理强度",
-		[]string{"low", "medium", "high", "xhigh"}, "继承（未设置）")
-	boolField(c, t, s, cf, "alwaysThinkingEnabled", "始终开启思考", "")
+	groupCard(c, t, "模型与响应", "主模型、回退模型、推理强度与常驻思考", func() {
+		stringField(c, t, s, cf, "model", "主模型", "例如 my-code / sonnet / opus")
+		listField(c, t, s, cf, "fallbackModel", "回退模型", "逗号分隔，按顺序尝试")
+		enumField(c, t, s, cf, "effortLevel", "推理强度",
+			[]string{"low", "medium", "high", "xhigh"}, "继承（未设置）")
+		boolField(c, t, s, cf, "alwaysThinkingEnabled", "始终开启思考", "")
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -104,40 +106,40 @@ var coreManagedEnv = map[string]bool{
 }
 
 func envGroup(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.ClaudeCfgState) {
-	formText(c, t, "环境变量", "接入管理的 13 个键只读；其余变量可自由增删")
-
-	managed := map[string]bool{}
-	for _, k := range corecfg.AccessManagedEnv {
-		managed[k] = true
-	}
-	for _, k := range corecfg.AccessManagedEnv {
-		if !coreManagedEnv[k] && !cf.EnvExpanded {
-			continue
+	groupCard(c, t, "环境变量", "接入管理的 13 个键只读；其余变量可自由增删", func() {
+		managed := map[string]bool{}
+		for _, k := range corecfg.AccessManagedEnv {
+			managed[k] = true
 		}
-		managedEnvRow(c, t, s, cf, k)
-	}
-	label := "展开其余 10 个接入投影键"
-	if cf.EnvExpanded {
-		label = "收起接入投影键"
-	}
-	if uikit.SoftButton(c, t, s, "gray", label).Clicked() {
-		cf.EnvExpanded = !cf.EnvExpanded
-	}
-
-	keys := customEnvKeys(cf, managed)
-	if len(keys) == 0 {
-		ui.Text(c, "暂无自定义环境变量").TextColor(t.TextMuted)
-	}
-	for _, k := range keys {
-		customEnvRow(c, t, s, cf, k)
-	}
-
-	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-		ui.TextInput(c, &cf.EnvNewKey).Width(260).Placeholder("KEY")
-		ui.TextInput(c, &cf.EnvNewValue).Width(320).Placeholder("值")
-		if uikit.SoftButton(c, t, s, "act", "添加变量").Clicked() {
-			addEnvKey(cf, managed)
+		for _, k := range corecfg.AccessManagedEnv {
+			if !coreManagedEnv[k] && !cf.EnvExpanded {
+				continue
+			}
+			managedEnvRow(c, t, s, cf, k)
 		}
+		label := "展开其余 10 个接入投影键"
+		if cf.EnvExpanded {
+			label = "收起接入投影键"
+		}
+		if uikit.SoftButton(c, t, s, "gray", label).Clicked() {
+			cf.EnvExpanded = !cf.EnvExpanded
+		}
+
+		keys := customEnvKeys(cf, managed)
+		if len(keys) == 0 {
+			ui.Text(c, "暂无自定义环境变量").TextColor(t.TextMuted)
+		}
+		for _, k := range keys {
+			customEnvRow(c, t, s, cf, k)
+		}
+
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.TextInput(c, &cf.EnvNewKey).Width(260).Placeholder("KEY")
+			ui.TextInput(c, &cf.EnvNewValue).Width(320).Placeholder("值")
+			if uikit.SoftButton(c, t, s, "act", "添加变量").Clicked() {
+				addEnvKey(cf, managed)
+			}
+		})
 	})
 }
 
@@ -286,14 +288,15 @@ func addEnvKey(cf *state.ClaudeCfgState, managed map[string]bool) {
 // ---------------------------------------------------------------------------
 
 func permissionGroup(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.ClaudeCfgState) {
-	formText(c, t, "权限", "默认模式、规则列表与危险模式确认")
-	enumField(c, t, s, cf, "permissions.defaultMode", "默认模式",
-		[]string{"default", "acceptEdits", "plan", "auto", "bypassPermissions"}, "继承（未设置）")
-	listField(c, t, s, cf, "permissions.allow", "允许规则", "逗号分隔，例如 Bash(go test:*)")
-	listField(c, t, s, cf, "permissions.ask", "询问规则", "逗号分隔")
-	listField(c, t, s, cf, "permissions.deny", "拒绝规则", "逗号分隔")
-	listField(c, t, s, cf, "permissions.additionalDirectories", "附加目录", "逗号分隔")
-	dangerRow(c, t, s, cf)
+	groupCard(c, t, "权限", "默认模式、规则列表与危险模式确认", func() {
+		enumField(c, t, s, cf, "permissions.defaultMode", "默认模式",
+			[]string{"default", "acceptEdits", "plan", "auto", "bypassPermissions"}, "继承（未设置）")
+		listField(c, t, s, cf, "permissions.allow", "允许规则", "逗号分隔，例如 Bash(go test:*)")
+		listField(c, t, s, cf, "permissions.ask", "询问规则", "逗号分隔")
+		listField(c, t, s, cf, "permissions.deny", "拒绝规则", "逗号分隔")
+		listField(c, t, s, cf, "permissions.additionalDirectories", "附加目录", "逗号分隔")
+		dangerRow(c, t, s, cf)
+	})
 }
 
 func dangerRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.ClaudeCfgState) {
@@ -368,27 +371,28 @@ func setDangerChoice(cf *state.ClaudeCfgState, choice string) {
 // ---------------------------------------------------------------------------
 
 func statusLineGroup(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.ClaudeCfgState) {
-	formText(c, t, "状态栏", "statusLine 对象只写入当前层；字段留空即移除")
-	const path = "statusLine"
-	disabled, reason := fieldBlocked(cf, path)
-	if disabled {
-		uikit.FormRowRaw(c, t, "状态栏", func() {
-			ui.Text(c, statusLineText(cf)).Font(uikit.MonoFont)
-			ui.Text(c, reason).FontSize(t.FontSize - 2).TextColor(t.TextMuted)
-		})
-		return
-	}
-	if _, ok := corecfg.Get(cf.Doc, path); !ok && !cf.Overrides[path] {
-		if inheritedRow(c, t, s, cf, path) {
-			// 「覆盖」后本帧继续渲染空白控件。
-		} else {
+	groupCard(c, t, "状态栏", "statusLine 对象只写入当前层；字段留空即移除", func() {
+		const path = "statusLine"
+		disabled, reason := fieldBlocked(cf, path)
+		if disabled {
+			uikit.FormRowRaw(c, t, "状态栏", func() {
+				ui.Text(c, statusLineText(cf)).Font(uikit.MonoFont)
+				ui.Text(c, reason).FontSize(t.FontSize - 2).TextColor(t.TextMuted)
+			})
 			return
 		}
-	}
-	statusLineInput(c, t, cf, "type", "类型", "command / static")
-	statusLineInput(c, t, cf, "command", "命令", "例如 ~/.claude/statusline.sh")
-	statusLineInput(c, t, cf, "text", "静态文本", "type=static 时显示")
-	statusLineInput(c, t, cf, "padding", "内边距", "整数，例如 0")
+		if _, ok := corecfg.Get(cf.Doc, path); !ok && !cf.Overrides[path] {
+			if inheritedRow(c, t, s, cf, path) {
+				// 「覆盖」后本帧继续渲染空白控件。
+			} else {
+				return
+			}
+		}
+		statusLineInput(c, t, cf, "type", "类型", "command / static")
+		statusLineInput(c, t, cf, "command", "命令", "例如 ~/.claude/statusline.sh")
+		statusLineInput(c, t, cf, "text", "静态文本", "type=static 时显示")
+		statusLineInput(c, t, cf, "padding", "内边距", "整数，例如 0")
+	})
 }
 
 func statusLineInput(c *ui.Context, t *ui.Theme, cf *state.ClaudeCfgState, key, label, placeholder string) {
@@ -462,40 +466,41 @@ func statusLineText(cf *state.ClaudeCfgState) string {
 // ---------------------------------------------------------------------------
 
 func mcpGroup(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.ClaudeCfgState) {
-	formText(c, t, "MCP 与插件", "项目 MCP 开关、插件启用与 Claude.ai 同步")
-	boolField(c, t, s, cf, "enableAllProjectMcpServers", "启用全部项目 MCP 服务器（enableAllProjectMcpServers）", "")
-	listField(c, t, s, cf, "enabledMcpjsonServers", "允许的 MCP 服务器", "逗号分隔")
-	listField(c, t, s, cf, "disabledMcpjsonServers", "禁用的 MCP 服务器", "逗号分隔")
-	boolField(c, t, s, cf, "syncClaudeAiPlugins", "同步 Claude.ai 插件", "")
-	boolField(c, t, s, cf, "syncClaudeAiSkills", "同步 Claude.ai Skills", "")
+	groupCard(c, t, "MCP 与插件", "项目 MCP 开关、插件启用与 Claude.ai 同步", func() {
+		boolField(c, t, s, cf, "enableAllProjectMcpServers", "启用全部项目 MCP 服务器（enableAllProjectMcpServers）", "")
+		listField(c, t, s, cf, "enabledMcpjsonServers", "允许的 MCP 服务器", "逗号分隔")
+		listField(c, t, s, cf, "disabledMcpjsonServers", "禁用的 MCP 服务器", "逗号分隔")
+		boolField(c, t, s, cf, "syncClaudeAiPlugins", "同步 Claude.ai 插件", "")
+		boolField(c, t, s, cf, "syncClaudeAiSkills", "同步 Claude.ai Skills", "")
 
-	ui.Text(c, "已启用插件").TextColor(t.TextMuted)
-	plugins := pluginIDs(cf)
-	if len(plugins) == 0 {
-		ui.Text(c, "未配置插件").TextColor(t.TextMuted)
-	}
-	for _, id := range plugins {
-		cur := pluginEnabled(cf, id)
+		ui.Text(c, "已启用插件").TextColor(t.TextMuted)
+		plugins := pluginIDs(cf)
+		if len(plugins) == 0 {
+			ui.Text(c, "未配置插件").TextColor(t.TextMuted)
+		}
+		for _, id := range plugins {
+			cur := pluginEnabled(cf, id)
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, id).Font(uikit.MonoFont).Grow(1)
+				// 继承值也显示为勾选；用户切换时才写入当前层。
+				cb := ui.Checkbox(c, &cur, "")
+				if cb.Changed() {
+					setPluginEnabled(cf, id, cur)
+				}
+			})
+		}
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, id).Font(uikit.MonoFont).Grow(1)
-			// 继承值也显示为勾选；用户切换时才写入当前层。
-			cb := ui.Checkbox(c, &cur, "")
-			if cb.Changed() {
-				setPluginEnabled(cf, id, cur)
+			ui.TextInput(c, &cf.PluginNew).Width(360).Placeholder("plugin@marketplace")
+			if uikit.SoftButton(c, t, s, "gray", "启用插件").Clicked() {
+				id := strings.TrimSpace(cf.PluginNew)
+				if id == "" {
+					cf.FormMsg = "插件 id 不能为空"
+				} else {
+					setPluginEnabled(cf, id, true)
+					cf.PluginNew = ""
+				}
 			}
 		})
-	}
-	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-		ui.TextInput(c, &cf.PluginNew).Width(360).Placeholder("plugin@marketplace")
-		if uikit.SoftButton(c, t, s, "gray", "启用插件").Clicked() {
-			id := strings.TrimSpace(cf.PluginNew)
-			if id == "" {
-				cf.FormMsg = "插件 id 不能为空"
-			} else {
-				setPluginEnabled(cf, id, true)
-				cf.PluginNew = ""
-			}
-		}
 	})
 }
 
@@ -552,10 +557,11 @@ func setPluginEnabled(cf *state.ClaudeCfgState, id string, enabled bool) {
 // ---------------------------------------------------------------------------
 
 func memoryGroup(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.ClaudeCfgState) {
-	formText(c, t, "记忆与上下文", "自动压缩、自动记忆与清理周期")
-	boolField(c, t, s, cf, "autoCompactEnabled", "启用自动压缩", "")
-	boolField(c, t, s, cf, "autoMemoryEnabled", "启用自动记忆", "")
-	intField(c, t, s, cf, "cleanupPeriodDays", "清理周期（天）", "默认 30")
+	groupCard(c, t, "记忆与上下文", "自动压缩、自动记忆与清理周期", func() {
+		boolField(c, t, s, cf, "autoCompactEnabled", "启用自动压缩", "")
+		boolField(c, t, s, cf, "autoMemoryEnabled", "启用自动记忆", "")
+		intField(c, t, s, cf, "cleanupPeriodDays", "清理周期（天）", "默认 30")
+	})
 }
 
 // ---------------------------------------------------------------------------

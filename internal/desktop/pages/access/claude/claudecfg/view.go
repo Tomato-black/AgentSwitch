@@ -50,9 +50,9 @@ func Section(c *ui.Context, st *state.State) {
 		viewTabs(c, t, s, st, cfgs)
 		switch st.ClaudeCfg.View {
 		case "json":
-			jsonView(c, t, st)
+			uikit.Card(c, t, func() { jsonView(c, t, st) })
 		case "merged":
-			mergedView(c, t, st)
+			uikit.Card(c, t, func() { mergedView(c, t, st) })
 		default:
 			if st.ClaudeCfg.BrokenFile {
 				repairCard(c, t, s, st, cfgs)
