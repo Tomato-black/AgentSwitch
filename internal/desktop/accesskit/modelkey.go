@@ -1,7 +1,7 @@
 // modelkey.go 是接入抽屉的「主模型/回退模型」行状态 ↔ 文档顶层键双向同步
-//（2026-11-07 用户裁定：模型选择归接入；model/fallbackModel 经既有投影链路
+// （2026-11-07 用户裁定：模型选择归接入；model/fallbackModel 经既有投影链路
 // 写进 ~/.claude/settings.json，并被受管集合自动只读）。模式与角色映射
-//（roles.go）一致：Sync 从文档回填、Patch 从行写回；解析失败静默保留。
+// （roles.go）一致：Sync 从文档回填、Patch 从行写回；解析失败静默保留。
 package accesskit
 
 import (

@@ -165,7 +165,7 @@ func (u *uiState) pageView(c *ui.Context) {
 		access.Page(c, u.State)
 	case "claude-settings":
 		// 受管键行「打开接入」跨页入口：跳回接入页并打开当前配置的抽屉。
-		u.ClaudeCfg.OpenAccess = func() { access.OpenAccessDrawer(u.State) }
+		u.ClaudeCfg.OpenAccess = func() { access.GoToAccess(u.State) }
 		claudecfgpage.Page(c, u.State)
 	case "settings":
 		settings.Page(c, u.State)

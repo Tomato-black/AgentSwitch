@@ -447,7 +447,6 @@ func TestSummaryCardMetaRow(t *testing.T) {
 	}
 }
 
-
 // TestClaudeTabShowsAccessMessages（终审 Critical#1）：claude 页签必须渲染
 // st.Access.Msg——应用失败/应用阻断提示/删除与还原结果此前随列表卡移除而
 // 丢失，主操作失败时用户得不到任何解释。

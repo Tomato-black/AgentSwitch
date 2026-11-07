@@ -269,9 +269,9 @@ func Page(c *ui.Context, st *state.State) {
 	})
 }
 
-// OpenAccessDrawer 从其他页跳回接入页（设置页受管键行「打开接入」的跨页
-// 入口；2026-11-07 抽屉废弃后为纯导航——编辑入口在列表行/摘要卡上）。
-func OpenAccessDrawer(st *state.State) {
+// GoToAccess 从其他页跳回接入页（设置页受管键行「打开接入」的跨页入口；
+// 2026-11-07 抽屉废弃后为纯导航——编辑入口在列表行/摘要卡上）。
+func GoToAccess(st *state.State) {
 	st.Go("access", nil)
 }
 
