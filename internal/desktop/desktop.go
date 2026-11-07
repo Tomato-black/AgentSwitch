@@ -6,6 +6,7 @@ import (
 	"context"
 	_ "embed"
 	"log"
+	"log/slog"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -41,10 +42,13 @@ func keepTray(t *mygo.Tray) { appTray = t }
 
 // menuIcon 把 uikit SVG 转菜单图标（mygo v0.8.1 NewMenuIconSVG：ui.SVG 天然
 // 满足 SVGImage 接口；template=true 单色模板随明暗主题）。失败返回 nil 降级
-// 纯文字——图标是装饰，不阻塞托盘创建。
-func menuIcon(svg *ui.SVG) *mygo.MenuIcon {
+// 纯文字并记日志——图标是装饰，不阻塞托盘创建。
+func menuIcon(svg *ui.SVG, log *slog.Logger) *mygo.MenuIcon {
 	ic, err := mygo.NewMenuIconSVG(svg, true)
 	if err != nil {
+		if log != nil {
+			log.Error("menu icon rasterize failed（降级纯文字）", "err", err.Error())
+		}
 		return nil
 	}
 	return ic
@@ -175,7 +179,7 @@ func Run(a *app.App) error {
 			IconIsTemplate: runtime.GOOS == "darwin",
 			ToolTip:        "AgentSwitch",
 			Menu: mygo.NewMenu([]*mygo.MenuItem{
-				{Label: "打开主窗口", Icon: menuIcon(uikit.IconAccess), Click: func(*mygo.MenuItem, *mygo.Window) {
+				{Label: "打开主窗口", Icon: menuIcon(uikit.IconAccess, a.Log()), Click: func(*mygo.MenuItem, *mygo.Window) {
 					if w := win.Load(); !needsReopen(w) {
 						// 隐藏型窗口要先 Show 才会回来；Restore 兼顾最小化态。
 						// 必须推迟出菜单点击事件，否则 Show 触发的帧会提交到

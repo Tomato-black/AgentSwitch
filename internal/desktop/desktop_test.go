@@ -1,8 +1,10 @@
 package desktop
 
 import (
+	"bytes"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +12,8 @@ import (
 	"AgentSwitch/internal/bridge"
 	"AgentSwitch/internal/desktop/state"
 	"AgentSwitch/internal/desktop/uikit"
+	"log/slog"
+
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 )
@@ -265,7 +269,28 @@ func TestCloseModalTrayFallback(t *testing.T) {
 // mygo.NewMenuIconSVG 可转托盘菜单图标（template 单色模板；ui.SVG 天然满足
 // SVGImage 接口）。
 func TestMenuIconFromUIKitSVG(t *testing.T) {
-	if ic := menuIcon(uikit.IconAccess); ic == nil {
+	if ic := menuIcon(uikit.IconAccess, nil); ic == nil {
 		t.Fatal("menuIcon 应返回非 nil（uikit SVG → MenuIcon）")
+	}
+}
+
+// TestMenuIconFailureLogs（终审 minor）：menuIcon 光栅化失败时降级 nil 并记
+// 日志（零值 SVG 稳定报 "the SVG has no size"）。
+func TestMenuIconFailureLogs(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, nil))
+	if ic := menuIcon(&ui.SVG{}, log); ic != nil {
+		t.Fatal("失败输入应降级 nil")
+	}
+	if !strings.Contains(buf.String(), "menu icon") {
+		t.Fatalf("失败应记日志: %q", buf.String())
+	}
+	// 成功路径不记日志。
+	buf.Reset()
+	if ic := menuIcon(uikit.IconAccess, log); ic == nil {
+		t.Fatal("合法 SVG 应成功")
+	}
+	if buf.String() != "" {
+		t.Fatalf("成功不应记日志: %q", buf.String())
 	}
 }
