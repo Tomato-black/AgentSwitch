@@ -175,95 +175,99 @@ func Page(c *ui.Context, st *state.State) {
 					})
 				}
 
-				// 实际配置列表卡
-				uikit.Card(c, t, func() {
-					ui.Column(c).Gap(10).Children(func() {
-						ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-							ui.Text(c, "实际配置").Bold()
-							ui.Box(c).Grow(1)
-							if uikit.SoftButton(c, t, s, "gray", "备份与恢复").Clicked() {
-								st.Access.BackupOpen = true
-								st.Access.BackupMsg = ""
-								st.Access.Backups, _ = acc.ListBackups(st.Access.App)
+				// 实际配置列表卡（claude 页签不渲染：配置管理在接入抽屉内，
+				// 2026-11-07 原型对齐）
+				if st.Access.App != "claude" {
+					uikit.Card(c, t, func() {
+						ui.Column(c).Gap(10).Children(func() {
+							ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+								ui.Text(c, "实际配置").Bold()
+								ui.Box(c).Grow(1)
+								if uikit.SoftButton(c, t, s, "gray", "备份与恢复").Clicked() {
+									st.Access.BackupOpen = true
+									st.Access.BackupMsg = ""
+									st.Access.Backups, _ = acc.ListBackups(st.Access.App)
+								}
+								if uikit.SoftButton(c, t, s, "gray", "还原最近备份").Clicked() {
+									st.Access.RestoreArm = true
+								}
+							})
+							if st.Access.App == "codex" {
+								ui.Text(c, "Codex CLI / 桌面版 / IDE 插件共用 ~/.codex/config.toml；应用后需完全退出 Codex 再重新打开").TextColor(t.TextMuted)
+								ui.Text(c, "桌面版模型选择器只显示 AgentSwitch 逻辑模型；已有对话的供应商不会迁移，请新建对话").TextColor(t.TextMuted)
 							}
-							if uikit.SoftButton(c, t, s, "gray", "还原最近备份").Clicked() {
-								st.Access.RestoreArm = true
+							if !gateOK {
+								ui.Text(c, gateReason).TextColor(t.TextMuted)
 							}
-						})
-						if st.Access.App == "codex" {
-							ui.Text(c, "Codex CLI / 桌面版 / IDE 插件共用 ~/.codex/config.toml；应用后需完全退出 Codex 再重新打开").TextColor(t.TextMuted)
-							ui.Text(c, "桌面版模型选择器只显示 AgentSwitch 逻辑模型；已有对话的供应商不会迁移，请新建对话").TextColor(t.TextMuted)
-						}
-						if !gateOK {
-							ui.Text(c, gateReason).TextColor(t.TextMuted)
-						}
-						list := acc.List(st.Access.App)
-						if len(list) == 0 {
-							logicalCount := 0
-							if st.Svc.Logical != nil {
-								logicalCount = len(st.Svc.Logical.List())
-							}
-							if logicalCount == 0 {
-								uikit.EmptyStateBare(c, t, uikit.EmptyStateOpts{
-									Title: "还没有配置", Hint: "先在「逻辑模型」页创建一个模型",
-									ActionLabel: "去逻辑模型", OnAction: func() { st.Go("logical", nil) },
-								})
-							} else {
-								uikit.EmptyStateBare(c, t, uikit.EmptyStateOpts{
-									Title: "还没有配置", Hint: "点击下方「新建配置」创建",
-								})
-							}
-						}
-						if len(list) > 8 {
-							ui.TextInput(c, &st.Access.Filter).Grow(1).
-								Placeholder("搜索配置：名称 / 模型")
-						}
-						filter := strings.ToLower(strings.TrimSpace(st.Access.Filter))
-						visible := make([]bridge.AccessConfigView, 0, len(list))
-						for _, v := range list {
-							hay := v.Name + " " + v.LogicalModelName + " " + accesskit.ModelSummary(st.Access.App, v.Settings, v.LogicalModelName)
-							if filter == "" || strings.Contains(strings.ToLower(hay), filter) {
-								visible = append(visible, v)
-							}
-						}
-						if filter != "" && len(visible) == 0 {
-							ui.Text(c, "没有匹配的配置").TextColor(t.TextMuted)
-						}
-						hasCurrent := false
-						for i, v := range visible {
-							if v.IsCurrent {
-								hasCurrent = true
-							}
-							if i > 0 {
-								ui.Box(c).Height(1).Background(t.Border)
-							}
-							if st.Access.App == "claude_desktop" {
-								claudedesktop.ConfigRow(c, t, s, st, acc, v, gateOK)
-							} else {
-								configRow(c, t, s, st, acc, v, gateOK)
-							}
-						}
-						if len(visible) > 0 && !hasCurrent {
-							ui.Text(c, "当前没有配置被应用，Agent 仍使用其原配置文件").TextColor(t.TextMuted)
-						}
-						uikit.Feedback(c, t, uikit.InferFeedback(st.Access.Msg), st.Access.Msg)
-						ui.Row(c).Children(func() {
-							ui.Box(c).Grow(1)
-							if uikit.PillButton(c, t, "＋ 新建配置").Clicked() {
-								if st.Access.App == "claude_desktop" {
-									st.Access.DesktopForm = state.DesktopForm{Open: true}
-									st.Access.DesktopForm.Baseline = st.Access.DesktopForm.Signature()
-									claudedesktop.Prepare(st, acc)
+							list := acc.List(st.Access.App)
+							if len(list) == 0 {
+								logicalCount := 0
+								if st.Svc.Logical != nil {
+									logicalCount = len(st.Svc.Logical.List())
+								}
+								if logicalCount == 0 {
+									uikit.EmptyStateBare(c, t, uikit.EmptyStateOpts{
+										Title: "还没有配置", Hint: "先在「逻辑模型」页创建一个模型",
+										ActionLabel: "去逻辑模型", OnAction: func() { st.Go("logical", nil) },
+									})
 								} else {
-									st.Access.Form = state.AccessForm{Open: true}
-									preloadForm(st, acc)
+									uikit.EmptyStateBare(c, t, uikit.EmptyStateOpts{
+										Title: "还没有配置", Hint: "点击下方「新建配置」创建",
+									})
 								}
 							}
+							if len(list) > 8 {
+								ui.TextInput(c, &st.Access.Filter).Grow(1).
+									Placeholder("搜索配置：名称 / 模型")
+							}
+							filter := strings.ToLower(strings.TrimSpace(st.Access.Filter))
+							visible := make([]bridge.AccessConfigView, 0, len(list))
+							for _, v := range list {
+								hay := v.Name + " " + v.LogicalModelName + " " + accesskit.ModelSummary(st.Access.App, v.Settings, v.LogicalModelName)
+								if filter == "" || strings.Contains(strings.ToLower(hay), filter) {
+									visible = append(visible, v)
+								}
+							}
+							if filter != "" && len(visible) == 0 {
+								ui.Text(c, "没有匹配的配置").TextColor(t.TextMuted)
+							}
+							hasCurrent := false
+							for i, v := range visible {
+								if v.IsCurrent {
+									hasCurrent = true
+								}
+								if i > 0 {
+									ui.Box(c).Height(1).Background(t.Border)
+								}
+								if st.Access.App == "claude_desktop" {
+									claudedesktop.ConfigRow(c, t, s, st, acc, v, gateOK)
+								} else {
+									configRow(c, t, s, st, acc, v, gateOK)
+								}
+							}
+							if len(visible) > 0 && !hasCurrent {
+								ui.Text(c, "当前没有配置被应用，Agent 仍使用其原配置文件").TextColor(t.TextMuted)
+							}
+							uikit.Feedback(c, t, uikit.InferFeedback(st.Access.Msg), st.Access.Msg)
+							ui.Row(c).Children(func() {
+								ui.Box(c).Grow(1)
+								if uikit.PillButton(c, t, "＋ 新建配置").Clicked() {
+									if st.Access.App == "claude_desktop" {
+										st.Access.DesktopForm = state.DesktopForm{Open: true}
+										st.Access.DesktopForm.Baseline = st.Access.DesktopForm.Signature()
+										claudedesktop.Prepare(st, acc)
+									} else {
+										st.Access.Form = state.AccessForm{Open: true}
+										preloadForm(st, acc)
+									}
+								}
+							})
 						})
 					})
-				})
+				}
 
 				if st.Access.App == "claude" {
+					claudeOpenAccess(st, acc)
 					claudeclaudecfg.Section(c, st)
 				}
 
@@ -288,6 +292,22 @@ func Page(c *ui.Context, st *state.State) {
 				st.Access.Form.Draft = st.Access.Form.Signature("claude") != st.Access.Form.Baseline
 			}
 		}
+	}
+}
+
+// claudeOpenAccess 注入设置区受管键行的「打开接入」回调：打开当前应用配置
+// 的抽屉（无已应用配置时打开新建草稿）。
+func claudeOpenAccess(st *state.State, acc bridge.AccessConfigs) {
+	st.ClaudeCfg.OpenAccess = func() {
+		for _, v := range acc.List("claude") {
+			if v.IsCurrent {
+				st.Access.Form = state.AccessForm{Open: true, EditID: v.ID}
+				preloadForm(st, acc)
+				return
+			}
+		}
+		st.Access.Form = state.AccessForm{Open: true}
+		preloadForm(st, acc)
 	}
 }
 
@@ -420,13 +440,11 @@ func claudeSummaryCard(c *ui.Context, st *state.State, acc bridge.AccessConfigs,
 	stt := st.Svc.Gateway.Status()
 	uikit.Card(c, t, func() {
 		ui.Column(c).Gap(8).Children(func() {
-			// 第一行：标题 + 状态徽章（优先级：网关停止 > 未保存接入更改 >
-			// 待应用 > 已应用/尚未应用）+ 右侧操作。
+			// 第一行：标题 + 状态徽章（未保存接入更改 > 待应用 > 已应用/
+			// 尚未应用；网关停止是叠加态，不遮蔽接入状态）+ 右侧操作。
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 				ui.Text(c, "Claude Code 接入").Bold()
 				switch {
-				case !gateOK:
-					uikit.SoftBadge(c, t, s, "danger", "网关已停止")
 				case st.Access.Form.Dirty("claude"):
 					uikit.SoftBadge(c, t, s, "warn", "有未保存的接入更改")
 				case cur == nil:
@@ -435,6 +453,9 @@ func claudeSummaryCard(c *ui.Context, st *state.State, acc bridge.AccessConfigs,
 					uikit.SoftBadge(c, t, s, "warn", "待应用")
 				default:
 					uikit.SoftBadge(c, t, s, "ok", "已应用")
+				}
+				if !gateOK {
+					uikit.SoftBadge(c, t, s, "danger", "网关已停止")
 				}
 				ui.Box(c).Grow(1)
 				if cur != nil {
@@ -480,6 +501,13 @@ func claudeSummaryCard(c *ui.Context, st *state.State, acc bridge.AccessConfigs,
 			})
 			ui.Text(c, "接入只管理网关与受管键；权限、状态栏、Skills 在下方「Claude Code 设置」中编辑").
 				TextColor(t.TextMuted)
+			// 无逻辑模型的空态引导（列表卡移除后由摘要卡承接，2026-11-07）。
+			if st.Svc.Logical != nil && len(st.Svc.Logical.List()) == 0 {
+				ui.Text(c, "还没有逻辑模型——先在「逻辑模型」页创建一个，再回来配置接入").TextColor(t.TextMuted)
+				if uikit.SoftButton(c, t, s, "act", "去逻辑模型").Clicked() {
+					st.Go("logical", nil)
+				}
+			}
 			if !gateOK {
 				ui.Text(c, "网关不可用：先启动网关再应用接入").TextColor(t.TextMuted)
 			}

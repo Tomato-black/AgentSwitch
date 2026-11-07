@@ -162,6 +162,12 @@ func managedEnvRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.Cl
 		}
 		uikit.SoftBadge(c, t, s, "gray", "锁定")
 		ui.Text(c, "由 AgentSwitch 接入管理").FontSize(t.FontSize - 2).TextColor(t.TextMuted)
+		// 「打开接入」：跳到同页接入抽屉改受管键（宿主注入回调；独立渲染时隐藏）。
+		if cf.OpenAccess != nil {
+			if uikit.SoftButton(c, t, s, "gray", "打开接入").Clicked() {
+				cf.OpenAccess()
+			}
+		}
 	})
 }
 

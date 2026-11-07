@@ -16,7 +16,7 @@ func TestRootSmokeAllPages(t *testing.T) {
 	cases := map[string][]string{
 		"logical":  {"新建逻辑模型"},
 		"channels": {"添加渠道"},
-		"access":   {"实际配置"},
+		"access":   {"Claude Code 接入"},
 		"settings": {"保存设置"},
 	}
 	for page, wants := range cases {

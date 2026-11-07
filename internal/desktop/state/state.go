@@ -162,6 +162,10 @@ type ClaudeCfgState struct {
 	ReloadArm     bool
 	PendingReload func()
 
+	// OpenAccess 是受管键行「打开接入」回调（接入页宿主每帧注入；打开当前
+	// 配置的接入抽屉）。nil 时该入口不渲染（如独立渲染设置区时）。
+	OpenAccess func()
+
 	// BrokenFile：磁盘文件不是合法 JSON 时的只读修复态（I5）——表单停用、
 	// JSON 视图只读显示原文；RebuildArm 是「用空配置重建」危险确认 open 位。
 	BrokenFile bool

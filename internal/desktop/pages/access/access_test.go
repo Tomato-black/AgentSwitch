@@ -188,10 +188,11 @@ func TestAccessDeleteRequiresConfirm(t *testing.T) {
 		t.Fatal(err)
 	}
 	acc := bridge.AccessConfigs{A: a}
-	if _, err := acc.Create("claude", "cfg", "lm1", "{}"); err != nil {
+	if _, err := acc.Create("codex", "cfg", "lm1", "{}"); err != nil {
 		t.Fatal(err)
 	}
-	st.Access.App = "claude"
+	// 列表卡用例走 codex（claude 的删除入口在接入抽屉，2026-11-07）。
+	st.Access.App = "codex"
 	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 800)
 	// 次级操作收纳在「更多」：删除按钮展开后才可见。
 	if tt.HasText("删除") {
@@ -206,14 +207,14 @@ func TestAccessDeleteRequiresConfirm(t *testing.T) {
 	if !tt.HasText("删除接入配置") {
 		t.Fatalf("确认弹窗未出现: %v", tt.Texts())
 	}
-	if got := acc.List("claude"); len(got) != 1 {
+	if got := acc.List("codex"); len(got) != 1 {
 		t.Fatalf("武装不应删除: %+v", got)
 	}
 	// 取消：保留并收起。
 	if err := tt.Click("取消"); err != nil {
 		t.Fatal(err)
 	}
-	if got := acc.List("claude"); len(got) != 1 {
+	if got := acc.List("codex"); len(got) != 1 {
 		t.Fatalf("取消后应保留: %+v", got)
 	}
 	// 再次武装并确认删除（「更多」仍处于展开态）。
@@ -226,7 +227,7 @@ func TestAccessDeleteRequiresConfirm(t *testing.T) {
 	if err := tt.Click("确认删除"); err != nil {
 		t.Fatal(err)
 	}
-	if got := acc.List("claude"); len(got) != 0 {
+	if got := acc.List("codex"); len(got) != 0 {
 		t.Fatalf("确认后应删除: %+v", got)
 	}
 	if !strings.Contains(st.Access.Msg, "已删除") {
@@ -287,7 +288,8 @@ func TestEditorBackDirtyGuard(t *testing.T) {
 func TestRestoreBackupConfirm(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	st, _ := uitest.New(t)
-	st.Access.App = "claude"
+	// 列表卡还原入口走 codex（claude 的入口在接入抽屉，2026-11-07）。
+	st.Access.App = "codex"
 	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 800)
 	if err := tt.Click("还原最近备份"); err != nil {
 		t.Fatal(err)
@@ -319,7 +321,7 @@ func TestAccessRowShowsNeedsApplyBadge(t *testing.T) {
 	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	acc := bridge.AccessConfigs{A: a}
+	acc := bridge.AccessConfigs{A: a, Home: home}
 	v, err := acc.Create("claude", "工作", "lm1", "")
 	if err != nil {
 		t.Fatal(err)
@@ -336,6 +338,8 @@ func TestAccessRowShowsNeedsApplyBadge(t *testing.T) {
 	if err := acc.Update(v.ID, "工作", "lm1", `{"env":{"CUSTOM":"x"}}`); err != nil {
 		t.Fatal(err)
 	}
+	// 2026-11-07：claude 列表行已移除，「待应用」徽章出现在摘要卡。
+	st.Page = "access"
 	st.Access.App = "claude"
 	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1200, 900)
 	if !tt.HasText("待应用") {
@@ -493,5 +497,32 @@ func TestClaudeDrawerHooksPreload(t *testing.T) {
 	h.NewDraft()
 	if st.Access.Form.EditID != "" || st.Access.Form.Name != "" || !st.Access.Form.Open {
 		t.Fatalf("NewDraft must reset to a fresh draft: %+v", st.Access.Form)
+	}
+}
+
+// TestClaudeTabDropsConfigListCard（2026-11-07 原型对齐）：claude 页签结构为
+// 摘要卡 → 设置区，不再渲染「实际配置」列表卡（配置管理在抽屉内）；
+// codex 页签保留列表卡。设置区受管键行提供「打开接入」入口。
+func TestClaudeTabDropsConfigListCard(t *testing.T) {
+	st, a := uitest.New(t)
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	st.Page = "access"
+	st.Access.App = "claude"
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
+	// 「备份与恢复」在设置区仍存在（claudecfg 备份面板），不在排除之列。
+	for _, unwanted := range []string{"实际配置", "＋ 新建配置"} {
+		if tt.HasText(unwanted) {
+			t.Fatalf("claude 页签不应再渲染 %q: %v", unwanted, tt.Texts())
+		}
+	}
+	if !tt.HasText("打开接入") {
+		t.Fatalf("受管键行缺「打开接入」: %v", tt.Texts())
+	}
+	st.Access.App = "codex"
+	tt = ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
+	if !tt.HasText("实际配置") || !tt.HasText("＋ 新建配置") {
+		t.Fatalf("codex 页签应保留列表卡: %v", tt.Texts())
 	}
 }

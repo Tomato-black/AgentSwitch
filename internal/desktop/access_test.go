@@ -15,7 +15,7 @@ func TestAccessPageRenders(t *testing.T) {
 	u, _ := testUI(t)
 	u.Page = "access"
 	tt := ui.NewTester(u.view, 900, 600)
-	for _, want := range []string{"Claude Code", "Codex", "实际配置", "还没有配置", "网关未运行"} {
+	for _, want := range []string{"Claude Code", "Codex", "Claude Code 接入", "Claude Code 设置", "网关已停止"} {
 		if !tt.HasText(want) {
 			t.Fatalf("missing %q in %v", want, tt.Texts())
 		}
