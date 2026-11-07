@@ -658,9 +658,6 @@ func deleteConfirm(c *ui.Context, st *state.State, acc bridge.AccessConfigs) {
 			} else {
 				st.Access.Msg = "已删除「" + name + "」——Agent 配置文件保留最后状态"
 			}
-			if st.Access.RowMore == st.Access.DeleteID {
-				st.Access.RowMore = ""
-			}
 			st.Access.DeleteID = ""
 		},
 	})
@@ -693,7 +690,6 @@ func switchTab(st *state.State, acc bridge.AccessConfigs, app string) {
 	st.Access.Msg = ""
 	st.Access.Form = state.AccessForm{}
 	st.Access.DesktopForm = state.DesktopForm{}
-	st.Access.RowMore = ""
 	// Claude 设置区草稿随页签丢弃（保留注入 Home；下次进入重新加载）。
 	st.ClaudeCfg = state.ClaudeCfgState{Home: st.ClaudeCfg.Home}
 	if app == "codex" {

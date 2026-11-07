@@ -65,7 +65,6 @@ type AccessState struct {
 	SwitchArm   bool   // 页签切换确认 AlertDialog open 位（有未保存编辑时）
 	SwitchTo    string // 待切换的 Agent 页签
 	RestoreArm  bool   // 还原最近备份确认 AlertDialog open 位
-	RowMore     string // 展开「更多」操作的配置 id（空=全部收起）
 
 	// Claude 接入抽屉的配置切换确认（2026-11-07）：dirty 草稿切换/新建先武装；
 	// DrawerSwitchID 为空表示切换到「新建草稿」。
