@@ -27,6 +27,8 @@ func TestSectionRendersClaudeSettings(t *testing.T) {
 	st.Access.App = "claude"
 	st.ClaudeCfg.Home = home
 	tt := ui.NewTester(func(c *ui.Context) {
+		// 与宿主接入页一致：动作按钮在页头（HeaderActions），正文是 Section。
+		HeaderActions(c, c.Theme(), uikit.Softs(c.Theme()), st)
 		Section(c, st)
 	}, 1000, 1600)
 	for _, want := range []string{
@@ -137,6 +139,7 @@ func TestRefreshGuardsDirtyEdits(t *testing.T) {
 	RecomputeDirty(&st.ClaudeCfg)
 
 	tt := ui.NewTester(func(c *ui.Context) {
+		HeaderActions(c, c.Theme(), uikit.Softs(c.Theme()), st)
 		Section(c, st)
 	}, 1000, 1600)
 	if err := tt.Click("刷新"); err != nil {
@@ -190,6 +193,7 @@ func TestRefreshCleanReloadsImmediately(t *testing.T) {
 	load(st, cfgs)
 
 	tt := ui.NewTester(func(c *ui.Context) {
+		HeaderActions(c, c.Theme(), uikit.Softs(c.Theme()), st)
 		Section(c, st)
 	}, 1000, 1600)
 	if err := tt.Click("刷新"); err != nil {

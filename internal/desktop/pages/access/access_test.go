@@ -386,3 +386,26 @@ func TestGlobalConfigCardCodexOnly(t *testing.T) {
 		}
 	}
 }
+
+// TestPageHeaderAgentAccess（2026-11-07 原型对齐）：页头标题改「Agent 接入」，
+// claude 页签副标题点明同页管理设置且页头有「保存设置」主操作；其他页签用
+// 通用副标题。
+func TestPageHeaderAgentAccess(t *testing.T) {
+	st, a := uitest.New(t)
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	st.Page = "access"
+	st.Access.App = "claude"
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
+	for _, want := range []string{"Agent 接入", "并在同一页管理它的设置", "保存设置"} {
+		if !tt.HasText(want) {
+			t.Fatalf("missing %q: %v", want, tt.Texts())
+		}
+	}
+	st.Access.App = "codex"
+	tt = ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
+	if !tt.HasText("为每个 Agent 管理网关接入与实际配置") {
+		t.Fatalf("codex 副标题缺失: %v", tt.Texts())
+	}
+}

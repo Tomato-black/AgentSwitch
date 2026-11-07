@@ -67,8 +67,21 @@ func Page(c *ui.Context, st *state.State) {
 	// 页头固定、内容滚动：编辑器（角色表 + 320 高 TextArea）会让页面超出
 	// 视口，没有滚动容器时底部内容不可达。
 	ui.Column(c).Gap(12).Grow(1).Children(func() {
+		// 页头（原型 2026-11-07 §4.1）：标题「Agent 接入」；claude 页签副标题
+		// 点明同页管理设置，并把设置区的「刷新/保存设置」挂在页头右侧（保存
+		// 是整页唯一的橙色胶囊主操作）。
+		subtitle := "为每个 Agent 管理网关接入与实际配置"
+		if st.Access.App == "claude" {
+			subtitle = "把 Claude Code 接到 AgentSwitch，并在同一页管理它的设置"
+		}
 		uikit.PageHeader(c, t, uikit.PageHeaderOpts{
-			Title: "接入", Subtitle: "为每个 Agent 管理网关接入与实际配置",
+			Title:    "Agent 接入",
+			Subtitle: subtitle,
+			Actions: func() {
+				if st.Access.App == "claude" {
+					claudeclaudecfg.HeaderActions(c, t, s, st)
+				}
+			},
 		})
 		ui.Scroll(c).Grow(1).Children(func() {
 			ui.Column(c).Gap(12).Children(func() {

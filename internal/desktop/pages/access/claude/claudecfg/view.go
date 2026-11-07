@@ -289,23 +289,31 @@ func syncInputs(cf *state.ClaudeCfgState) {
 	RecomputeDirty(cf)
 }
 
+// HeaderActions 渲染设置区的页头动作（原型 2026-11-07 §4.1：页头右侧
+// 「刷新」次操作 + 「保存设置」橙色胶囊主操作）。由宿主 access 页在 PageHeader
+// 的 Actions 区调用；设置区卡内不再重复渲染按钮。保存可用条件与原先一致：
+// 已加载、非托管层、有未保存修改且无阻断错误。
+func HeaderActions(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State) {
+	cfgs := bridge.ClaudeConfigs{A: st.Svc.Gateway.A, Home: st.ClaudeCfg.Home}
+	if uikit.SoftButton(c, t, s, "gray", "刷新").Clicked() {
+		guardReload(st, func() { load(st, cfgs) })
+	}
+	canSave := st.ClaudeCfg.Loaded && st.ClaudeCfg.Layer != "managed" && st.ClaudeCfg.Dirty &&
+		saveBlockReason(&st.ClaudeCfg) == ""
+	btn := uikit.PillButton(c, t, "保存设置")
+	if !canSave {
+		btn.Disabled(true)
+	}
+	if btn.Clicked() && canSave {
+		st.ClaudeCfg.SaveArm = true
+	}
+}
+
 func header(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, cfgs bridge.ClaudeConfigs) {
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, "Claude Code 设置").Bold()
 		uikit.SoftBadge(c, t, s, "gray", "受管 13 键")
 		ui.Box(c).Grow(1)
-		if uikit.SoftButton(c, t, s, "gray", "刷新").Clicked() {
-			guardReload(st, func() { load(st, cfgs) })
-		}
-		canSave := st.ClaudeCfg.Loaded && st.ClaudeCfg.Layer != "managed" && st.ClaudeCfg.Dirty &&
-			saveBlockReason(&st.ClaudeCfg) == ""
-		btn := uikit.SoftButton(c, t, s, "act", "保存设置")
-		if !canSave {
-			btn.Disabled(true)
-		}
-		if btn.Clicked() && canSave {
-			st.ClaudeCfg.SaveArm = true
-		}
 	})
 	if st.ClaudeCfg.Loaded && st.ClaudeCfg.Dirty {
 		if reason := saveBlockReason(&st.ClaudeCfg); reason != "" {
