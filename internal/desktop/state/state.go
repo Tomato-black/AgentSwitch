@@ -118,10 +118,8 @@ type ClaudeCfgState struct {
 	MergeEntries map[string]claudecfg.MergedEntry
 	Violations   []claudecfg.Violation
 
-	// Overrides 记录用户在当前层点过「覆盖」的路径：控件从空白开始编辑，
-	// 而不是把继承值抄进当前文件。Reveal 是敏感值「显示」开关（按路径）。
-	Overrides map[string]bool
-	Reveal    map[string]bool
+	// Reveal 是敏感值「显示」开关（按路径）。
+	Reveal map[string]bool
 
 	// 环境变量与插件的新增行输入（跨帧保存）；ChipInputs 是列表 chip 的
 	// 添加行输入（按键路径）。

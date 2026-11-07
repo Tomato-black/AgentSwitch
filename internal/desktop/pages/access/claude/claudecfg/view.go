@@ -301,7 +301,6 @@ func load(st *state.State, cfgs bridge.ClaudeConfigs) {
 	cf.Baseline = cloneDoc(view.Doc)
 	cf.Managed = view.Managed
 	cf.Violations = view.Violations
-	cf.Overrides = map[string]bool{}
 	cf.Reveal = map[string]bool{}
 	if view.ParseError != "" {
 		// 只读修复态（I5）：JSON 视图显示磁盘原文，表单停用，保存阻断。

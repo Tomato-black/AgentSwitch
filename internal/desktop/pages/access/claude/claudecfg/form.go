@@ -18,8 +18,8 @@ import (
 // 权限、状态栏、MCP/插件、Skills、记忆。它只修改 st.ClaudeCfg.Doc，绝不
 // 直接写盘；保存由 Section 顶部的「保存设置」经 bridge 完成。
 //
-// 当前层缺失的键不复制继承值：显示「继承自下层」+ 来源 +「覆盖」，点覆盖
-// 只在 Overrides 记录编辑意图，控件从空白开始，首次输入才写入当前文档。
+// 当前层缺失的键不复制继承值：直接渲染空控件 + 「下层：」继承提示行，
+// 首次输入才写入当前文档（2026-11-07 去「覆盖」门槛）。
 func FormSection(c *ui.Context, st *state.State) {
 	t := c.Theme()
 	s := uikit.Softs(t)
@@ -45,9 +45,6 @@ func ensureFormState(cf *state.ClaudeCfgState) {
 	}
 	if cf.Baseline == nil {
 		cf.Baseline = map[string]any{}
-	}
-	if cf.Overrides == nil {
-		cf.Overrides = map[string]bool{}
 	}
 	if cf.Reveal == nil {
 		cf.Reveal = map[string]bool{}
