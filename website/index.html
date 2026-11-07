@@ -326,6 +326,11 @@ ANTHROPIC_MODEL=my-code</code></pre>
     </div>
     <div class="faq reveal">
       <details>
+        <summary>macOS 打开时提示「Apple 无法验证…」怎么办？</summary>
+        <p>Release 构建未做 Apple 签名公证，Gatekeeper 会拦截。解锁任选其一：终端执行
+        <code>xattr -cr /Applications/AgentSwitch.app</code>；或右键 App →「打开」→ 弹窗里再点「打开」（仅首次）。</p>
+      </details>
+      <details>
         <summary>和 cc-switch 有什么区别？</summary>
         <p>cc-switch 是配置切换器，改写 Agent 配置文件，在多个供应商间手动/自动切换，任一时刻只有一个生效。AgentSwitch 是本地网关：Agent 永远只指向 <code>127.0.0.1</code>，上游切换、多渠道故障转移、协议转换都在网关内完成。两者可以互补。</p>
       </details>

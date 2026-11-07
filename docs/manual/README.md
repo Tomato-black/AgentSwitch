@@ -19,10 +19,21 @@ AgentSwitch 是跑在本机的模型 API 网关：Claude Code、Codex、Claude D
 
 | 平台 | 方式 |
 |------|------|
-| macOS（Intel） | 下载 `AgentSwitch.0.1.0.amd64.dmg`，拖入 Applications |
+| macOS（Intel） | 下载 `agentswitch-<版本>-amd64.dmg`，拖入 Applications |
 | macOS（Apple Silicon） | 通过 Rosetta 运行 x64 包（原生 arm64 尚未验证） |
-| Windows 10/11 x64 | 解压便携包，运行 `AgentSwitch.exe`（`icon.png` 需同目录） |
-| Linux（GTK3） | `go tool mygo build`，使用 `build/linux-amd64/` 下的安装脚本 |
+| Windows 10/11 x64 | 运行便携 `AgentSwitch.exe`；安装包见 Release 的 Setup 资产 |
+| Linux（GTK3） | 安装 `agentswitch_<版本>_amd64.deb` 或解压 tar.gz 后运行 `install.sh` |
+
+**macOS 首次打开提示「Apple 无法验证…」怎么办？** Release 构建未做 Apple 签名公证
+（开源分发惯例），Gatekeeper 会拦截未签名应用。解锁任选其一：
+
+```bash
+# 终端执行（推荐）
+xattr -cr /Applications/AgentSwitch.app
+```
+
+或：**右键点击 AgentSwitch.app → 「打开」→ 弹窗里再点「打开」**（仅首次需要）。
+也可在「系统设置 → 隐私与安全性」里点「仍要打开」。
 
 首次启动后网关自动运行，侧栏底部显示实际监听地址与状态。**关闭窗口不会停止网关**，
 应用驻留托盘；需要停止时点底条「停止网关」并确认。
