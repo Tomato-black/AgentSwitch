@@ -193,3 +193,46 @@ func TestDrawerSelectSwitch(t *testing.T) {
 		t.Fatal("clean new-draft must call NewDraft directly")
 	}
 }
+
+// TestDrawerMenuBackupAndRestoreArm（终审 minor 钉住）：抽屉「更多」菜单选中
+// 「备份与恢复」/「还原最近备份」后的状态落位——BackupOpen 打开备份子页并
+// 载入列表；RestoreArm 武装还原确认。
+func TestDrawerMenuBackupAndRestoreArm(t *testing.T) {
+	st, a := uitest.New(t)
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	acc := bridge.AccessConfigs{A: a, Home: t.TempDir()}
+	if _, err := acc.Create("claude", "工作", "lm1", "{}"); err != nil {
+		t.Fatal(err)
+	}
+	v := acc.List("claude")[0]
+	st.Access.App = "claude"
+	st.Access.Form = state.AccessForm{Open: true, EditID: v.ID, Name: "工作", DocJSON: "{}"}
+	st.Access.Form.Baseline = st.Access.Form.Signature("claude")
+	tt := ui.NewTester(func(c *ui.Context) {
+		DrawerCard(c, c.Theme(), uikit.Softs(c.Theme()), st, acc, true, DrawerHooks{})
+	}, 1000, 1400)
+	if err := tt.Click("更多"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if err := tt.Click("备份与恢复"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if !st.Access.BackupOpen {
+		t.Fatal("选中「备份与恢复」应打开备份子页")
+	}
+	if err := tt.Click("更多"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if err := tt.Click("还原最近备份"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if !st.Access.RestoreArm {
+		t.Fatal("选中「还原最近备份」应武装还原确认")
+	}
+}
