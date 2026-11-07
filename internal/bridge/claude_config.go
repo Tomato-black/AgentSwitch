@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"AgentSwitch/internal/app"
 	"AgentSwitch/internal/claudecfg"
@@ -57,6 +58,12 @@ func (s ClaudeConfigs) home() (string, error) {
 	return os.UserHomeDir()
 }
 
+// claudeEnv 构造 Claude 层路径解析环境。GOOS 必须透传 runtime.GOOS——托管层
+// 路径按平台分支（I2 回归：此前漏传导致非 darwin 平台读错托管文件）。
+func claudeEnv(home string) claudecfg.Env {
+	return claudecfg.Env{Home: home, GOOS: runtime.GOOS}
+}
+
 // ReadClaudeConfigLayer 读取并解析一层 settings。文件不存在返回空文档；
 // JSON 损坏返回带 ParseError 的视图，不返回 error（页面进入只读修复态）。
 func (s ClaudeConfigs) ReadClaudeConfigLayer(req ReadLayerRequest) (LayerView, error) {
@@ -64,7 +71,7 @@ func (s ClaudeConfigs) ReadClaudeConfigLayer(req ReadLayerRequest) (LayerView, e
 	if err != nil {
 		return LayerView{}, err
 	}
-	resolved, err := claudecfg.Resolve(req.Kind, req.Project, claudecfg.Env{Home: home})
+	resolved, err := claudecfg.Resolve(req.Kind, req.Project, claudeEnv(home))
 	if err != nil {
 		return LayerView{}, err
 	}

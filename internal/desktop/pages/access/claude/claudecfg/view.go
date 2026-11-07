@@ -387,14 +387,33 @@ func pretty(doc map[string]any) string {
 	return string(b)
 }
 
+// cloneDoc 深拷贝文档（递归 map/slice），标量原样保留——尤其 json.Number。
+// 不能走 json.Marshal 往返：数字会统一变 float64，与解析基线
+// （json.Number）深比较恒不等，导致含数字的文件加载即脏（C1 回归）。
 func cloneDoc(doc map[string]any) map[string]any {
-	b, _ := json.Marshal(doc)
-	var out map[string]any
-	_ = json.Unmarshal(b, &out)
-	if out == nil {
-		out = map[string]any{}
+	if doc == nil {
+		return map[string]any{}
+	}
+	out := make(map[string]any, len(doc))
+	for k, v := range doc {
+		out[k] = cloneDocValue(v)
 	}
 	return out
+}
+
+func cloneDocValue(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		return cloneDoc(x)
+	case []any:
+		out := make([]any, len(x))
+		for i, item := range x {
+			out[i] = cloneDocValue(item)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 func boolLabel(v bool) string {

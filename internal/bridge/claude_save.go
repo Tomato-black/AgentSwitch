@@ -308,7 +308,7 @@ func claudeBackupDir(home, target string) string {
 // resolveClaudeLayer 解析层路径；LocalPath 在候选路径中显式选择时，写入与
 // 备份桶都绑定该候选的真实路径（存在符号链接时取 realpath）。
 func resolveClaudeLayer(home string, req ReadLayerRequest) (claudecfg.Resolved, error) {
-	resolved, err := claudecfg.Resolve(req.Kind, req.Project, claudecfg.Env{Home: home})
+	resolved, err := claudecfg.Resolve(req.Kind, req.Project, claudeEnv(home))
 	if err != nil {
 		return resolved, err
 	}

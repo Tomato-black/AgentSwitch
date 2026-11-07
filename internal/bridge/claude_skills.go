@@ -84,32 +84,47 @@ func (s ClaudeConfigs) ListClaudeSkills(project string) ([]SkillView, error) {
 	return skills, nil
 }
 
+// claudeLayers 读取参与合并的各层文档：user → project → local → managed。
+// 项目本地层用 claudecfg.Resolve 的 Git 根默认路径（与编辑器一致，I3 回归）；
+// 托管层合并 base 与 managed-settings.d/*.json drop-in（I2，spec §6.1.1）。
 func (s ClaudeConfigs) claudeLayers(home, project string) []claudecfg.Layer {
-	paths := []struct {
-		kind claudecfg.ScopeKind
-		file string
+	env := claudeEnv(home)
+	plan := []struct {
+		kind    claudecfg.ScopeKind
+		project string
 	}{
-		{claudecfg.ScopeUser, filepath.Join(home, ".claude", "settings.json")},
+		{claudecfg.ScopeUser, ""},
 	}
 	if project != "" {
-		paths = append(paths,
+		plan = append(plan,
 			struct {
-				kind claudecfg.ScopeKind
-				file string
-			}{claudecfg.ScopeProject, filepath.Join(project, ".claude", "settings.json")},
+				kind    claudecfg.ScopeKind
+				project string
+			}{claudecfg.ScopeProject, project},
 			struct {
-				kind claudecfg.ScopeKind
-				file string
-			}{claudecfg.ScopeLocal, filepath.Join(project, ".claude", "settings.local.json")},
+				kind    claudecfg.ScopeKind
+				project string
+			}{claudecfg.ScopeLocal, project},
 		)
 	}
-	paths = append(paths, struct {
-		kind claudecfg.ScopeKind
-		file string
-	}{claudecfg.ScopeManaged, managedSettingsPath()})
+	plan = append(plan, struct {
+		kind    claudecfg.ScopeKind
+		project string
+	}{claudecfg.ScopeManaged, ""})
+
 	var out []claudecfg.Layer
-	for _, p := range paths {
-		b, err := os.ReadFile(p.file)
+	for _, p := range plan {
+		resolved, err := claudecfg.Resolve(p.kind, p.project, env)
+		if err != nil {
+			continue
+		}
+		if p.kind == claudecfg.ScopeManaged {
+			if layer := readManagedLayer(resolved.File); layer != nil {
+				out = append(out, *layer)
+			}
+			continue
+		}
+		b, err := os.ReadFile(resolved.File)
 		if err != nil {
 			continue
 		}
@@ -117,13 +132,56 @@ func (s ClaudeConfigs) claudeLayers(home, project string) []claudecfg.Layer {
 		if err != nil {
 			continue
 		}
-		out = append(out, claudecfg.Layer{Kind: p.kind, File: p.file, Doc: doc.Raw})
+		out = append(out, claudecfg.Layer{Kind: p.kind, File: resolved.File, Doc: doc.Raw})
 	}
 	return out
 }
 
-func managedSettingsPath() string {
-	return "/Library/Application Support/ClaudeCode/managed-settings.json"
+// readManagedLayer 读取托管层：managed-settings.json + managed-settings.d/*.json
+// 按文件名序合并（来源统一记为 base 文件）。无可读文件时返回 nil。
+func readManagedLayer(basePath string) *claudecfg.Layer {
+	docs := readManagedDocs(basePath)
+	if len(docs) == 0 {
+		return nil
+	}
+	return &claudecfg.Layer{
+		Kind: claudecfg.ScopeManaged, File: basePath,
+		Doc: claudecfg.MergeManagedDocs(docs),
+	}
+}
+
+// readManagedDocs 读取托管 base 文件与同目录 managed-settings.d/ 下的
+// *.json drop-in（文件名字典序），返回逐文件文档（base 在前）。损坏或
+// 不存在的文件跳过。
+func readManagedDocs(basePath string) []map[string]any {
+	var docs []map[string]any
+	if b, err := os.ReadFile(basePath); err == nil {
+		if doc, err := claudecfg.ParseDoc(b); err == nil {
+			docs = append(docs, doc.Raw)
+		}
+	}
+	ents, err := os.ReadDir(filepath.Join(filepath.Dir(basePath), "managed-settings.d"))
+	if err != nil {
+		return docs
+	}
+	names := make([]string, 0, len(ents))
+	for _, e := range ents {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		names = append(names, e.Name())
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		b, err := os.ReadFile(filepath.Join(filepath.Dir(basePath), "managed-settings.d", name))
+		if err != nil {
+			continue
+		}
+		if doc, err := claudecfg.ParseDoc(b); err == nil {
+			docs = append(docs, doc.Raw)
+		}
+	}
+	return docs
 }
 
 func mergedPluginEnabled(layers []claudecfg.Layer) map[string]bool {

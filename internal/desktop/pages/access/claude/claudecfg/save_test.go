@@ -240,6 +240,32 @@ func TestSaveSuccessShowsResultAndBackupEntry(t *testing.T) {
 	}
 }
 
+// TestUserSaveDoesNotInjectDangerousSkip 回归（C2）：用户级保存不得静默注入
+// skipDangerousModePermissionPrompt=true——三态控件的「继承」即键缺失。
+func TestUserSaveDoesNotInjectDangerousSkip(t *testing.T) {
+	st, cfgs, file := loadedUserState(t)
+	cf := &st.ClaudeCfg
+	if _, ok := cf.Doc["skipDangerousModePermissionPrompt"]; ok {
+		t.Fatal("precondition: doc must not contain the key")
+	}
+	setString(cf.Doc, "model", "opus")
+	RecomputeDirty(cf)
+	performSave(st, cfgs)
+	if !cf.ResultVisible {
+		t.Fatalf("save must succeed: %s", cf.Msg)
+	}
+	doc, err := corecfg.ParseDoc(mustRead(t, file))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := doc.Raw["skipDangerousModePermissionPrompt"]; ok {
+		t.Fatalf("save must not inject the key: %v", doc.Raw)
+	}
+	if doc.Raw["model"] != "opus" {
+		t.Fatalf("model edit must persist: %v", doc.Raw)
+	}
+}
+
 func TestConflictDialogOverwritesWithDiskHash(t *testing.T) {
 	st, _, file := loadedUserState(t)
 	cf := &st.ClaudeCfg

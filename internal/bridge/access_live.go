@@ -524,10 +524,15 @@ func (s AccessConfigs) ListBackups(appType string) ([]BackupInfo, error) {
 }
 
 // RestoreBackup 恢复指定时间戳的备份集；恢复前先快照当前 live，确保恢复
-// 本身可再次撤销。备份内容含令牌，不写日志。
+// 本身可再次撤销。备份内容含令牌，不写日志。claude 的 settings.json 与
+// 配置中心保存共用 claudeSettingsMu 串行化（C3：恢复是第三个写入口）。
 func (s AccessConfigs) RestoreBackup(appType string, ts int64) error {
 	if err := validateAccessAppType(appType); err != nil {
 		return err
+	}
+	if appType == "claude" {
+		claudeSettingsMu.Lock()
+		defer claudeSettingsMu.Unlock()
 	}
 	home := s.Home
 	if home == "" {

@@ -151,11 +151,8 @@ func saveWithHash(st *state.State, cfgs bridge.ClaudeConfigs, expectedHash strin
 		cf.Msg = reason
 		return
 	}
-	if cf.Layer == "user" {
-		if _, ok := cf.Doc["skipDangerousModePermissionPrompt"]; !ok {
-			cf.Doc["skipDangerousModePermissionPrompt"] = true
-		}
-	}
+	// 不在此注入 skipDangerousModePermissionPrompt：三态控件的「继承」就是键
+	// 缺失，静默补 true 会违背确认框「只改以上键」的承诺（C2 回归）。
 	hash := cf.Hash
 	if expectedHash != "" {
 		hash = expectedHash
