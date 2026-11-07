@@ -196,6 +196,11 @@ type AccessForm struct {
 	RoleOneM   []bool
 	MainOneM   bool // 主模型 1M 勾选（ANTHROPIC_MODEL 半锁定后缀）
 
+	// Claude 模型选择行（2026-11-07 归接入）：ModelKey 是顶层 model 键
+	//（空＝跟随网关），FallbackModels 是顶层 fallbackModel 有序链。
+	ModelKey       string
+	FallbackModels []string
+
 	// Codex 模型列表与高级设置（由 DocJSON models/codex 双向同步，首项即默认模型）
 	CodexModels     []string
 	SubagentModel   string

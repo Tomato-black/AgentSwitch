@@ -167,6 +167,39 @@ func DocSetEnv(raw, key, value string) (string, error) {
 	return MarshalDoc(doc)
 }
 
+// DocSetKey 写/删文档顶层字符串键（value 空＝删键）。接入抽屉的
+// model 等顶层键编辑用（2026-11-07 模型键归接入）。
+func DocSetKey(raw, key, value string) (string, error) {
+	doc, err := DocObject(raw)
+	if err != nil {
+		return "", err
+	}
+	if value == "" {
+		delete(doc, key)
+	} else {
+		doc[key] = value
+	}
+	return MarshalDoc(doc)
+}
+
+// DocSetKeyList 写/删文档顶层字符串数组键（空列表＝删键）。
+func DocSetKeyList(raw, key string, values []string) (string, error) {
+	doc, err := DocObject(raw)
+	if err != nil {
+		return "", err
+	}
+	if len(values) == 0 {
+		delete(doc, key)
+	} else {
+		arr := make([]any, 0, len(values))
+		for _, v := range values {
+			arr = append(arr, v)
+		}
+		doc[key] = arr
+	}
+	return MarshalDoc(doc)
+}
+
 // DocEnvStrings 提取文档 env 字符串 map（角色行回填数据源）；env 值非
 // 字符串/JSON 非法返回 error——调用方保留上一合法状态。
 func DocEnvStrings(raw string) (map[string]string, error) {

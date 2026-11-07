@@ -154,6 +154,7 @@ func DrawerCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State
 		} else {
 			modelSection(c, t, st, acc, labels)
 			rolesSection(c, t, st, labels)
+			modelKeysSection(c, t, s, st, labels)
 		}
 
 		gs := st.Svc.Gateway.Status()
@@ -284,6 +285,68 @@ func rolesSection(c *ui.Context, t *ui.Theme, st *state.State, labels []string) 
 			}
 		})
 	}
+}
+
+// modelKeysSection 是「Claude 模型选择」段（2026-11-07 用户裁定归接入）：顶层
+// model（空＝跟随网关）与 fallbackModel 有序回退链，写入接入文档顶层键，经
+// 既有投影链路进 settings.json（设置页自动只读）。
+func modelKeysSection(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, labels []string) {
+	f := &st.Access.Form
+	accesskit.SyncModelKeysFromDoc(f) // 打开/回填后对齐（解析失败静默保留）
+	ui.Text(c, "Claude 模型选择").Bold()
+	ui.Text(c, "留空＝跟随网关（ANTHROPIC_MODEL）；值需为网关可路由的逻辑模型名").TextColor(t.TextMuted)
+
+	uikit.FormRow(c, t, "主模型:", func() ui.Element {
+		cur := f.ModelKey
+		in := ui.TextInput(c, &cur).Grow(1).Placeholder(f.ModelLabel)
+		if in.Changed() {
+			f.ModelKey = cur
+			accesskit.PatchModelKey(f, cur)
+		}
+		return in
+	})
+	uikit.FormRowRaw(c, t, "回退模型:", func() {
+		ui.Column(c).Gap(6).Children(func() {
+			if len(f.FallbackModels) == 0 {
+				ui.Text(c, "未设置（主模型失败即报错）").TextColor(t.TextMuted)
+			} else {
+				ui.Row(c).Gap(6).Wrap().Children(func() {
+					for i, m := range f.FallbackModels {
+						i, m := i, m
+						ui.Box(c).Border(1, t.Border).Radius(8).Padding(3, 7).Shrink(0).Children(func() {
+							ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+								if i > 0 {
+									if uikit.SoftButton(c, t, s, "gray", "↑").Clicked() {
+										f.FallbackModels[i-1], f.FallbackModels[i] = f.FallbackModels[i], f.FallbackModels[i-1]
+										accesskit.PatchFallbackModels(f, f.FallbackModels)
+									}
+								}
+								ui.Text(c, m).Font(uikit.MonoFont).FontSize(t.FontSize - 1)
+								if uikit.SoftButton(c, t, s, "danger", "×").Clicked() {
+									f.FallbackModels = append(f.FallbackModels[:i], f.FallbackModels[i+1:]...)
+									accesskit.PatchFallbackModels(f, f.FallbackModels)
+								}
+							})
+						})
+					}
+				})
+			}
+			if len(labels) > 0 {
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+					cur := ""
+					if len(labels) > 0 {
+						cur = labels[0]
+					}
+					sel := ui.Select(c, &cur, labels)
+					if uikit.SoftButton(c, t, s, "gray", "添加回退").Clicked() {
+						f.FallbackModels = append(f.FallbackModels, cur)
+						accesskit.PatchFallbackModels(f, f.FallbackModels)
+					}
+					_ = sel
+				})
+			}
+		})
+	})
 }
 
 // Prepare 在编辑器打开后生成只读 settings.json 预览（宿主 preloadForm 调用，

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"AgentSwitch/internal/bridge"
+	"AgentSwitch/internal/desktop/state"
 )
 
 // TestAccessTabTitles 覆盖接入页四个 tab 标题快照（三个受管 Agent +
@@ -267,5 +268,38 @@ func TestValidateGlobalRows(t *testing.T) {
 		if err := ValidateGlobalRows(rows); err == nil {
 			t.Fatalf("rows %v must be rejected", rows)
 		}
+	}
+}
+
+// TestModelKeySyncPatchRoundTrip（2026-11-07 模型键归接入）：顶层
+// model/fallbackModel 行状态 ↔ 文档双向同步——回填、写回、留空删键。
+func TestModelKeySyncPatchRoundTrip(t *testing.T) {
+	f := &state.AccessForm{DocJSON: `{"env":{},"model":"opus","fallbackModel":["a","b"]}`}
+	SyncModelKeysFromDoc(f)
+	if f.ModelKey != "opus" || len(f.FallbackModels) != 2 || f.FallbackModels[0] != "a" || f.FallbackModels[1] != "b" {
+		t.Fatalf("回填错误: %+v", f)
+	}
+	PatchModelKey(f, "my-code")
+	if !strings.Contains(f.DocJSON, `"model": "my-code"`) {
+		t.Fatalf("主模型未写回: %s", f.DocJSON)
+	}
+	PatchFallbackModels(f, []string{"b", "a"})
+	if !strings.Contains(f.DocJSON, `"fallbackModel": [`) {
+		t.Fatalf("回退链未写回: %s", f.DocJSON)
+	}
+	// 回填校验改写后的文档。
+	SyncModelKeysFromDoc(f)
+	if f.ModelKey != "my-code" || f.FallbackModels[0] != "b" {
+		t.Fatalf("改写后回填错误: %+v", f)
+	}
+	// 留空删键（跟随网关）。
+	PatchModelKey(f, "")
+	PatchFallbackModels(f, nil)
+	SyncModelKeysFromDoc(f)
+	if f.ModelKey != "" || len(f.FallbackModels) != 0 {
+		t.Fatalf("空值应删键并回填为空: %q %v", f.ModelKey, f.FallbackModels)
+	}
+	if strings.Contains(f.DocJSON, "fallbackModel") {
+		t.Fatalf("空链应删键: %s", f.DocJSON)
 	}
 }

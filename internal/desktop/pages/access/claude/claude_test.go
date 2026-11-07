@@ -236,3 +236,32 @@ func TestDrawerMenuBackupAndRestoreArm(t *testing.T) {
 		t.Fatal("选中「还原最近备份」应武装还原确认")
 	}
 }
+
+// TestDrawerModelKeysSection（2026-11-07 模型键归接入）：抽屉渲染「Claude
+// 模型选择」段（主模型输入行 + 回退模型链）；带顶层键的文档回填行状态。
+func TestDrawerModelKeysSection(t *testing.T) {
+	st, a := uitest.New(t)
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	acc := bridge.AccessConfigs{A: a, Home: t.TempDir()}
+	if _, err := acc.Create("claude", "工作", "lm1",
+		`{"model":"my-code","fallbackModel":["my-code","备份"]}`); err != nil {
+		t.Fatal(err)
+	}
+	v := acc.List("claude")[0]
+	st.Access.App = "claude"
+	st.Access.Form = state.AccessForm{Open: true, EditID: v.ID, Name: "工作", ModelLabel: "my-code", DocJSON: v.Settings}
+	st.Access.Form.Baseline = st.Access.Form.Signature("claude")
+	tt := ui.NewTester(func(c *ui.Context) {
+		DrawerCard(c, c.Theme(), uikit.Softs(c.Theme()), st, acc, true, DrawerHooks{})
+	}, 1000, 1600)
+	for _, want := range []string{"Claude 模型选择", "主模型:", "回退模型:", "添加回退", "my-code", "备份"} {
+		if !tt.HasText(want) {
+			t.Fatalf("missing %q: %v", want, tt.Texts())
+		}
+	}
+	if st.Access.Form.ModelKey != "my-code" || len(st.Access.Form.FallbackModels) != 2 {
+		t.Fatalf("行状态回填错误: %q %v", st.Access.Form.ModelKey, st.Access.Form.FallbackModels)
+	}
+}
