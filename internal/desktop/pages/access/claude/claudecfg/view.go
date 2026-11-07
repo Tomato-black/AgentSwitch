@@ -463,7 +463,7 @@ func viewTabs(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, 
 			tab.DrawOver(func(p *ui.Painter, r ui.Rect) {
 				if on {
 					in, h := t.Space(1.5), t.Space(0.75)
-					p.Fill(ui.Rect{r.X + in, r.Y + r.H - h, r.W - 2*in, h}, t.Accent, h/2)
+					p.Fill(ui.Rect{X: r.X + in, Y: r.Y + r.H - h, W: r.W - 2*in, H: h}, t.Accent, h/2)
 				}
 			})
 		}
