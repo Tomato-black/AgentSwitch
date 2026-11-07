@@ -344,3 +344,36 @@ func TestFileStripStatusBadges(t *testing.T) {
 		t.Fatalf("dirty doc must show 有未保存修改: %v", tt.Texts())
 	}
 }
+
+// TestLayerContextCards（2026-11-07 原型对齐）：项目层上下文卡含共享/本地
+// 分段与 mono 实际路径条；托管层含托管文件路径与只读说明。
+func TestLayerContextCards(t *testing.T) {
+	st, _ := uitest.New(t)
+	home := t.TempDir()
+	st.ClaudeCfg.Home = home
+	proj := filepath.Join(home, "work", "demo")
+	if err := os.MkdirAll(filepath.Join(proj, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	shared := filepath.Join(proj, ".claude", "settings.json")
+	if err := os.WriteFile(shared, []byte(`{"model":"sonnet"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st.ClaudeCfg.Layer = "project"
+	st.ClaudeCfg.Sub = "shared"
+	st.ClaudeCfg.Project = proj
+	st.ClaudeCfg.Projects = []bridge.ClaudeProject{{Path: proj}}
+	st.ClaudeCfg.Loaded = false
+	tt := ui.NewTester(func(c *ui.Context) { Section(c, st) }, 1000, 1600)
+	for _, want := range []string{"共享 settings.json", "本地 settings.local.json", "settings.json"} {
+		if !tt.HasText(want) {
+			t.Fatalf("project context missing %q: %v", want, tt.Texts())
+		}
+	}
+	st.ClaudeCfg.Layer = "managed"
+	st.ClaudeCfg.Loaded = false
+	tt = ui.NewTester(func(c *ui.Context) { Section(c, st) }, 1000, 1600)
+	if !tt.HasText("托管配置只读") || !tt.HasText("managed-settings.json") {
+		t.Fatalf("managed context missing source path/readonly note: %v", tt.Texts())
+	}
+}

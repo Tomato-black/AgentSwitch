@@ -354,7 +354,9 @@ func layerSelector(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.St
 	} else if cf.Layer == "managed" {
 		idx = 2
 	}
-	if ui.Tabs(c, &idx, "用户级", "项目级", "企业托管").Changed() {
+	// 层级切换用 Segmented（原型 §4.1：等宽三段）；语义同旧 Tabs——变更走
+	// switchLayer 的脏守卫。
+	if ui.Segmented(c, &idx, "用户级", "项目级", "企业托管").Changed() {
 		layer := "user"
 		if idx == 1 {
 			layer = "project"
@@ -364,41 +366,76 @@ func layerSelector(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.St
 		switchLayer(st, cfgs, func(cf *state.ClaudeCfgState) { cf.Layer = layer })
 	}
 	if cf.Layer == "project" {
-		paths := make([]string, 0, len(cf.Projects))
-		for _, p := range cf.Projects {
-			paths = append(paths, p.Path)
-		}
-		if len(paths) > 0 {
-			project := cf.Project
-			if ui.Select(c, &project, paths).Changed() && project != cf.Project {
-				switchLayer(st, cfgs, func(cf *state.ClaudeCfgState) { cf.Project = project })
-			}
-		} else {
-			ui.Text(c, "未读取到最近项目；可手动输入项目目录").TextColor(t.TextMuted)
-		}
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.TextInput(c, &cf.ProjectInput).Grow(1).Placeholder("/path/to/project")
-			if uikit.SoftButton(c, t, s, "gray", "打开").Clicked() && strings.TrimSpace(cf.ProjectInput) != "" && cf.ProjectInput != cf.Project {
-				target := strings.TrimSpace(cf.ProjectInput)
-				switchLayer(st, cfgs, func(cf *state.ClaudeCfgState) { cf.Project = target })
-			}
-		})
-		sub := 0
-		if cf.Sub == "local" {
-			sub = 1
-		}
-		if ui.Tabs(c, &sub, "共享 .claude/settings.json", "本地 .claude/settings.local.json").Changed() {
-			next := "shared"
-			if sub == 1 {
-				next = "local"
-			}
-			switchLayer(st, cfgs, func(cf *state.ClaudeCfgState) { cf.Sub = next })
-		}
+		projectContextCard(c, t, s, st, cfgs)
 	}
 	if cf.Layer == "managed" {
-		ui.Text(c, "企业托管层只读；本页不写入托管文件").TextColor(t.TextMuted)
+		managedContextCard(c, t, s, st)
 	}
-	_ = s
+}
+
+// projectContextCard 是项目级上下文卡（原型 §4.1）：项目选择器 + 手动目录 +
+// 共享/本地分段 + 实际解析路径条。
+func projectContextCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, cfgs bridge.ClaudeConfigs) {
+	cf := &st.ClaudeCfg
+	uikit.Card(c, t, func() {
+		ui.Column(c).Gap(8).Children(func() {
+			paths := make([]string, 0, len(cf.Projects))
+			for _, p := range cf.Projects {
+				paths = append(paths, p.Path)
+			}
+			if len(paths) > 0 {
+				project := cf.Project
+				if ui.Select(c, &project, paths).Grow(1).Changed() && project != cf.Project {
+					switchLayer(st, cfgs, func(cf *state.ClaudeCfgState) { cf.Project = project })
+				}
+			} else {
+				ui.Text(c, "未读取到最近项目；可手动输入项目目录").TextColor(t.TextMuted)
+			}
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.TextInput(c, &cf.ProjectInput).Grow(1).Placeholder("/path/to/project")
+				if uikit.SoftButton(c, t, s, "gray", "打开").Clicked() && strings.TrimSpace(cf.ProjectInput) != "" && cf.ProjectInput != cf.Project {
+					target := strings.TrimSpace(cf.ProjectInput)
+					switchLayer(st, cfgs, func(cf *state.ClaudeCfgState) { cf.Project = target })
+				}
+			})
+			sub := 0
+			if cf.Sub == "local" {
+				sub = 1
+			}
+			if ui.Segmented(c, &sub, "共享 settings.json", "本地 settings.local.json").Changed() {
+				next := "shared"
+				if sub == 1 {
+					next = "local"
+				}
+				switchLayer(st, cfgs, func(cf *state.ClaudeCfgState) { cf.Sub = next })
+			}
+			if cf.File != "" {
+				ui.Box(c).Radius(8).Background(t.SurfaceHover).Padding(7, 10).Children(func() {
+					ui.Text(c, cf.File).Font(uikit.MonoFont).FontSize(t.FontSize - 1).
+						TextColor(t.TextMuted)
+				})
+			}
+		})
+	})
+}
+
+// managedContextCard 是托管层上下文卡：托管策略文件来源（bridge 目前只解析
+// managed-settings.json + drop-in 合并；MDM/远程来源不可探测，不假装可见）
+// + 只读说明。violations 展示沿用 Violations 反馈（Section 顶部 Warning）。
+func managedContextCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State) {
+	cf := &st.ClaudeCfg
+	uikit.Card(c, t, func() {
+		ui.Column(c).Gap(6).Children(func() {
+			ui.Text(c, "托管策略来源").Bold()
+			ui.Box(c).Radius(8).Background(t.SurfaceHover).Padding(7, 10).Children(func() {
+				ui.Text(c, cf.File).Font(uikit.MonoFont).FontSize(t.FontSize - 1).
+					TextColor(t.TextMuted)
+			})
+			ui.Text(c, "系统托管策略文件（managed-settings.json 及 managed-settings.d 合并）；MDM/远程策略来源不可见，预览可能不完整").
+				FontSize(t.FontSize - 2).TextColor(t.TextMuted)
+			ui.Text(c, "托管配置只读，本页不写入").TextColor(t.TextMuted)
+		})
+	})
 }
 
 func viewTabs(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, cfgs bridge.ClaudeConfigs) {
