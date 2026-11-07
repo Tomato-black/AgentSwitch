@@ -27,7 +27,7 @@ func TestSectionRendersClaudeSettings(t *testing.T) {
 	st.Access.App = "claude"
 	st.ClaudeCfg.Home = home
 	tt := ui.NewTester(func(c *ui.Context) {
-		Section(c, st)
+		Page(c, st)
 	}, 1000, 1600)
 	for _, want := range []string{
 		"Claude Code 设置", "受管 13 键", "用户级", "项目级", "企业托管",
@@ -140,7 +140,7 @@ func TestRefreshGuardsDirtyEdits(t *testing.T) {
 	RecomputeDirty(&st.ClaudeCfg)
 
 	tt := ui.NewTester(func(c *ui.Context) {
-		Section(c, st)
+		Page(c, st)
 	}, 1000, 1600)
 	if err := tt.Click("刷新"); err != nil {
 		t.Fatal(err)
@@ -193,7 +193,7 @@ func TestRefreshCleanReloadsImmediately(t *testing.T) {
 	load(st, cfgs)
 
 	tt := ui.NewTester(func(c *ui.Context) {
-		Section(c, st)
+		Page(c, st)
 	}, 1000, 1600)
 	if err := tt.Click("刷新"); err != nil {
 		t.Fatal(err)
@@ -240,7 +240,7 @@ func TestBrokenJSONReadOnlyRepairState(t *testing.T) {
 	}
 
 	tt := ui.NewTester(func(c *ui.Context) {
-		Section(c, st)
+		Page(c, st)
 	}, 1000, 1600)
 	for _, want := range []string{
 		"文件不是合法 JSON，表单已停用", "备份与恢复", "用空配置重建", "JSON 错误",
@@ -332,13 +332,13 @@ func TestFileStripStatusBadges(t *testing.T) {
 	}
 	cfgs := bridge.ClaudeConfigs{A: st.Svc.Gateway.A, Home: home}
 	load(st, cfgs)
-	tt := ui.NewTester(func(c *ui.Context) { Section(c, st) }, 1000, 1600)
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 1600)
 	if !tt.HasText("已保存") {
 		t.Fatalf("clean file must show 已保存: %v", tt.Texts())
 	}
 	setString(st.ClaudeCfg.Doc, "model", "opus")
 	RecomputeDirty(&st.ClaudeCfg)
-	tt = ui.NewTester(func(c *ui.Context) { Section(c, st) }, 1000, 1600)
+	tt = ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 1600)
 	if !tt.HasText("有未保存修改") {
 		t.Fatalf("dirty doc must show 有未保存修改: %v", tt.Texts())
 	}
@@ -363,7 +363,7 @@ func TestLayerContextCards(t *testing.T) {
 	st.ClaudeCfg.Project = proj
 	st.ClaudeCfg.Projects = []bridge.ClaudeProject{{Path: proj}}
 	st.ClaudeCfg.Loaded = false
-	tt := ui.NewTester(func(c *ui.Context) { Section(c, st) }, 1000, 1600)
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 1600)
 	for _, want := range []string{"共享 settings.json", "本地 settings.local.json", "settings.json"} {
 		if !tt.HasText(want) {
 			t.Fatalf("project context missing %q: %v", want, tt.Texts())
@@ -371,8 +371,35 @@ func TestLayerContextCards(t *testing.T) {
 	}
 	st.ClaudeCfg.Layer = "managed"
 	st.ClaudeCfg.Loaded = false
-	tt = ui.NewTester(func(c *ui.Context) { Section(c, st) }, 1000, 1600)
+	tt = ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 1600)
 	if !tt.HasText("托管配置只读") || !tt.HasText("managed-settings.json") {
 		t.Fatalf("managed context missing source path/readonly note: %v", tt.Texts())
+	}
+}
+
+// TestPageRendersClaudeSettings（2026-11-07 拆页决策）：Claude Code 设置独立页
+// ——页头（标题/副标题/受管徽章/刷新/保存设置）+ 滚动主体（文件条/层级/视图
+// 切换/七卡内容）。
+func TestPageRendersClaudeSettings(t *testing.T) {
+	st, _ := uitest.New(t)
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".claude", "settings.json"), []byte(`{"model":"sonnet"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st.Access.App = "claude"
+	st.ClaudeCfg.Home = home
+	tt := ui.NewTester(func(c *ui.Context) {
+		Page(c, st)
+	}, 1000, 1600)
+	for _, want := range []string{
+		"Claude Code 设置", "分层管理 Claude Code 自身设置；接入投影键只读", "受管 13 键",
+		"刷新", "保存设置", "用户级", "项目级", "企业托管", "表单", "JSON", "合并预览",
+	} {
+		if !tt.HasText(want) {
+			t.Fatalf("missing %q in %v", want, tt.Texts())
+		}
 	}
 }

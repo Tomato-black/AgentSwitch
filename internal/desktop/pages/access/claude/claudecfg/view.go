@@ -15,10 +15,12 @@ import (
 	"AgentSwitch/internal/desktop/uikit"
 )
 
-// Section 渲染 Claude Code 设置区（原型 2026-11-07 §4.1：区块头在卡外 +
-// 当前文件条 + 层级切换 + 视图切换 + 内容卡片流）。首次进入同步加载当前层；
-// 之后的编辑只写内存，保存时由 bridge 做冲突检测/备份/原子写。
-func Section(c *ui.Context, st *state.State) {
+// Page 渲染「Claude Code 设置」独立侧栏页（2026-11-07 拆页决策：接入页只配
+// 模型与网关，设置整页迁出）：页头（标题/副标题/受管徽章/刷新+保存设置——
+// 动作属于本页，不上共享页头的裁定同前）+ 滚动主体（文件条/层级切换/视图
+// 切换/内容卡片流）。首次进入同步加载当前层；之后的编辑只写内存，保存时由
+// bridge 做冲突检测/备份/原子写。
+func Page(c *ui.Context, st *state.State) {
 	t := c.Theme()
 	s := uikit.Softs(t)
 	cfgs := bridge.ClaudeConfigs{A: st.Svc.Gateway.A, Home: st.ClaudeCfg.Home}
@@ -27,54 +29,58 @@ func Section(c *ui.Context, st *state.State) {
 		load(st, cfgs)
 	}
 
-	ui.Column(c).Gap(10).Children(func() {
-		// 区块头（卡外）：标题 + 受管键徽章 + 区块动作（刷新次操作 / 保存设置
-		// 橙胶囊主操作）。2026-11-07 用户裁定：这两个动作只作用于 Claude 设置
-		// 区，收回区块头渲染，不进全页签共享的页头（偏离需求 §4.1 页头动作区）。
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "Claude Code 设置").Bold().FontSize(t.FontSize + 1)
-			uikit.SoftBadge(c, t, s, "gray", "受管 13 键")
-			ui.Box(c).Grow(1)
-			if uikit.SoftButton(c, t, s, "gray", "刷新").Clicked() {
-				guardReload(st, func() { load(st, cfgs) })
-			}
-			canSave := st.ClaudeCfg.Loaded && st.ClaudeCfg.Layer != "managed" && st.ClaudeCfg.Dirty &&
-				saveBlockReason(&st.ClaudeCfg) == ""
-			btn := uikit.PillButton(c, t, "保存设置")
-			if !canSave {
-				btn.Disabled(true)
-			}
-			if btn.Clicked() && canSave {
-				st.ClaudeCfg.SaveArm = true
-			}
+	ui.Column(c).Gap(12).Grow(1).Children(func() {
+		uikit.PageHeader(c, t, uikit.PageHeaderOpts{
+			Title:    "Claude Code 设置",
+			Subtitle: "分层管理 Claude Code 自身设置；接入投影键只读",
+			Meta: func() {
+				uikit.SoftBadge(c, t, s, "gray", "受管 13 键")
+			},
+			Actions: func() {
+				if uikit.SoftButton(c, t, s, "gray", "刷新").Clicked() {
+					guardReload(st, func() { load(st, cfgs) })
+				}
+				canSave := st.ClaudeCfg.Loaded && st.ClaudeCfg.Layer != "managed" && st.ClaudeCfg.Dirty &&
+					saveBlockReason(&st.ClaudeCfg) == ""
+				btn := uikit.PillButton(c, t, "保存设置")
+				if !canSave {
+					btn.Disabled(true)
+				}
+				if btn.Clicked() && canSave {
+					st.ClaudeCfg.SaveArm = true
+				}
+			},
 		})
-		ui.Text(c, "分层管理 Claude Code 自身设置；接入投影键只读").TextColor(t.TextMuted)
 		if !st.ClaudeCfg.Loaded {
 			uikit.Feedback(c, t, uikit.InferFeedback(st.ClaudeCfg.Msg), st.ClaudeCfg.Msg)
 			return
 		}
-		fileStrip(c, t, s, st)
-		layerSelector(c, t, s, st, cfgs)
-		if st.ClaudeCfg.Warning != "" {
-			uikit.Feedback(c, t, uikit.FeedbackWarning, st.ClaudeCfg.Warning)
-		}
-		// 结果条与备份面板放在内容区顶部：保存后无需滚到表单底部。
-		saveResultBar(c, t, s, st, cfgs)
-		backupPanel(c, t, s, st, cfgs)
-		viewTabs(c, t, s, st, cfgs)
-		switch st.ClaudeCfg.View {
-		case "json":
-			uikit.Card(c, t, func() { jsonView(c, t, st) })
-		case "merged":
-			uikit.Card(c, t, func() { mergedView(c, t, st) })
-		default:
-			if st.ClaudeCfg.BrokenFile {
-				repairCard(c, t, s, st, cfgs)
-			} else {
-				FormSection(c, st)
-			}
-		}
-		uikit.Feedback(c, t, uikit.InferFeedback(st.ClaudeCfg.Msg), st.ClaudeCfg.Msg)
+		ui.Scroll(c).Grow(1).Children(func() {
+			ui.Column(c).Gap(10).Children(func() {
+				fileStrip(c, t, s, st)
+				layerSelector(c, t, s, st, cfgs)
+				if st.ClaudeCfg.Warning != "" {
+					uikit.Feedback(c, t, uikit.FeedbackWarning, st.ClaudeCfg.Warning)
+				}
+				// 结果条与备份面板放在内容区顶部：保存后无需滚到表单底部。
+				saveResultBar(c, t, s, st, cfgs)
+				backupPanel(c, t, s, st, cfgs)
+				viewTabs(c, t, s, st, cfgs)
+				switch st.ClaudeCfg.View {
+				case "json":
+					uikit.Card(c, t, func() { jsonView(c, t, st) })
+				case "merged":
+					uikit.Card(c, t, func() { mergedView(c, t, st) })
+				default:
+					if st.ClaudeCfg.BrokenFile {
+						repairCard(c, t, s, st, cfgs)
+					} else {
+						FormSection(c, st)
+					}
+				}
+				uikit.Feedback(c, t, uikit.InferFeedback(st.ClaudeCfg.Msg), st.ClaudeCfg.Msg)
+			})
+		})
 	})
 	saveDialog(c, st, cfgs)
 	conflictDialog(c, st, cfgs)

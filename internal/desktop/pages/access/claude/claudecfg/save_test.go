@@ -193,7 +193,7 @@ func TestSaveSuccessShowsResultAndBackupEntry(t *testing.T) {
 	cf.SaveArm = true
 
 	tt := ui.NewTester(func(c *ui.Context) {
-		Section(c, st)
+		Page(c, st)
 	}, 1200, 1200)
 	if err := tt.Click("保存"); err != nil {
 		t.Fatal(err)
@@ -309,7 +309,7 @@ func TestConflictDialogOverwritesWithDiskHash(t *testing.T) {
 	}
 
 	tt := ui.NewTester(func(c *ui.Context) {
-		Section(c, st)
+		Page(c, st)
 	}, 1200, 1200)
 	if err := tt.Click("保存"); err != nil {
 		t.Fatal(err)

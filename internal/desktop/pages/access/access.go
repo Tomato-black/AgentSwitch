@@ -264,7 +264,7 @@ func Page(c *ui.Context, st *state.State) {
 
 				if st.Access.App == "claude" {
 					claudeOpenAccess(st, acc)
-					claudeclaudecfg.Section(c, st)
+					claudeclaudecfg.Page(c, st) // 过渡挂载：Task 6 摘除（设置区拆独立页）
 				}
 
 				// 删除二次确认（行内「删除」只武装，弹窗确认才执行）
