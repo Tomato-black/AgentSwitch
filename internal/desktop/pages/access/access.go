@@ -22,6 +22,7 @@ import (
 	"AgentSwitch/internal/bridge"
 	"AgentSwitch/internal/desktop/accesskit"
 	"AgentSwitch/internal/desktop/pages/access/claude"
+	claudeclaudecfg "AgentSwitch/internal/desktop/pages/access/claude/claudecfg"
 	"AgentSwitch/internal/desktop/pages/access/claudedesktop"
 	"AgentSwitch/internal/desktop/pages/access/codex"
 	"AgentSwitch/internal/desktop/pages/access/guide"
@@ -240,6 +241,10 @@ func Page(c *ui.Context, st *state.State) {
 						})
 					})
 				})
+
+				if st.Access.App == "claude" {
+					claudeclaudecfg.Section(c, st)
+				}
 
 				// 删除二次确认（行内「删除」只武装，弹窗确认才执行）
 				deleteConfirm(c, st, acc)

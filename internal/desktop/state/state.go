@@ -39,10 +39,11 @@ type State struct {
 	HideWindow      func()       // 隐藏当前主窗（openWindow 注入；测试可为 nil）
 	Schedule        func(func()) // 把窗口操作推迟出 GTK 事件回调（默认 afterEvent）
 
-	Channels ChannelState
-	Logical  LogicalState
-	Access   AccessState
-	Settings SettingsState
+	Channels  ChannelState
+	Logical   LogicalState
+	Access    AccessState
+	ClaudeCfg ClaudeCfgState
+	Settings  SettingsState
 }
 
 // AccessState 是接入页状态：当前 Agent 页签、全局配置编辑行、列表/编辑器
@@ -71,6 +72,38 @@ type AccessState struct {
 	BackupMsg  string
 	RestoreTS  int64
 	BackupArm  bool // 所选备份的还原确认
+}
+
+// ClaudeCfgState 是 Claude Code 设置区状态。Doc 是当前层工作文档，
+// Baseline 是打开/上次保存时的文档；Dirty 由 diff 计算。
+type ClaudeCfgState struct {
+	Loaded    bool
+	Loading   bool
+	Home      string // 测试注入；空=os.UserHomeDir()
+	Layer     string // user/project/managed
+	Sub       string // shared/local
+	Project   string
+	View      string // form/json/merged
+	File      string
+	Display   string
+	Exists    bool
+	Hash      string
+	Doc       map[string]any
+	Baseline  map[string]any
+	Dirty     bool
+	Msg       string
+	ParseErr  string
+	JSONText  string
+	MergeText string
+
+	ModelInput    string
+	FallbackInput string
+	DangerInput   bool
+	SkillStates   map[string]string
+
+	Projects []bridge.ClaudeProject
+	Skills   []bridge.SkillView
+	SkillErr string
 }
 
 // AccessForm 是接入配置新建/编辑表单状态（Open 非空即编辑）。DocJSON 是唯一

@@ -156,3 +156,13 @@ func (s ClaudeConfigs) ClaudeConfigOverview() (ClaudeConfigOverview, error) {
 	}
 	return out, nil
 }
+
+// MergeClaudeConfig 返回当前用户/项目/托管层的合并结果（只读预览）。
+func (s ClaudeConfigs) MergeClaudeConfig(project string) (map[string]any, error) {
+	home, err := s.home()
+	if err != nil {
+		return nil, err
+	}
+	merged, _ := claudecfg.Merge(s.claudeLayers(home, project))
+	return merged, nil
+}
