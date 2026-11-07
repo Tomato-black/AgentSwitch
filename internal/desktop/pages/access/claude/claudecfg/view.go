@@ -28,11 +28,25 @@ func Section(c *ui.Context, st *state.State) {
 	}
 
 	ui.Column(c).Gap(10).Children(func() {
-		// 区块头（卡外）：标题 + 受管键徽章；动作按钮在页面页头（HeaderActions）。
+		// 区块头（卡外）：标题 + 受管键徽章 + 区块动作（刷新次操作 / 保存设置
+		// 橙胶囊主操作）。2026-11-07 用户裁定：这两个动作只作用于 Claude 设置
+		// 区，收回区块头渲染，不进全页签共享的页头（偏离需求 §4.1 页头动作区）。
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "Claude Code 设置").Bold().FontSize(t.FontSize + 1)
 			uikit.SoftBadge(c, t, s, "gray", "受管 13 键")
 			ui.Box(c).Grow(1)
+			if uikit.SoftButton(c, t, s, "gray", "刷新").Clicked() {
+				guardReload(st, func() { load(st, cfgs) })
+			}
+			canSave := st.ClaudeCfg.Loaded && st.ClaudeCfg.Layer != "managed" && st.ClaudeCfg.Dirty &&
+				saveBlockReason(&st.ClaudeCfg) == ""
+			btn := uikit.PillButton(c, t, "保存设置")
+			if !canSave {
+				btn.Disabled(true)
+			}
+			if btn.Clicked() && canSave {
+				st.ClaudeCfg.SaveArm = true
+			}
 		})
 		ui.Text(c, "分层管理 Claude Code 自身设置；接入投影键只读").TextColor(t.TextMuted)
 		if !st.ClaudeCfg.Loaded {
@@ -324,26 +338,6 @@ func syncInputs(cf *state.ClaudeCfgState) {
 		}
 	}
 	RecomputeDirty(cf)
-}
-
-// HeaderActions 渲染设置区的页头动作（原型 2026-11-07 §4.1：页头右侧
-// 「刷新」次操作 + 「保存设置」橙色胶囊主操作）。由宿主 access 页在 PageHeader
-// 的 Actions 区调用；设置区卡内不再重复渲染按钮。保存可用条件与原先一致：
-// 已加载、非托管层、有未保存修改且无阻断错误。
-func HeaderActions(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State) {
-	cfgs := bridge.ClaudeConfigs{A: st.Svc.Gateway.A, Home: st.ClaudeCfg.Home}
-	if uikit.SoftButton(c, t, s, "gray", "刷新").Clicked() {
-		guardReload(st, func() { load(st, cfgs) })
-	}
-	canSave := st.ClaudeCfg.Loaded && st.ClaudeCfg.Layer != "managed" && st.ClaudeCfg.Dirty &&
-		saveBlockReason(&st.ClaudeCfg) == ""
-	btn := uikit.PillButton(c, t, "保存设置")
-	if !canSave {
-		btn.Disabled(true)
-	}
-	if btn.Clicked() && canSave {
-		st.ClaudeCfg.SaveArm = true
-	}
 }
 
 func layerSelector(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, cfgs bridge.ClaudeConfigs) {

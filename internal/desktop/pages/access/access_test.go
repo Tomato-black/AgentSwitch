@@ -405,9 +405,10 @@ func TestGlobalConfigCardCodexOnly(t *testing.T) {
 	}
 }
 
-// TestPageHeaderAgentAccess（2026-11-07 原型对齐）：页头标题改「Agent 接入」，
-// claude 页签副标题点明同页管理设置且页头有「保存设置」主操作；其他页签用
-// 通用副标题。
+// TestPageHeaderAgentAccess（2026-11-07 原型对齐 + 用户裁定修订）：页头标题
+// 「Agent 接入」、claude 副标题点明同页管理设置；「刷新/保存设置」是 Claude
+// 设置区专属动作，渲染在设置区区块头而非全页签共享的页头——codex 页签不得
+// 出现「保存设置」。
 func TestPageHeaderAgentAccess(t *testing.T) {
 	st, a := uitest.New(t)
 	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
@@ -416,7 +417,7 @@ func TestPageHeaderAgentAccess(t *testing.T) {
 	st.Page = "access"
 	st.Access.App = "claude"
 	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
-	for _, want := range []string{"Agent 接入", "并在同一页管理它的设置", "保存设置"} {
+	for _, want := range []string{"Agent 接入", "并在同一页管理它的设置", "Claude Code 设置", "刷新", "保存设置"} {
 		if !tt.HasText(want) {
 			t.Fatalf("missing %q: %v", want, tt.Texts())
 		}
@@ -425,6 +426,9 @@ func TestPageHeaderAgentAccess(t *testing.T) {
 	tt = ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
 	if !tt.HasText("为每个 Agent 管理网关接入与实际配置") {
 		t.Fatalf("codex 副标题缺失: %v", tt.Texts())
+	}
+	if tt.HasText("保存设置") {
+		t.Fatalf("保存设置是 Claude 设置区专属动作，codex 页签不应出现: %v", tt.Texts())
 	}
 }
 

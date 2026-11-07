@@ -27,14 +27,15 @@ func TestSectionRendersClaudeSettings(t *testing.T) {
 	st.Access.App = "claude"
 	st.ClaudeCfg.Home = home
 	tt := ui.NewTester(func(c *ui.Context) {
-		// 与宿主接入页一致：动作按钮在页头（HeaderActions），正文是 Section。
-		HeaderActions(c, c.Theme(), uikit.Softs(c.Theme()), st)
 		Section(c, st)
 	}, 1000, 1600)
 	for _, want := range []string{
 		"Claude Code 设置", "受管 13 键", "用户级", "项目级", "企业托管",
 		"表单", "JSON", "合并预览", "模型与响应", "权限", "Skills",
-		"危险模式确认", "保存设置",
+		"危险模式确认",
+		// 2026-11-07 用户裁定：刷新/保存设置是设置区（Claude 专属）动作，
+		// 收回区块头渲染，不进全页签共享的页头。
+		"刷新", "保存设置",
 	} {
 		if !tt.HasText(want) {
 			t.Fatalf("missing %q in %v", want, tt.Texts())
@@ -139,7 +140,6 @@ func TestRefreshGuardsDirtyEdits(t *testing.T) {
 	RecomputeDirty(&st.ClaudeCfg)
 
 	tt := ui.NewTester(func(c *ui.Context) {
-		HeaderActions(c, c.Theme(), uikit.Softs(c.Theme()), st)
 		Section(c, st)
 	}, 1000, 1600)
 	if err := tt.Click("刷新"); err != nil {
@@ -193,7 +193,6 @@ func TestRefreshCleanReloadsImmediately(t *testing.T) {
 	load(st, cfgs)
 
 	tt := ui.NewTester(func(c *ui.Context) {
-		HeaderActions(c, c.Theme(), uikit.Softs(c.Theme()), st)
 		Section(c, st)
 	}, 1000, 1600)
 	if err := tt.Click("刷新"); err != nil {
