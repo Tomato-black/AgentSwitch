@@ -177,6 +177,10 @@ func ApplyAsync(st *state.State, acc bridge.AccessConfigs, v bridge.AccessConfig
 	if st.Access.ApplyTask.Running {
 		return
 	}
+	if st.Access.App == "claude" && st.ClaudeCfg.Dirty {
+		st.Access.Msg = "Claude Code 设置还有未保存修改；先保存或刷新放弃，再应用接入"
+		return
+	}
 	st.Access.ApplyID = v.ID
 	state.RunAsync(st, &st.Access.ApplyTask, "正在应用…", func(context.Context) (string, error) {
 		if err := acc.Apply(v.ID); err != nil {
@@ -197,5 +201,7 @@ func ApplyAsync(st *state.State, acc bridge.AccessConfigs, v bridge.AccessConfig
 			return
 		}
 		st.Access.Msg = msg
+		st.ClaudeCfg.Loaded = false
+		st.ClaudeCfg.Msg = "接入已更新，设置区已重新加载"
 	})
 }

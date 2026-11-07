@@ -28,5 +28,8 @@ func New(t testing.TB) (*state.State, *app.App) {
 		Channels: bridge.Channels{A: a},
 		Logical:  &bridge.LogicalModels{A: a},
 	}
-	return state.New(svc), a
+	st := state.New(svc)
+	// 页面测试必须与真实 ~/.claude 隔离，避免读取用户配置。
+	st.ClaudeCfg.Home = t.TempDir()
+	return st, a
 }

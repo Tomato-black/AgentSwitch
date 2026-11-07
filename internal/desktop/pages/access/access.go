@@ -90,6 +90,10 @@ func Page(c *ui.Context, st *state.State) {
 					reloadGlobal(st, acc)
 				}
 
+				if st.Access.App == "claude" {
+					claudeSummaryCard(c, st, acc, gateOK)
+				}
+
 				// 全局配置卡（Desktop 无 env 合成层，不显示）
 				if st.Access.App != "claude_desktop" {
 					uikit.Card(c, t, func() {
@@ -353,6 +357,74 @@ func repreviewForm(st *state.State, acc bridge.AccessConfigs) {
 	}
 	st.Access.Form.DocJSON = preview
 	st.Access.Form.Msg = ""
+}
+
+// claudeSummaryCard 是合并页的接入摘要卡：当前应用配置、网关状态、模型与
+// 主操作。完整的全局配置与实际配置列表仍在下方，供多配置管理。
+func claudeSummaryCard(c *ui.Context, st *state.State, acc bridge.AccessConfigs, gateOK bool) {
+	t := c.Theme()
+	s := uikit.Softs(t)
+	list := acc.List("claude")
+	var cur *bridge.AccessConfigView
+	for i := range list {
+		if list[i].IsCurrent {
+			cur = &list[i]
+			break
+		}
+	}
+	stt := st.Svc.Gateway.Status()
+	uikit.Card(c, t, func() {
+		ui.Column(c).Gap(8).Children(func() {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "Claude Code 接入").Bold()
+				if cur == nil {
+					uikit.SoftBadge(c, t, s, "gray", "尚未应用")
+				} else if cur.NeedsApply {
+					uikit.SoftBadge(c, t, s, "warn", "待应用")
+				} else {
+					uikit.SoftBadge(c, t, s, "ok", "已应用")
+				}
+				ui.Box(c).Grow(1)
+				if cur != nil {
+					if uikit.SoftButton(c, t, s, "gray", "编辑接入").Clicked() {
+						st.Access.Form = state.AccessForm{Open: true, EditID: cur.ID}
+						preloadForm(st, acc)
+					}
+					if gateOK {
+						label := "应用接入"
+						if !cur.NeedsApply {
+							label = "重新应用"
+						}
+						switch {
+						case st.Access.ApplyTask.Running && st.Access.ApplyID == cur.ID:
+							uikit.BusyRow(c, t, st.Access.ApplyTask.Label, nil)
+						case st.Access.ApplyTask.Running:
+							uikit.SoftButton(c, t, s, "gray", label).Disabled(true)
+						default:
+							if uikit.SoftButton(c, t, s, "act", label).Clicked() {
+								accesskit.ApplyAsync(st, acc, *cur)
+							}
+						}
+					}
+				}
+			})
+			status := "网关未运行"
+			if stt.State == "running" {
+				status = "网关运行中 · " + stt.Addr
+			}
+			if cur == nil {
+				ui.Text(c, status+" · 尚未选择接入配置").TextColor(t.TextMuted)
+			} else {
+				ui.Text(c, status+" · 配置 "+cur.Name+" · 模型 "+accesskit.ModelSummary("claude", cur.Settings, cur.LogicalModelName)).
+					TextColor(t.TextMuted)
+			}
+			ui.Text(c, "接入只管理网关与受管键；权限、状态栏、Skills 在下方「Claude Code 设置」中编辑").
+				TextColor(t.TextMuted)
+			if !gateOK {
+				ui.Text(c, "网关不可用：先启动网关再应用接入").TextColor(t.TextMuted)
+			}
+		})
+	})
 }
 
 // configRow 渲染一行实际配置：第一行名称/使用中/模型摘要，第二行操作，
