@@ -364,3 +364,25 @@ func TestAccessEmptyStateWithoutModelsOffersLogical(t *testing.T) {
 		t.Fatalf("logical action missing: %v", tt.Texts())
 	}
 }
+
+// TestGlobalConfigCardCodexOnly（2026-11-07 用户决策）：Claude 全局配置下线，
+// claude 页签不再渲染全局配置卡；codex 页签保留编辑与保存入口。
+func TestGlobalConfigCardCodexOnly(t *testing.T) {
+	st, a := uitest.New(t)
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	st.Page = "access"
+	st.Access.App = "claude"
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
+	if tt.HasText("全局配置") {
+		t.Fatalf("claude 页签不应再渲染全局配置卡: %v", tt.Texts())
+	}
+	st.Access.App = "codex"
+	tt = ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
+	for _, want := range []string{"全局配置", "保存全局配置"} {
+		if !tt.HasText(want) {
+			t.Fatalf("codex 页签缺少 %q: %v", want, tt.Texts())
+		}
+	}
+}

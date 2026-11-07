@@ -8,16 +8,20 @@ import (
 	"AgentSwitch/internal/desktop/state"
 )
 
-// TestAccessPageRenders 覆盖接入页骨架：两 tab、全局配置卡、实际配置卡、
-// 空态引导与网关未运行提示在场；旧片段页元素（当前逻辑模型选择器）不再出现。
+// TestAccessPageRenders 覆盖接入页骨架：两 tab、实际配置卡、空态引导与
+// 网关未运行提示在场；Claude 全局配置已下线（2026-11-07）不再出现；
+// 旧片段页元素（当前逻辑模型选择器）不再出现。
 func TestAccessPageRenders(t *testing.T) {
 	u, _ := testUI(t)
 	u.Page = "access"
 	tt := ui.NewTester(u.view, 900, 600)
-	for _, want := range []string{"Claude Code", "Codex", "全局配置", "实际配置", "还没有配置", "网关未运行"} {
+	for _, want := range []string{"Claude Code", "Codex", "实际配置", "还没有配置", "网关未运行"} {
 		if !tt.HasText(want) {
 			t.Fatalf("missing %q in %v", want, tt.Texts())
 		}
+	}
+	if tt.HasText("全局配置") {
+		t.Fatalf("claude 页签不应再渲染全局配置卡: %v", tt.Texts())
 	}
 	if tt.HasText("当前逻辑模型") {
 		t.Fatalf("旧片段页元素泄漏: %v", tt.Texts())

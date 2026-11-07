@@ -3,8 +3,9 @@
 // 子包依赖。
 //
 // access.go 是接入页（spec 2026-10-18-agent-access-config-design）：每 Agent
-// （Claude Code / Codex，后者覆盖 CLI / 桌面版 / IDE 插件）多实际配置 +
-// 全局配置（合并进所有实际配置），
+// （Claude Code / Codex，后者覆盖 CLI / 桌面版 / IDE 插件）多实际配置，
+// Codex 另有全局配置（合并进所有实际配置；Claude 全局配置已于 2026-11-07
+// 用户决策下线，env 由 Claude Code 设置中心按层管理），
 // 「应用」即受管键投影写入 agent 真实配置文件；未应用的配置经持久文件 +
 // 启动命令 / 「打开终端」在启动 Agent 时手动指定。取代旧「片段复制」页
 // （旧 bridge.Access 已删除）。编辑器默认渲染真实网关令牌（2026-10-21 用户
@@ -67,7 +68,7 @@ func Page(c *ui.Context, st *state.State) {
 	// 视口，没有滚动容器时底部内容不可达。
 	ui.Column(c).Gap(12).Grow(1).Children(func() {
 		uikit.PageHeader(c, t, uikit.PageHeaderOpts{
-			Title: "接入", Subtitle: "为每个 Agent 管理网关接入、全局配置与实际配置",
+			Title: "接入", Subtitle: "为每个 Agent 管理网关接入与实际配置",
 		})
 		ui.Scroll(c).Grow(1).Children(func() {
 			ui.Column(c).Gap(12).Children(func() {
@@ -86,7 +87,7 @@ func Page(c *ui.Context, st *state.State) {
 					guide.Card(c, t, s, st)
 					return
 				}
-				if st.Access.Glob == nil {
+				if st.Access.App == "codex" && st.Access.Glob == nil {
 					reloadGlobal(st, acc)
 				}
 
@@ -94,8 +95,9 @@ func Page(c *ui.Context, st *state.State) {
 					claudeSummaryCard(c, st, acc, gateOK)
 				}
 
-				// 全局配置卡（Desktop 无 env 合成层，不显示）
-				if st.Access.App != "claude_desktop" {
+				// 全局配置卡（2026-11-07 用户决策：Claude 全局配置下线，仅 Codex
+				// 保留 env 合成层；Desktop 无 env 合成层）
+				if st.Access.App == "codex" {
 					uikit.Card(c, t, func() {
 						ui.Column(c).Gap(10).Children(func() {
 							ui.Text(c, "全局配置").Bold()
@@ -360,7 +362,7 @@ func repreviewForm(st *state.State, acc bridge.AccessConfigs) {
 }
 
 // claudeSummaryCard 是合并页的接入摘要卡：当前应用配置、网关状态、模型与
-// 主操作。完整的全局配置与实际配置列表仍在下方，供多配置管理。
+// 主操作。实际配置列表仍在下方，供多配置管理（全局配置已下线）。
 func claudeSummaryCard(c *ui.Context, st *state.State, acc bridge.AccessConfigs, gateOK bool) {
 	t := c.Theme()
 	s := uikit.Softs(t)
@@ -570,7 +572,7 @@ func requestTab(st *state.State, acc bridge.AccessConfigs, app string) {
 }
 
 // switchTab 执行页签切换：丢弃两套编辑器草稿，按目标页签刷新全局配置
-// （claude/codex 有 env 合成层，需要重载全局配置行）。
+// （codex 仍有 env 合成层；claude 全局配置已下线）。
 func switchTab(st *state.State, acc bridge.AccessConfigs, app string) {
 	st.Access.App = app
 	st.Access.Msg = ""
@@ -579,7 +581,7 @@ func switchTab(st *state.State, acc bridge.AccessConfigs, app string) {
 	st.Access.RowMore = ""
 	// Claude 设置区草稿随页签丢弃（保留注入 Home；下次进入重新加载）。
 	st.ClaudeCfg = state.ClaudeCfgState{Home: st.ClaudeCfg.Home}
-	if app == "claude" || app == "codex" {
+	if app == "codex" {
 		reloadGlobal(st, acc)
 	}
 }
