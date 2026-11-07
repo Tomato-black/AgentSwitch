@@ -350,7 +350,7 @@ func layerSelector(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.St
 	}
 	// 层级切换用 Segmented（原型 §4.1：等宽三段）；语义同旧 Tabs——变更走
 	// switchLayer 的脏守卫。
-	if ui.Segmented(c, &idx, "用户级", "项目级", "企业托管").Changed() {
+	if uikit.Segmented(c, t, s, &idx, "用户级", "项目级", "企业托管").Changed() {
 		layer := "user"
 		if idx == 1 {
 			layer = "project"
@@ -396,7 +396,7 @@ func projectContextCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *sta
 			if cf.Sub == "local" {
 				sub = 1
 			}
-			if ui.Segmented(c, &sub, "共享 settings.json", "本地 settings.local.json").Changed() {
+			if uikit.Segmented(c, t, s, &sub, "共享 settings.json", "本地 settings.local.json").Changed() {
 				next := "shared"
 				if sub == 1 {
 					next = "local"

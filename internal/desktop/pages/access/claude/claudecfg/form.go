@@ -623,7 +623,7 @@ func boolField(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.Claude
 	}
 	var changed bool
 	uikit.FormRow(c, t, label, func() ui.Element {
-		sel := ui.Segmented(c, &choice, boolChoices...)
+		sel := uikit.Segmented(c, t, s, &choice, boolChoices...)
 		changed = sel.Changed()
 		return sel
 	})
