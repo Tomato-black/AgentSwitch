@@ -430,7 +430,7 @@ func TestInheritedFieldsDirectlyEditable(t *testing.T) {
 	st := formTestState(t)
 	ensureFormState(&st.ClaudeCfg)
 	st.ClaudeCfg.MergeEntries = map[string]corecfg.MergedEntry{
-		"permissions.ask": {Path: "permissions.ask", Value: []any{"Write"}, Source: corecfg.ScopeUser},
+		"permissions.ask": {Path: "permissions.ask", Value: []any{"Write"}, Source: corecfg.ScopeProject},
 	}
 	tt := ui.NewTester(func(c *ui.Context) {
 		permissionGroup(c, c.Theme(), uikit.Softs(c.Theme()), &st.ClaudeCfg)
@@ -524,5 +524,33 @@ func TestModelGroupDropsModelKeys(t *testing.T) {
 		if tt.HasText(unwanted) {
 			t.Fatalf("不应再出现 %q: %v", unwanted, tt.Texts())
 		}
+	}
+}
+
+// TestInheritHintOnlyWhenLayerMissing（2026-11-07 实机验证发现）：「下层：」
+// 提示只在当前层未设置该键时显示——当前层已设置（合并赢家即本层）不得自指
+// 「来源：用户级」。
+func TestInheritHintOnlyWhenLayerMissing(t *testing.T) {
+	st := formTestState(t)
+	cf := &st.ClaudeCfg
+	ensureFormState(cf)
+	// 当前层已设置 effortLevel → 无下层提示。
+	cf.Doc["effortLevel"] = "high"
+	cf.MergeEntries = map[string]corecfg.MergedEntry{
+		"effortLevel": {Path: "effortLevel", Value: "low", Source: corecfg.ScopeManaged},
+	}
+	tt := ui.NewTester(func(c *ui.Context) {
+		modelGroup(c, c.Theme(), uikit.Softs(c.Theme()), cf)
+	}, 1000, 400)
+	if tt.HasText("下层：") {
+		t.Fatalf("当前层已设置不应显示下层提示: %v", tt.Texts())
+	}
+	// 当前层缺键 → 显示下层提示。
+	delete(cf.Doc, "effortLevel")
+	tt = ui.NewTester(func(c *ui.Context) {
+		modelGroup(c, c.Theme(), uikit.Softs(c.Theme()), cf)
+	}, 1000, 400)
+	if !tt.HasText("下层：low（来源：企业托管）") {
+		t.Fatalf("缺键应显示下层提示: %v", tt.Texts())
 	}
 }

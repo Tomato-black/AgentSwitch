@@ -295,10 +295,10 @@ func permissionGroup(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.
 	groupCard(c, t, "权限", "默认模式、规则列表与危险模式确认", func() {
 		enumField(c, t, s, cf, "permissions.defaultMode", "默认模式",
 			[]string{"default", "acceptEdits", "plan", "auto", "bypassPermissions"}, "继承（未设置）")
-		listField(c, t, s, cf, "permissions.allow", "允许规则", "逗号分隔，例如 Bash(go test:*)")
-		listField(c, t, s, cf, "permissions.ask", "询问规则", "逗号分隔")
-		listField(c, t, s, cf, "permissions.deny", "拒绝规则", "逗号分隔")
-		listField(c, t, s, cf, "permissions.additionalDirectories", "附加目录", "逗号分隔")
+		listField(c, t, s, cf, "permissions.allow", "允许规则", "例如 Bash(go test:*)")
+		listField(c, t, s, cf, "permissions.ask", "询问规则", "例如 Bash(git push:*)")
+		listField(c, t, s, cf, "permissions.deny", "拒绝规则", "例如 Read(./.env)")
+		listField(c, t, s, cf, "permissions.additionalDirectories", "附加目录", "例如 ~/work/docs")
 		dangerRow(c, t, s, cf)
 	})
 }
@@ -627,11 +627,7 @@ func boolField(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.Claude
 			setBoolChoice(cf, path, nil)
 		}
 	}
-	if entry, ok := cf.MergeEntries[path]; ok {
-		b, _ := entry.Value.(bool)
-		ui.Text(c, "下层："+boolLabel(b)+"（"+sourceLabel(entry.Source)+"）").
-			FontSize(t.FontSize - 2).TextColor(t.TextMuted)
-	}
+	inheritHint(c, t, cf, path)
 	if hint != "" {
 		ui.Text(c, hint).FontSize(t.FontSize - 2).TextColor(t.TextMuted)
 	}
@@ -834,10 +830,17 @@ func intField(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.ClaudeC
 }
 
 // inheritHint 在编辑控件下方渲染继承信息（只读提示，2026-11-07 用户实测：
-// 去掉「覆盖」门槛后，继承值降为提示行——不写进当前层）。
+// 去掉「覆盖」门槛后，继承值降为提示行——不写进当前层）。仅当前层缺键时
+// 显示（当前层已设置即合并赢家，不得自指「来源：本层」——实机验证发现）。
 func inheritHint(c *ui.Context, t *ui.Theme, cf *state.ClaudeCfgState, path string) {
+	if _, exists := corecfg.Get(cf.Doc, path); exists {
+		return
+	}
 	entry, ok := cf.MergeEntries[path]
 	if !ok {
+		return
+	}
+	if entry.Source == scopeOf(cf.Layer, cf.Sub) {
 		return
 	}
 	ui.Text(c, "下层："+displayValue(path, entry.Value)+"（来源："+sourceLabel(entry.Source)+"）").
