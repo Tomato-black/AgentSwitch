@@ -85,11 +85,11 @@ func TestGoDirtyGuard(t *testing.T) {
 	}
 }
 
-// TestGoDirtyGuardClaudeCfg 回归（I1）：接入页 Claude 页签的设置区有未保存
-// 修改时，侧栏切页必须武装确认；确认后草稿连同表单一起丢弃（Home 保留）。
+// TestGoDirtyGuardClaudeCfg 回归（I1）：Claude Code 设置页有未保存修改时，
+// 侧栏切页必须武装确认；确认后草稿丢弃（Home 保留）。2026-11-07 拆页后
+// 脏守卫按页判定（此前随接入页 Claude 页签）。
 func TestGoDirtyGuardClaudeCfg(t *testing.T) {
-	s := &State{Page: "access"}
-	s.Access.App = "claude"
+	s := &State{Page: "claude-settings"}
 	if s.DirtyCurrent() {
 		t.Fatal("clean settings section must not block nav")
 	}

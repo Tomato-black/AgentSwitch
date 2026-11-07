@@ -446,16 +446,17 @@ func (s *State) DirtyCurrent() bool {
 			return s.Channels.Signature() != s.Channels.Baseline
 		}
 	case "access":
-		return s.Access.Form.Dirty(s.Access.App) || s.Access.DesktopForm.Dirty() ||
-			claudeCfgDirty(s)
+		return s.Access.Form.Dirty(s.Access.App) || s.Access.DesktopForm.Dirty()
+	case "claude-settings":
+		return claudeCfgDirty(s)
 	}
 	return false
 }
 
-// claudeCfgDirty 报告 Claude Code 设置区是否有未保存编辑（I1：此前侧栏切页
-// 感知不到该区的 Dirty）。非 Claude 页签恒干净。
+// claudeCfgDirty 报告 Claude Code 设置页是否有未保存编辑（I1）。2026-11-07
+// 拆页后按页判定（此前随接入页 Claude 页签判定）。
 func claudeCfgDirty(s *State) bool {
-	return s.Access.App == "claude" && s.ClaudeCfg.Dirty
+	return s.Page == "claude-settings" && s.ClaudeCfg.Dirty
 }
 
 // Go 切换页面/子视图：有未保存编辑时先武装确认（NavArm），确认后 Navigate。
@@ -505,8 +506,9 @@ func (s *State) discardDrafts() {
 		s.Access.Form = AccessForm{}
 		s.Access.DesktopForm = DesktopForm{}
 		s.Access.ApplyID = ""
-		// Claude 设置区草稿一并丢弃（保留测试注入的 Home；Loaded 归 false，
-		// 下次进入重新加载）。
+	case "claude-settings":
+		// Claude 设置页草稿丢弃（保留测试注入的 Home；Loaded 归 false，下次
+		// 进入重新加载）。
 		s.ClaudeCfg = ClaudeCfgState{Home: s.ClaudeCfg.Home}
 	}
 }

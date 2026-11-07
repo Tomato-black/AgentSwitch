@@ -12,7 +12,7 @@ import (
 // channels → access → settings），与 uiState.page 的分发 id 一一对应
 // （spec §6.1 导航骨架）。
 func TestNavItemSet(t *testing.T) {
-	want := []string{"logical", "channels", "access", "settings"}
+	want := []string{"logical", "channels", "access", "claude-settings", "settings"}
 	if len(navItems) != len(want) {
 		t.Fatalf("nav items = %d, want %d", len(navItems), len(want))
 	}
@@ -127,5 +127,40 @@ func TestSetupChecklistRendersWhenIncomplete(t *testing.T) {
 		if !tt.HasText(want) {
 			t.Fatalf("missing %q: %v", want, tt.Texts())
 		}
+	}
+}
+
+// TestNavItemSetClaudeSettings（2026-11-07 拆页）：侧栏第五项「Claude Code
+// 设置」，位于 Agent 接入之后。
+func TestNavItemSetClaudeSettings(t *testing.T) {
+	want := []string{"logical", "channels", "access", "claude-settings", "settings"}
+	if len(navItems) != len(want) {
+		t.Fatalf("nav items = %d, want %d", len(navItems), len(want))
+	}
+	for i, w := range want {
+		if navItems[i].id != w {
+			t.Fatalf("navItems[%d].id = %q, want %q", i, navItems[i].id, w)
+		}
+	}
+	if navItems[3].label != "Claude Code 设置" {
+		t.Fatalf("label = %q", navItems[3].label)
+	}
+}
+
+// TestClaudeSettingsPageRendersAndGuardsDirty：新页渲染设置主体；脏状态下
+// 侧栏切页武装确认（脏守卫随页迁移）。
+func TestClaudeSettingsPageRendersAndGuardsDirty(t *testing.T) {
+	u, _ := testUI(t)
+	u.Page = "claude-settings"
+	tt := ui.NewTester(u.view, 900, 700)
+	for _, want := range []string{"Claude Code 设置", "保存设置", "用户级", "项目级", "企业托管"} {
+		if !tt.HasText(want) {
+			t.Fatalf("missing %q: %v", want, tt.Texts())
+		}
+	}
+	u.ClaudeCfg.Dirty = true
+	u.Go("channels", nil)
+	if !u.NavArm || u.Page != "claude-settings" {
+		t.Fatalf("dirty nav must arm confirm: nav=%v page=%q", u.NavArm, u.Page)
 	}
 }

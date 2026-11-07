@@ -10,6 +10,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"AgentSwitch/internal/desktop/pages/access"
+	claudecfgpage "AgentSwitch/internal/desktop/pages/access/claude/claudecfg"
 	"AgentSwitch/internal/desktop/pages/channels"
 	"AgentSwitch/internal/desktop/pages/logical"
 	"AgentSwitch/internal/desktop/pages/settings"
@@ -27,6 +28,7 @@ var navItems = []struct {
 	{"logical", "逻辑模型", uikit.IconLogical},
 	{"channels", "渠道", uikit.IconChannels},
 	{"access", "Agent 接入", uikit.IconAccess},
+	{"claude-settings", "Claude Code 设置", uikit.IconConfig},
 	{"settings", "设置", uikit.IconSettings},
 }
 
@@ -161,6 +163,10 @@ func (u *uiState) pageView(c *ui.Context) {
 		channels.Page(c, u.State)
 	case "access":
 		access.Page(c, u.State)
+	case "claude-settings":
+		// 受管键行「打开接入」跨页入口（接入抽屉在 access 页挂载）。
+		u.ClaudeCfg.OpenAccess = func() { u.Go("access", nil) }
+		claudecfgpage.Page(c, u.State)
 	case "settings":
 		settings.Page(c, u.State)
 	default:
