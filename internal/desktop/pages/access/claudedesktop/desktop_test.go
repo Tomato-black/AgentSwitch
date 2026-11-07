@@ -55,3 +55,36 @@ func TestEditorCardShowsProfilePreview(t *testing.T) {
 		}
 	}
 }
+
+// TestConfigRowDeleteViaMenu（2026-11-07 组件升级）：「更多」为主题化菜单——
+// 选中「删除」即武装确认且菜单随选关闭（区别于旧展开行常开）。
+func TestConfigRowDeleteViaMenu(t *testing.T) {
+	st, a := uitest.New(t)
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	acc := bridge.AccessConfigs{A: a, Home: t.TempDir()}
+	if _, err := acc.Create("claude_desktop", "桌面", "lm1", `{"sonnet":{"model":"my-code"}}`); err != nil {
+		t.Fatal(err)
+	}
+	v := acc.List("claude_desktop")[0]
+	st.Page = "access"
+	st.Access.App = "claude_desktop"
+	tt := ui.NewTester(func(c *ui.Context) {
+		ConfigRow(c, c.Theme(), uikit.Softs(c.Theme()), st, acc, v, false)
+	}, 1000, 800)
+	if err := tt.Click("更多"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if err := tt.Click("删除"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if !st.Access.DeleteArm || st.Access.DeleteID != v.ID {
+		t.Fatalf("删除应武装确认: arm=%v id=%q", st.Access.DeleteArm, st.Access.DeleteID)
+	}
+	if tt.HasText("删除") {
+		t.Fatalf("菜单应随选中关闭: %v", tt.Texts())
+	}
+}

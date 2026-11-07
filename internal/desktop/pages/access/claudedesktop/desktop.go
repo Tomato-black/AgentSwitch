@@ -264,26 +264,14 @@ func ConfigRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State,
 				st.Access.DesktopForm = state.DesktopForm{Open: true, EditID: v.ID}
 				preloadForm(st, acc)
 			}
-			moreLabel := "更多"
-			if st.Access.RowMore == v.ID {
-				moreLabel = "收起"
-			}
-			if uikit.SoftButton(c, t, s, "gray", moreLabel).Clicked() {
-				if st.Access.RowMore == v.ID {
-					st.Access.RowMore = ""
-				} else {
-					st.Access.RowMore = v.ID
-				}
-			}
-		})
-		if st.Access.RowMore == v.ID {
-			ui.Row(c).Gap(8).Wrap().Children(func() {
-				if uikit.SoftButton(c, t, s, "danger", "删除").Clicked() {
+			// 次级操作走主题化菜单（mygo v0.7.2+）：删除为 Danger 红项，选中即关。
+			ui.PopoverMenuButton(c, "更多", func(m *ui.Menu) {
+				if m.Item("删除").Danger().Chosen() {
 					st.Access.DeleteArm = true
 					st.Access.DeleteID = v.ID
 				}
 			})
-		}
+		})
 	})
 }
 
