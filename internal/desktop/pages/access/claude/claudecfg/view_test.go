@@ -105,6 +105,19 @@ func mustJSONNumber(t *testing.T, s string) json.Number {
 	return json.Number(s)
 }
 
+// TestPrettyPreservesJSONNumberLiterals：JSON 视图的 pretty() 序列化必须原样
+// 输出 json.Number 字面量（含超出 float64 精度的大整数），不得走 float 往返。
+func TestPrettyPreservesJSONNumberLiterals(t *testing.T) {
+	doc := map[string]any{
+		"cleanupPeriodDays": mustJSONNumber(t, "30"),
+		"big":               mustJSONNumber(t, "12345678901234567890"),
+	}
+	want := "{\n  \"big\": 12345678901234567890,\n  \"cleanupPeriodDays\": 30\n}"
+	if got := pretty(doc); got != want {
+		t.Fatalf("pretty flattened numbers: %s", got)
+	}
+}
+
 // TestRefreshGuardsDirtyEdits 回归（I1）：有未保存修改时点「刷新」不得静默
 // 丢弃——先弹「放弃未保存的修改？」，继续编辑为默认焦点；确认放弃才重载。
 func TestRefreshGuardsDirtyEdits(t *testing.T) {
