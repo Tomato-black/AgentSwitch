@@ -2012,3 +2012,48 @@ func TestGlobalConfigClaudeRetiredComposePaths(t *testing.T) {
 		}
 	}
 }
+
+// TestApplyProjectsTopLevelModelKeys（2026-11-07 模型键归接入）：接入文档顶层
+// model/fallbackModel 经 Apply 投影进 live settings.json；受管集合把它们列为
+// 强只读顶层键（设置页字段级只读）。
+func TestApplyProjectsTopLevelModelKeys(t *testing.T) {
+	a := tempApp(t)
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	v, err := acc.Create("claude", "工作", "lm1",
+		`{"model":"my-code","fallbackModel":["my-code","备份模型"]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := acc.Apply(v.ID); err != nil {
+		t.Fatal(err)
+	}
+	live, err := os.ReadFile(filepath.Join(acc.Home, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(live, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc["model"] != "my-code" {
+		t.Fatalf("model 未投影: %v", doc["model"])
+	}
+	fb, ok := doc["fallbackModel"].([]any)
+	if !ok || len(fb) != 2 || fb[0] != "my-code" || fb[1] != "备份模型" {
+		t.Fatalf("fallbackModel 未投影: %v", doc["fallbackModel"])
+	}
+	ms, err := (ClaudeConfigs{A: a, Home: acc.Home}).ManagedSetForClaude()
+	if err != nil {
+		t.Fatal(err)
+	}
+	strong := map[string]bool{}
+	for _, k := range ms.StrongTopLevel {
+		strong[k] = true
+	}
+	if !strong["model"] || !strong["fallbackModel"] {
+		t.Fatalf("受管集合应含两顶层键: %+v", ms.StrongTopLevel)
+	}
+}
