@@ -2,13 +2,17 @@ package claudecfg
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
 
+	"AgentSwitch/internal/bridge"
 	corecfg "AgentSwitch/internal/claudecfg"
 	"AgentSwitch/internal/desktop/state"
+	"AgentSwitch/internal/desktop/uikit"
 	"AgentSwitch/internal/desktop/uitest"
 )
 
@@ -303,5 +307,54 @@ func TestCustomEnvRowShowsWeakManagedBadge(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("badge must appear exactly once (only the weak row): %d in %v", count, tt.Texts())
+	}
+}
+
+// TestBoolFieldTriStateSegmented（2026-11-07 原型对齐）：布尔字段渲染
+// 继承/开启/关闭三态分段——缺键默认「继承」，选「关闭」写入 false 并变脏，
+// 切回「继承」删除键。
+func TestBoolFieldTriStateSegmented(t *testing.T) {
+	st, _ := uitest.New(t)
+	home := t.TempDir()
+	st.ClaudeCfg.Home = home
+	file := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte(`{"model":"sonnet"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	load(st, bridge.ClaudeConfigs{A: st.Svc.Gateway.A, Home: home})
+	cf := &st.ClaudeCfg
+	if _, ok := corecfg.Get(cf.Doc, "alwaysThinkingEnabled"); ok {
+		t.Fatal("前置不成立：文件不应含该键")
+	}
+
+	// 三态分段渲染且缺键时选「继承」。
+	tt := ui.NewTester(func(c *ui.Context) { boolField(c, c.Theme(), uikit.Softs(c.Theme()), cf, "alwaysThinkingEnabled", "始终开启思考", "") }, 1000, 400)
+	for _, want := range []string{"继承", "开启", "关闭"} {
+		if !tt.HasText(want) {
+			t.Fatalf("tri-state segmented missing %q: %v", want, tt.Texts())
+		}
+	}
+	if _, ok := corecfg.Get(cf.Doc, "alwaysThinkingEnabled"); ok {
+		t.Fatal("渲染不得写入继承键")
+	}
+
+	// 直接走写路径：setBoolChoice 写 false / 删除。
+	setBoolChoice(cf, "alwaysThinkingEnabled", false)
+	if v, _ := corecfg.Get(cf.Doc, "alwaysThinkingEnabled"); v != false {
+		t.Fatalf("关闭应写入 false: %v", v)
+	}
+	if !cf.Dirty {
+		t.Fatal("写入必须变脏")
+	}
+	setBoolChoice(cf, "alwaysThinkingEnabled", true)
+	if v, _ := corecfg.Get(cf.Doc, "alwaysThinkingEnabled"); v != true {
+		t.Fatalf("开启应写入 true: %v", v)
+	}
+	setBoolChoice(cf, "alwaysThinkingEnabled", 0) // 任何非法值=继承
+	if _, ok := corecfg.Get(cf.Doc, "alwaysThinkingEnabled"); ok {
+		t.Fatal("继承必须删除键")
 	}
 }

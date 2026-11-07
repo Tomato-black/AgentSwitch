@@ -593,6 +593,9 @@ func stringField(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.Clau
 	})
 }
 
+// bool 三态分段的段序（继承 / 开启 / 关闭）。
+var boolChoices = []string{"继承", "开启", "关闭"}
+
 func boolField(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.ClaudeCfgState, path, label, hint string) {
 	disabled, reason := fieldBlocked(cf, path)
 	if disabled {
@@ -602,23 +605,53 @@ func boolField(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.Claude
 		})
 		return
 	}
-	if _, ok := corecfg.Get(cf.Doc, path); !ok && !cf.Overrides[path] {
-		if !inheritedRow(c, t, s, cf, path) {
-			return
+	// 三态分段（原型 §6.6）：缺键=继承（不写入），开启/关闭写当前层；下层
+	// 有效值以提示行展示，继承值不抄进当前文件。
+	choice := 0
+	if v, ok := corecfg.Get(cf.Doc, path); ok {
+		if b, _ := v.(bool); b {
+			choice = 1
+		} else {
+			choice = 2
 		}
 	}
-	cur := boolAt(cf.Doc, path)
+	var changed bool
 	uikit.FormRow(c, t, label, func() ui.Element {
-		cb := ui.Checkbox(c, &cur, "")
-		if cb.Changed() {
-			corecfg.Set(cf.Doc, path, cur)
-			RecomputeDirty(cf)
-		}
-		return cb
+		sel := ui.Segmented(c, &choice, boolChoices...)
+		changed = sel.Changed()
+		return sel
 	})
+	if changed {
+		switch choice {
+		case 1:
+			corecfg.Set(cf.Doc, path, true)
+		case 2:
+			corecfg.Set(cf.Doc, path, false)
+		default:
+			corecfg.Delete(cf.Doc, path)
+		}
+		RecomputeDirty(cf)
+	}
+	if entry, ok := cf.MergeEntries[path]; ok {
+		b, _ := entry.Value.(bool)
+		ui.Text(c, "下层："+boolLabel(b)+"（"+sourceLabel(entry.Source)+"）").
+			FontSize(t.FontSize - 2).TextColor(t.TextMuted)
+	}
 	if hint != "" {
 		ui.Text(c, hint).FontSize(t.FontSize - 2).TextColor(t.TextMuted)
 	}
+}
+
+// setBoolChoice 是三态写路径（测试直调）：true/false 写入，其余视为继承
+// （删除键）。
+func setBoolChoice(cf *state.ClaudeCfgState, path string, choice any) {
+	switch v := choice.(type) {
+	case bool:
+		corecfg.Set(cf.Doc, path, v)
+	default:
+		corecfg.Delete(cf.Doc, path)
+	}
+	RecomputeDirty(cf)
 }
 
 func enumField(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.ClaudeCfgState, path, label string, values []string, inheritLabel string) {
