@@ -447,29 +447,6 @@ func TestSummaryCardMetaRow(t *testing.T) {
 	}
 }
 
-// TestClaudeTabDropsConfigListCard（2026-11-07 原型对齐）：claude 页签结构为
-// 摘要卡 → 设置区，不再渲染「实际配置」列表卡（配置管理在抽屉内）；
-// codex 页签保留列表卡。设置区受管键行提供「打开接入」入口。
-func TestClaudeTabDropsConfigListCard(t *testing.T) {
-	st, a := uitest.New(t)
-	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
-		t.Fatal(err)
-	}
-	st.Page = "access"
-	st.Access.App = "claude"
-	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
-	// 「备份与恢复」在设置区仍存在（claudecfg 备份面板），不在排除之列。
-	for _, unwanted := range []string{"实际配置", "＋ 新建配置"} {
-		if tt.HasText(unwanted) {
-			t.Fatalf("claude 页签不应再渲染 %q: %v", unwanted, tt.Texts())
-		}
-	}
-	st.Access.App = "codex"
-	tt = ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
-	if !tt.HasText("实际配置") || !tt.HasText("＋ 新建配置") {
-		t.Fatalf("codex 页签应保留列表卡: %v", tt.Texts())
-	}
-}
 
 // TestClaudeTabShowsAccessMessages（终审 Critical#1）：claude 页签必须渲染
 // st.Access.Msg——应用失败/应用阻断提示/删除与还原结果此前随列表卡移除而
@@ -593,5 +570,35 @@ func TestClaudeEditorIsSubPage(t *testing.T) {
 	// 主页面摘要卡不应同时出现（子页独占）。
 	if tt.HasText("Claude Code 接入") {
 		t.Fatalf("子页不应渲染主页面摘要卡: %v", tt.Texts())
+	}
+}
+
+// TestClaudeTabHasListCardWithRowMenu（2026-11-07 用户裁定）：claude 页签恢复
+// 配置列表卡——「更多」菜单在行上（不在编辑详情里），点开含复制启动命令/删除。
+func TestClaudeTabHasListCardWithRowMenu(t *testing.T) {
+	st, a := uitest.New(t)
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	acc := configs(st)
+	if _, err := acc.Create("claude", "工作", "lm1", `{"env":{}}`); err != nil {
+		t.Fatal(err)
+	}
+	st.Page = "access"
+	st.Access.App = "claude"
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
+	for _, want := range []string{"实际配置", "工作", "应用", "编辑", "更多", "＋ 新建配置"} {
+		if !tt.HasText(want) {
+			t.Fatalf("missing %q: %v", want, tt.Texts())
+		}
+	}
+	if err := tt.Click("更多"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	for _, item := range []string{"复制启动命令", "打开终端", "删除"} {
+		if !tt.HasText(item) {
+			t.Fatalf("菜单缺少 %q: %v", item, tt.Texts())
+		}
 	}
 }

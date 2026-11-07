@@ -168,9 +168,9 @@ func Page(c *ui.Context, st *state.State) {
 					})
 				}
 
-				// 实际配置列表卡（claude 页签不渲染：配置管理在接入抽屉内，
-				// 2026-11-07 原型对齐）
-				if st.Access.App != "claude" {
+				// 实际配置列表卡（三个 Agent 页签共用；2026-11-07 用户裁定：
+				// 抽屉废弃，「更多」菜单在列表行上）
+				if true {
 					uikit.Card(c, t, func() {
 						ui.Column(c).Gap(10).Children(func() {
 							ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
