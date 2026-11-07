@@ -12,7 +12,6 @@ import (
 
 	"AgentSwitch/internal/bridge"
 	"AgentSwitch/internal/desktop/accesskit"
-	"AgentSwitch/internal/desktop/pages/access/claude"
 	"AgentSwitch/internal/desktop/state"
 	"AgentSwitch/internal/desktop/uitest"
 	"AgentSwitch/internal/storage"
@@ -448,65 +447,6 @@ func TestSummaryCardMetaRow(t *testing.T) {
 	}
 }
 
-// TestClaudeEditorOpensAsDrawer（2026-11-07 原型对齐）：Claude 页签的编辑
-// 接入是右侧抽屉——主页面（摘要卡/设置区）不被替换，抽屉标题「接入配置」；
-// 点关闭后抽屉收起且草稿标记保留。
-func TestClaudeEditorOpensAsDrawer(t *testing.T) {
-	st, a := uitest.New(t)
-	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
-		t.Fatal(err)
-	}
-	st.Page = "access"
-	st.Access.App = "claude"
-	st.Access.Form = state.AccessForm{Open: true, ModelLabel: "my-code", DocJSON: `{"env":{}}`}
-	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
-	for _, want := range []string{"Claude Code 接入", "Claude Code 设置", "接入配置", "名称:", "保存并应用"} {
-		if !tt.HasText(want) {
-			t.Fatalf("missing %q: %v", want, tt.Texts())
-		}
-	}
-	if tt.HasText("← 返回接入") {
-		t.Fatalf("claude 不应再走编辑子页: %v", tt.Texts())
-	}
-	// Esc 关闭（页面级有多处同名「关闭」文本——三态分段段名——不能用文本点击；
-	// Esc 路径同时覆盖宿主的 open 写回与草稿标记）。
-	tt.Key(0, ui.KeyEscape)
-	tt.Frame()
-	if st.Access.Form.Open {
-		t.Fatal("close must close the drawer")
-	}
-	if !st.Access.Form.Draft {
-		t.Fatal("close must keep the draft flag")
-	}
-}
-
-// TestClaudeDrawerHooksPreload：抽屉切换回调走宿主 preloadForm——EditID 换为
-// 目标配置并回填名称/文档；NewDraft 清空 EditID。
-func TestClaudeDrawerHooksPreload(t *testing.T) {
-	st, a := uitest.New(t)
-	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
-		t.Fatal(err)
-	}
-	st.Access.App = "claude"
-	acc := configs(st)
-	if _, err := acc.Create("claude", "工作", "lm1", "{}"); err != nil {
-		t.Fatal(err)
-	}
-	v2, err := acc.Create("claude", "备用", "lm1", "{}")
-	if err != nil {
-		t.Fatal(err)
-	}
-	h := claudeDrawerHooks(st, acc)
-	h.SwitchTo(v2.ID)
-	if st.Access.Form.EditID != v2.ID || st.Access.Form.Name != "备用" || !st.Access.Form.Open {
-		t.Fatalf("SwitchTo must preload the target config: %+v", st.Access.Form)
-	}
-	h.NewDraft()
-	if st.Access.Form.EditID != "" || st.Access.Form.Name != "" || !st.Access.Form.Open {
-		t.Fatalf("NewDraft must reset to a fresh draft: %+v", st.Access.Form)
-	}
-}
-
 // TestClaudeTabDropsConfigListCard（2026-11-07 原型对齐）：claude 页签结构为
 // 摘要卡 → 设置区，不再渲染「实际配置」列表卡（配置管理在抽屉内）；
 // codex 页签保留列表卡。设置区受管键行提供「打开接入」入口。
@@ -548,48 +488,22 @@ func TestClaudeTabShowsAccessMessages(t *testing.T) {
 	}
 }
 
-// TestReenterKeepsDraft（终审 Important#3）：草稿保留后点「编辑接入」/「打开
-// 接入」不得静默丢弃草稿——同目标直接恢复草稿；不同目标武装切换确认，
-// 确认后才切换并加载。
-func TestReenterKeepsDraft(t *testing.T) {
+// TestReenterOpensEditorPage（2026-11-07 抽屉废弃）：openAccessEditor 直接
+// 加载目标配置进编辑子页（无草稿保留语义，脏检查由子页返回/侧栏守卫承担）。
+func TestReenterOpensEditorPage(t *testing.T) {
 	st, a := uitest.New(t)
 	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	st.Access.App = "claude"
 	acc := configs(st)
-	v1, err := acc.Create("claude", "工作", "lm1", "{}")
-	if err != nil {
-		t.Fatal(err)
-	}
 	v2, err := acc.Create("claude", "备用", "lm1", "{}")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 草稿：编辑 v1 有未保存修改，抽屉已关闭（Draft 置位）。
-	st.Access.Form = state.AccessForm{Open: false, Draft: true, EditID: v1.ID, Name: "工作改名"}
-	st.Access.Form.Baseline = st.Access.Form.Signature("claude") + "-old"
-
-	// 同目标：恢复草稿，不清表单。
-	openAccessEditor(st, acc, v1.ID)
-	if !st.Access.Form.Open || st.Access.Form.Name != "工作改名" {
-		t.Fatalf("同目标重进必须恢复草稿: %+v", st.Access.Form)
-	}
-
-	// 不同目标：武装切换确认，确认前不清草稿。
-	st.Access.Form.Open = false
 	openAccessEditor(st, acc, v2.ID)
-	if !st.Access.DrawerSwitchArm || st.Access.DrawerSwitchID != v2.ID {
-		t.Fatalf("不同目标必须武装切换确认: arm=%v id=%q", st.Access.DrawerSwitchArm, st.Access.DrawerSwitchID)
-	}
-	if st.Access.Form.Name != "工作改名" {
-		t.Fatal("确认前不得清草稿")
-	}
-
-	// 确认后切换并加载目标配置。
-	claude.ConfirmDrawerSwitch(st, claudeDrawerHooks(st, acc))
-	if st.Access.DrawerSwitchArm || st.Access.Form.EditID != v2.ID || st.Access.Form.Name != "备用" {
-		t.Fatalf("确认后应切换并加载目标: %+v", st.Access.Form)
+	if !st.Access.Form.Open || st.Access.Form.EditID != v2.ID || st.Access.Form.Name != "备用" {
+		t.Fatalf("应直接加载目标进子页: %+v", st.Access.Form)
 	}
 }
 
@@ -651,5 +565,33 @@ func TestClaudeTabSlimmedAfterSplit(t *testing.T) {
 	st.ClaudeCfg.Dirty = true
 	if tabDirty(st) {
 		t.Fatal("ClaudeCfg 脏不应阻断接入页签切换")
+	}
+}
+
+// TestClaudeEditorIsSubPage（2026-11-07 用户裁定：抽屉废弃）：Claude 接入编辑
+// 是独立子页——页头「← 返回接入」+ 编辑器内容，不再出现抽屉标题。
+func TestClaudeEditorIsSubPage(t *testing.T) {
+	st, a := uitest.New(t)
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	st.Page = "access"
+	st.Access.App = "claude"
+	st.Access.Form = state.AccessForm{Open: true, ModelLabel: "my-code", DocJSON: `{"env":{}}`}
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
+	if !tt.HasText("← 返回接入") {
+		t.Fatalf("编辑子页缺返回: %v", tt.Texts())
+	}
+	if tt.HasText("接入配置") && !tt.HasText("← 返回接入") {
+		t.Fatalf("不应再有抽屉: %v", tt.Texts())
+	}
+	for _, want := range []string{"名称:", "逻辑模型:", "模型映射", "保存并应用"} {
+		if !tt.HasText(want) {
+			t.Fatalf("missing %q: %v", want, tt.Texts())
+		}
+	}
+	// 主页面摘要卡不应同时出现（子页独占）。
+	if tt.HasText("Claude Code 接入") {
+		t.Fatalf("子页不应渲染主页面摘要卡: %v", tt.Texts())
 	}
 }

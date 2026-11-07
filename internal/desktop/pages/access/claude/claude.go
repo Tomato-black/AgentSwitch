@@ -1,15 +1,13 @@
-// Package claude 是接入页 Claude Code 页签的接入抽屉正文：名称、默认逻辑
+// Package claude 是接入页 Claude Code 页签的编辑子页正文：名称、默认逻辑
 // 模型下拉 + 1M 声明、5 角色模型映射（Sonnet/Opus/Fable/Haiku/Subagent，
-// 行状态由配置 JSON 双向同步）与只读 settings.json 预览（accesskit 角色
-// 助手）。2026-11-07 原型对齐：编辑器从独立子页改为右侧抽屉，且不再提供
-// 可编辑的配置 JSON 文本域——env 定制交给同页「Claude Code 设置」区。
+// 行状态由配置 JSON 双向同步）、Claude 模型选择与只读 settings.json 预览
+// （accesskit 角色助手）。2026-11-07 用户裁定：抽屉方案废弃、回归独立子页
+// （设置已拆页）；不提供可编辑的配置 JSON 文本域，env 定制交给设置页。
 package claude
 
 import (
 	"fmt"
 
-	"github.com/egoist/mygo"
-	"github.com/egoist/mygo/transfer"
 	"github.com/egoist/mygo/ui"
 
 	"AgentSwitch/internal/bridge"
@@ -18,128 +16,14 @@ import (
 	"AgentSwitch/internal/desktop/uikit"
 )
 
-// newDraftOption 是抽屉配置下拉的「新建草稿」伪选项（EditID 为空的草稿）。
-const newDraftOption = "（新建草稿）"
-
-// DrawerHooks 让宿主接入页注入抽屉的配置切换/新建回调（宿主负责重置表单
-// 并预载文档；claude 子包不反向依赖宿主）。
-type DrawerHooks struct {
-	SwitchTo func(id string) // 切换到既有配置（EditID=id）
-	NewDraft func()          // 切换到新建草稿（EditID 置空）
-}
-
-// drawerSelect 处理配置下拉的选择变化：目标与当前一致时无操作；dirty 草稿
-// 先武装确认（DrawerSwitchID 空=新建草稿），干净则直接切换。
-func drawerSelect(st *state.State, acc bridge.AccessConfigs, hooks DrawerHooks, name string) {
-	target := "" // 「（新建草稿）」
-	if name != newDraftOption {
-		for _, v := range acc.List("claude") {
-			if v.Name == name {
-				target = v.ID
-				break
-			}
-		}
-		if target == "" {
-			return // 未知选项：忽略
-		}
-	}
-	if target == st.Access.Form.EditID {
-		return
-	}
-	if st.Access.Form.Dirty("claude") {
-		st.Access.DrawerSwitchArm = true
-		st.Access.DrawerSwitchID = target
-		return
-	}
-	applyDrawerSwitch(st, hooks, target)
-}
-
-// ConfirmDrawerSwitch 是 dirty 切换确认后的执行入口（宿主在抽屉开/关两态
-// 都可调用）：执行 DrawerSwitchID 挂起的切换并清武装。
-func ConfirmDrawerSwitch(st *state.State, hooks DrawerHooks) {
-	target := st.Access.DrawerSwitchID
-	st.Access.DrawerSwitchArm = false
-	st.Access.DrawerSwitchID = ""
-	applyDrawerSwitch(st, hooks, target)
-}
-
-func applyDrawerSwitch(st *state.State, hooks DrawerHooks, target string) {
-	if target == "" {
-		if hooks.NewDraft != nil {
-			hooks.NewDraft()
-		}
-		return
-	}
-	if hooks.SwitchTo != nil {
-		hooks.SwitchTo(target)
-	}
-}
-
-// DrawerCard 渲染 Claude 接入抽屉正文（原型 2026-11-07 §6.2.2）：配置选择 +
-// 新建、名称、默认模型/1M、角色映射、受管键只读预览、变更对比与底部
-// 关闭/仅保存/保存并应用。角色行编辑直接写回内存文档（DocJSON），保存时
+// EditorCard 渲染 Claude 接入编辑子页正文（2026-11-07 用户裁定：抽屉废弃，
+// 回归独立子页；次级操作在列表行的「更多」菜单）：名称、默认模型/1M、
+// 角色映射、Claude 模型选择、受管键只读预览、变更对比与底部
+// 取消/仅保存/保存并应用。角色行编辑直接写回内存文档（DocJSON），保存时
 // 经 bridge 归一化；文档无手编入口后恒为合法 JSON，保存路径仍会再校验。
-func DrawerCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, acc bridge.AccessConfigs, gateOK bool, hooks DrawerHooks) {
+func EditorCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, acc bridge.AccessConfigs, gateOK bool) {
 	f := &st.Access.Form
 	ui.Column(c).Gap(10).Children(func() {
-		// 配置行：下拉（既有配置 + 新建草稿伪选项）+「新建」。
-		list := acc.List("claude")
-		names := make([]string, 0, len(list))
-		cur := newDraftOption
-		for _, v := range list {
-			names = append(names, v.Name)
-			if v.ID == f.EditID {
-				cur = v.Name
-			}
-		}
-		uikit.FormRowRaw(c, t, "接入配置:", func() {
-			options := append([]string{newDraftOption}, names...)
-			sel := ui.Select(c, &cur, options).Grow(1)
-			if sel.Changed() {
-				drawerSelect(st, acc, hooks, cur)
-			}
-			if uikit.SoftButton(c, t, s, "gray", "新建").Clicked() {
-				if st.Access.Form.Dirty("claude") {
-					st.Access.DrawerSwitchArm = true
-					st.Access.DrawerSwitchID = ""
-				} else if hooks.NewDraft != nil {
-					hooks.NewDraft()
-				}
-			}
-		})
-		// 次级操作（编辑既有配置时）收进页脚「更多」菜单（mygo v0.7.2+
-		// PopoverMenuButton）：页脚保持原型的 关闭/仅保存/保存并应用；网关
-		// 停止时启动命令/终端置灰而非隐藏，删除为 Danger 红项。
-		drawerSecondaryMenu := func(m *ui.Menu) {
-			if m.Item("复制启动命令").Disabled(!gateOK).Chosen() {
-				if cmd, err := acc.LaunchCommand(f.EditID); err != nil {
-					f.Msg = "生成启动命令失败：" + err.Error()
-				} else {
-					mygo.Clipboard.Write(transfer.TextData(cmd))
-					f.Msg = "启动命令已复制"
-				}
-			}
-			if m.Item("打开终端").Disabled(!gateOK).Chosen() {
-				if err := acc.OpenTerminal(f.EditID); err != nil {
-					f.Msg = "打开终端失败：" + err.Error()
-				} else {
-					f.Msg = ""
-				}
-			}
-			if m.Item("备份与恢复").Chosen() {
-				st.Access.BackupOpen = true
-				st.Access.BackupMsg = ""
-				st.Access.Backups, _ = acc.ListBackups("claude")
-			}
-			if m.Item("还原最近备份").Chosen() {
-				st.Access.RestoreArm = true
-			}
-			if m.Item("删除").Danger().Chosen() {
-				st.Access.DeleteArm = true
-				st.Access.DeleteID = f.EditID
-			}
-		}
-
 		uikit.FormRow(c, t, "名称:", func() ui.Element {
 			return ui.TextInput(c, &f.Name).Grow(1)
 		})
@@ -194,15 +78,12 @@ func DrawerCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State
 		uikit.Feedback(c, t, uikit.InferFeedback(f.Msg), f.Msg)
 
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			if f.EditID != "" {
-				ui.PopoverMenuButton(c, "更多", drawerSecondaryMenu)
-			}
 			if !gateOK {
 				ui.Text(c, "网关未运行——先启动网关才能「保存并应用」").TextColor(t.TextMuted)
 			}
 			ui.Box(c).Grow(1)
-			if uikit.SoftButton(c, t, s, "gray", "关闭").Clicked() {
-				CloseDrawer(st)
+			if uikit.SoftButton(c, t, s, "gray", "取消").Clicked() {
+				accesskit.CloseEditor(st)
 			}
 			// 仅保存恒可用（只写数据库，不依赖网关）；保存并应用在网关停止时
 			// 禁用（需求 2026-11-07 §6.2.2）。
@@ -219,14 +100,6 @@ func DrawerCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State
 		})
 
 	})
-}
-
-// CloseDrawer 关闭抽屉并保留草稿：仍有未保存修改时置 Draft（摘要卡显示
-// 「有未保存的接入更改」，切页签走脏确认）；干净草稿不标记。
-func CloseDrawer(st *state.State) {
-	f := &st.Access.Form
-	f.Draft = f.Signature("claude") != f.Baseline
-	f.Open = false
 }
 
 // modelSection 是 Claude 专属的主模型段落：切换主模型时先按旧模型的

@@ -54,9 +54,8 @@ func Page(c *ui.Context, st *state.State) {
 
 	// 编辑器是独立子页（2026-10-29 决策 D2）：打开时只渲染编辑器 + 返回，
 	// 不再把长表单追加在列表末尾；返回/取消统一走 CloseEditor 的脏检查。
-	// 例外（2026-11-07 原型对齐）：Claude 的编辑接入改为右侧抽屉，主页面
-	// 照常渲染（抽屉在 Page 末尾挂载）。
-	if st.Access.App != "guide" && st.Access.App != "claude" && (st.Access.Form.Open || st.Access.DesktopForm.Open) {
+	// 2026-11-07 用户裁定：设置拆独立页后，Claude 也回归子页（抽屉废弃）。
+	if st.Access.App != "guide" && (st.Access.Form.Open || st.Access.DesktopForm.Open) {
 		editorPage(c, st, acc, gateOK)
 		return
 	}
@@ -265,93 +264,25 @@ func Page(c *ui.Context, st *state.State) {
 				deleteConfirm(c, st, acc)
 				// 还原备份确认（覆盖 live 文件前先备份当前状态，可再次恢复）
 				restoreConfirm(c, st, acc)
-				// 抽屉配置切换/新建确认（草稿保护，抽屉开/关两态都可达）
-				drawerSwitchConfirm(c, st, acc)
 			})
 		})
 	})
-	// Claude 接入抽屉（2026-11-07 原型对齐）：Form.Open 即抽屉打开；Esc/
-	// 遮罩/头钮只翻 open 位，写回时若因此关闭则按内容差异置 Draft（关闭
-	// 保留草稿，摘要卡显示「有未保存的接入更改」）。
-	if st.Access.App == "claude" {
-		open := st.Access.Form.Open
-		uikit.Drawer(c, t, &open, "接入配置", "写入受管键到 ~/.claude/settings.json（写前备份）", func() {
-			claude.DrawerCard(c, t, s, st, acc, gateOK, claudeDrawerHooks(st, acc))
-		})
-		if st.Access.Form.Open != open {
-			st.Access.Form.Open = open
-			if !open {
-				st.Access.Form.Draft = st.Access.Form.Signature("claude") != st.Access.Form.Baseline
-			}
-		}
-	}
 }
 
-// OpenAccessDrawer 从其他页跳回接入页并打开当前配置的接入抽屉（设置页受管
-// 键行「打开接入」的跨页入口；dirty 草稿保护经 openAccessEditor 生效）。
+// OpenAccessDrawer 从其他页跳回接入页（设置页受管键行「打开接入」的跨页
+// 入口；2026-11-07 抽屉废弃后为纯导航——编辑入口在列表行/摘要卡上）。
 func OpenAccessDrawer(st *state.State) {
-	st.Go("access", func() {
-		acc := bridge.AccessConfigs{A: st.Svc.Gateway.A}
-		id := ""
-		for _, v := range acc.List("claude") {
-			if v.IsCurrent {
-				id = v.ID
-				break
-			}
-		}
-		openAccessEditor(st, acc, id)
-	})
+	st.Go("access", nil)
 }
 
-// openAccessEditor 打开 Claude 接入抽屉的编辑目标（终审 Important#3）：
-// 同目标的保留草稿直接恢复不清表单；不同目标（含新建草稿）有未保存修改时
-// 武装切换确认（确认框在 Page 层渲染，抽屉关闭态也可达），确认后才切换。
+// openAccessEditor 打开 Claude 接入编辑子页（2026-11-07 用户裁定：抽屉废弃）。
 func openAccessEditor(st *state.State, acc bridge.AccessConfigs, id string) {
-	if st.Access.Form.Dirty("claude") {
-		if st.Access.Form.EditID == id {
-			st.Access.Form.Open = true
-			return
-		}
-		st.Access.DrawerSwitchArm = true
-		st.Access.DrawerSwitchID = id
-		return
-	}
 	st.Access.Form = state.AccessForm{Open: true, EditID: id}
 	preloadForm(st, acc)
 }
 
-// drawerSwitchConfirm 是抽屉配置切换/新建的确认框（抽屉开/关两态都渲染；
-// 取消默认聚焦）。confirmDrawerSwitch 的目标由 DrawerSwitchID 挂起。
-func drawerSwitchConfirm(c *ui.Context, st *state.State, acc bridge.AccessConfigs) {
-	if !st.Access.DrawerSwitchArm {
-		return
-	}
-	uikit.ConfirmDialog(c, c.Theme(), uikit.ConfirmOpts{
-		Open:        &st.Access.DrawerSwitchArm,
-		Title:       "放弃未保存的接入修改？",
-		Message:     "名称/模型/角色映射修改尚未保存，切换配置将丢弃这些修改。",
-		CancelLabel: "取消", ConfirmLabel: "放弃并切换", Danger: true,
-		OnConfirm: func() { claude.ConfirmDrawerSwitch(st, claudeDrawerHooks(st, acc)) },
-	})
-}
-
-// claudeDrawerHooks 返回抽屉的配置切换/新建回调：重置表单为编辑（或新建）
-// 状态并预载文档（宿主职责——claude 子包不反向依赖本包）。
-func claudeDrawerHooks(st *state.State, acc bridge.AccessConfigs) claude.DrawerHooks {
-	return claude.DrawerHooks{
-		SwitchTo: func(id string) {
-			st.Access.Form = state.AccessForm{Open: true, EditID: id}
-			preloadForm(st, acc)
-		},
-		NewDraft: func() {
-			st.Access.Form = state.AccessForm{Open: true}
-			preloadForm(st, acc)
-		},
-	}
-}
-
-// editorPage 是接入编辑器的独立子页（claude 已改为抽屉，仅剩 Codex /
-// Claude Desktop）：页头返回 + 当前 Agent 标题，正文只渲染对应编辑器。
+// editorPage 是接入编辑器的独立子页（三个 Agent 共用；2026-11-07 用户裁定
+// claude 回归子页）：页头返回 + 当前 Agent 标题，正文只渲染对应编辑器。
 func editorPage(c *ui.Context, st *state.State, acc bridge.AccessConfigs, gateOK bool) {
 	t := c.Theme()
 	s := uikit.Softs(t)
@@ -369,8 +300,10 @@ func editorPage(c *ui.Context, st *state.State, acc bridge.AccessConfigs, gateOK
 			ui.Column(c).Gap(12).Children(func() {
 				if st.Access.App == "claude_desktop" {
 					claudedesktop.EditorCard(c, t, s, st, acc, gateOK)
-				} else {
+				} else if st.Access.App == "codex" {
 					codex.EditorCard(c, t, s, st, acc, gateOK)
+				} else {
+					claude.EditorCard(c, t, s, st, acc, gateOK)
 				}
 			})
 		})
