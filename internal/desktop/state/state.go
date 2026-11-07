@@ -129,11 +129,13 @@ type ClaudeCfgState struct {
 	Overrides map[string]bool
 	Reveal    map[string]bool
 
-	// 环境变量与插件的新增行输入（跨帧保存）。
+	// 环境变量与插件的新增行输入（跨帧保存）；ChipInputs 是列表 chip 的
+	// 添加行输入（按键路径）。
 	EnvExpanded bool
 	EnvNewKey   string
 	EnvNewValue string
 	PluginNew   string
+	ChipInputs  map[string]string
 	FormMsg     string
 	SaveArm     bool
 
@@ -181,7 +183,7 @@ type ClaudeCfgState struct {
 // bridge 归一化。角色行/Codex 模型列表均由 DocJSON 双向同步。
 type AccessForm struct {
 	Open        bool
-	Draft       bool // 抽屉已关但草稿仍在（claude，2026-11-07）：Dirty 仍计真
+	Draft       bool   // 抽屉已关但草稿仍在（claude，2026-11-07）：Dirty 仍计真
 	EditID      string // 非空 = 编辑该配置
 	Name        string
 	ModelLabel  string // 选中的逻辑模型名（保存时映射回 ID）

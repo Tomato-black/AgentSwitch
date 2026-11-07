@@ -689,6 +689,10 @@ func enumField(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.Claude
 	}
 }
 
+// orderedChipPaths 是顺序有语义的列表键（fallbackModel 按序尝试），chip 带
+// ↑ 调整；其余列表（权限规则/附加目录/MCP 名单）是并集语义，顺序无意义。
+var orderedChipPaths = map[string]bool{"fallbackModel": true}
+
 func listField(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.ClaudeCfgState, path, label, placeholder string) {
 	disabled, reason := fieldBlocked(cf, path)
 	if disabled {
@@ -703,14 +707,123 @@ func listField(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.Claude
 			return
 		}
 	}
-	cur := listText(cf.Doc, path)
-	uikit.FormRow(c, t, label, func() ui.Element {
-		in := ui.TextInput(c, &cur).Placeholder(placeholder)
-		if in.Changed() {
-			setListField(cf, path, cur)
-		}
-		return in
+	items := listItems(cf.Doc, path)
+	uikit.FormRowRaw(c, t, label, func() {
+		ui.Column(c).Gap(6).Children(func() {
+			if len(items) == 0 {
+				ui.Text(c, "未设置").TextColor(t.TextMuted)
+			} else {
+				ui.Row(c).Gap(6).Wrap().Children(func() {
+					for i, item := range items {
+						chip(c, t, s, cf, path, i, item)
+					}
+				})
+			}
+			if cf.ChipInputs == nil {
+				cf.ChipInputs = map[string]string{}
+			}
+			cur := cf.ChipInputs[path]
+			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+				in := ui.TextInput(c, &cur).Placeholder(placeholder).Grow(1)
+				if in.Changed() {
+					cf.ChipInputs[path] = cur
+				}
+				if uikit.SoftButton(c, t, s, "gray", "添加").Clicked() {
+					chipAdd(cf, path, cf.ChipInputs[path])
+				}
+			})
+		})
 	})
+}
+
+// chip 渲染一枚列表项：可选 ↑（顺序键）+ mono 文本 + ×。
+func chip(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.ClaudeCfgState, path string, i int, item string) {
+	ui.Box(c).Border(1, t.Border).Radius(8).Padding(3, 7).Shrink(0).Children(func() {
+		ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+			if orderedChipPaths[path] && i > 0 {
+				if uikit.SoftButton(c, t, s, "gray", "↑").Clicked() {
+					chipMoveUp(cf, path, i)
+				}
+			}
+			ui.Text(c, item).Font(uikit.MonoFont).FontSize(t.FontSize - 1)
+			if uikit.SoftButton(c, t, s, "danger", "×").Clicked() {
+				chipRemove(cf, path, i)
+			}
+		})
+	})
+}
+
+// listItems 读取列表键的字符串切片（缺键/类型不符为 nil）。
+func listItems(doc map[string]any, path string) []string {
+	v, ok := corecfg.Get(doc, path)
+	if !ok {
+		return nil
+	}
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(arr))
+	for _, item := range arr {
+		if s, ok := item.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// chipAdd 追加一项（trim 非空；同层重复提示不改文档）。
+func chipAdd(cf *state.ClaudeCfgState, path, value string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		cf.FormMsg = "列表项不能为空"
+		return
+	}
+	items := listItems(cf.Doc, path)
+	for _, it := range items {
+		if it == value {
+			cf.FormMsg = "当前层已存在：" + value
+			return
+		}
+	}
+	delete(cf.ChipInputs, path)
+	writeChipList(cf, path, append(items, value))
+}
+
+// chipRemove 删除下标 i；越界忽略。
+func chipRemove(cf *state.ClaudeCfgState, path string, i int) {
+	items := listItems(cf.Doc, path)
+	if i < 0 || i >= len(items) {
+		return
+	}
+	writeChipList(cf, path, append(items[:i], items[i+1:]...))
+}
+
+// chipMoveUp 把下标 i 与前一元素交换（i<=0 忽略）。
+func chipMoveUp(cf *state.ClaudeCfgState, path string, i int) {
+	if i <= 0 {
+		return
+	}
+	items := listItems(cf.Doc, path)
+	if i >= len(items) {
+		return
+	}
+	items[i-1], items[i] = items[i], items[i-1]
+	writeChipList(cf, path, items)
+}
+
+// writeChipList 写回字符串数组；空列表删除该键。
+func writeChipList(cf *state.ClaudeCfgState, path string, items []string) {
+	if len(items) == 0 {
+		corecfg.Delete(cf.Doc, path)
+	} else {
+		out := make([]any, 0, len(items))
+		for _, it := range items {
+			out = append(out, it)
+		}
+		corecfg.Set(cf.Doc, path, out)
+	}
+	RecomputeDirty(cf)
 }
 
 func intField(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.ClaudeCfgState, path, label, hint string) {
@@ -867,40 +980,6 @@ func boolAt(doc map[string]any, path string) bool {
 	}
 	b, _ := v.(bool)
 	return b
-}
-
-func listText(doc map[string]any, path string) string {
-	v, ok := corecfg.Get(doc, path)
-	if !ok {
-		return ""
-	}
-	arr, ok := v.([]any)
-	if !ok {
-		return ""
-	}
-	parts := make([]string, 0, len(arr))
-	for _, item := range arr {
-		if s, ok := item.(string); ok {
-			parts = append(parts, s)
-		}
-	}
-	return strings.Join(parts, ", ")
-}
-
-// setListField 把逗号分隔文本写入字符串数组；空文本删除该键。
-func setListField(cf *state.ClaudeCfgState, path, raw string) {
-	out := make([]any, 0)
-	for _, p := range strings.Split(raw, ",") {
-		if v := strings.TrimSpace(p); v != "" {
-			out = append(out, v)
-		}
-	}
-	if len(out) == 0 {
-		corecfg.Delete(cf.Doc, path)
-	} else {
-		corecfg.Set(cf.Doc, path, out)
-	}
-	RecomputeDirty(cf)
 }
 
 func intText(doc map[string]any, path string) string {

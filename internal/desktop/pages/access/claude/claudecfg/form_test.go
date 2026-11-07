@@ -229,14 +229,17 @@ func TestListFieldWritesStringArray(t *testing.T) {
 	st := formTestState(t)
 	cf := &st.ClaudeCfg
 
-	setListField(cf, "permissions.allow", "Bash(go test:*), Read, ")
+	// 2026-11-07：列表字段改 chip 编辑器，写路径为 chipAdd/chipRemove。
+	chipAdd(cf, "permissions.allow", "Bash(go test:*)")
+	chipAdd(cf, "permissions.allow", "Read")
 	got, _ := corecfg.Get(cf.Doc, "permissions.allow")
 	arr, ok := got.([]any)
 	if !ok || len(arr) != 2 || arr[0] != "Bash(go test:*)" || arr[1] != "Read" {
 		t.Fatalf("permissions.allow = %#v", got)
 	}
 
-	setListField(cf, "permissions.allow", "")
+	chipRemove(cf, "permissions.allow", 0)
+	chipRemove(cf, "permissions.allow", 0)
 	if _, ok := corecfg.Get(cf.Doc, "permissions.allow"); ok {
 		t.Fatalf("empty list must delete key: %v", cf.Doc)
 	}
@@ -331,7 +334,9 @@ func TestBoolFieldTriStateSegmented(t *testing.T) {
 	}
 
 	// 三态分段渲染且缺键时选「继承」。
-	tt := ui.NewTester(func(c *ui.Context) { boolField(c, c.Theme(), uikit.Softs(c.Theme()), cf, "alwaysThinkingEnabled", "始终开启思考", "") }, 1000, 400)
+	tt := ui.NewTester(func(c *ui.Context) {
+		boolField(c, c.Theme(), uikit.Softs(c.Theme()), cf, "alwaysThinkingEnabled", "始终开启思考", "")
+	}, 1000, 400)
 	for _, want := range []string{"继承", "开启", "关闭"} {
 		if !tt.HasText(want) {
 			t.Fatalf("tri-state segmented missing %q: %v", want, tt.Texts())
@@ -356,5 +361,60 @@ func TestBoolFieldTriStateSegmented(t *testing.T) {
 	setBoolChoice(cf, "alwaysThinkingEnabled", 0) // 任何非法值=继承
 	if _, ok := corecfg.Get(cf.Doc, "alwaysThinkingEnabled"); ok {
 		t.Fatal("继承必须删除键")
+	}
+}
+
+// TestListFieldChipEditor（2026-11-07 原型对齐）：列表字段渲染 chip 流与
+// 添加行；chipAdd/chipRemove/chipMoveUp 直接驱动写路径——追加写数组、删除
+// 收缩、fallbackModel 的 ↑ 交换顺序；空列表删除键。
+func TestListFieldChipEditor(t *testing.T) {
+	st, _ := uitest.New(t)
+	home := t.TempDir()
+	st.ClaudeCfg.Home = home
+	file := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte(`{"permissions":{"allow":["Bash(go test:*)","Bash(ls)"]},"fallbackModel":["haiku","sonnet","opus"]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	load(st, bridge.ClaudeConfigs{A: st.Svc.Gateway.A, Home: home})
+	cf := &st.ClaudeCfg
+
+	// chip 渲染：两个 chip 文本 + 「未设置」不出现 + 添加按钮在场。
+	tt := ui.NewTester(func(c *ui.Context) {
+		listField(c, c.Theme(), uikit.Softs(c.Theme()), cf, "permissions.allow", "允许规则", "Bash(…)")
+	}, 1000, 400)
+	if !tt.HasText("Bash(go test:*)") || !tt.HasText("Bash(ls)") || !tt.HasText("添加") {
+		t.Fatalf("chips missing: %v", tt.Texts())
+	}
+
+	// 写路径：追加 → 数组长 3 且脏。
+	chipAdd(cf, "permissions.allow", "Read(./src/**)")
+	arr, _ := corecfg.Get(cf.Doc, "permissions.allow")
+	if got := len(arr.([]any)); got != 3 {
+		t.Fatalf("append = %d items, want 3", got)
+	}
+	if !cf.Dirty {
+		t.Fatal("append must dirty")
+	}
+	// 删除下标 1 → 回到 2。
+	chipRemove(cf, "permissions.allow", 1)
+	arr, _ = corecfg.Get(cf.Doc, "permissions.allow")
+	if got := arr.([]any); len(got) != 2 || got[1].(string) != "Read(./src/**)" {
+		t.Fatalf("remove wrong: %v", got)
+	}
+	// fallbackModel ↑：交换 0/1。
+	chipMoveUp(cf, "fallbackModel", 1)
+	arr, _ = corecfg.Get(cf.Doc, "fallbackModel")
+	if got := arr.([]any); got[0].(string) != "sonnet" || got[1].(string) != "haiku" {
+		t.Fatalf("moveUp wrong: %v", got)
+	}
+	// 清空 → 删除键。
+	for i := 2; i >= 0; i-- {
+		chipRemove(cf, "fallbackModel", i)
+	}
+	if _, ok := cf.Doc["fallbackModel"]; ok {
+		t.Fatal("empty list must delete the key")
 	}
 }
