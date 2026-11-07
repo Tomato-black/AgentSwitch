@@ -46,6 +46,8 @@ AgentSwitch：面向本地 AI Agent 的**模型 API 网关**——为 Claude Cod
 
 **v0.8.3 组件利用（2026-11-07）**：升级 mygo 后按 release notes 逐项映射的落地批次（计划 `docs/superpowers/plans/2026-11-07-mygo-083-component-uplift.md`）。① 次级操作「更多」自造展开行全部换 `ui.PopoverMenuButton` 主题化菜单（键盘+读屏支持；网关停止时菜单项 `Disabled` 置灰而非隐藏；删除为 `Danger` 红项；选中即关）——codex/desktop 配置行与 Claude 接入抽屉页脚（抽屉页脚回到原型的 关闭/仅保存/保存并应用 三键）。② 两处搜索框（codex 配置过滤、合并预览键路径筛选）换 `ui.SearchField`（放大镜/一键清除/Esc 清空/读屏 search 角色）。③ 全局浏览器式缩放（`desktop/zoom.go`：Cmd/Ctrl `=`/`-`/`0`，0.5–3 十三档，`c.Shortcut`+`c.SetZoom`，随会话不持久化）——密集设置页的低视力可放大。④ 托盘「打开主窗口」菜单项加图标（`mygo.NewMenuIconSVG` 复用 uikit SVG；失败降级纯文字）。随升级免费生效：文本输入原生 Undo/Redo/Cut/Copy/Paste 菜单（v0.8.0 Edit 菜单跟随焦点）、Windows resize 重绘修复与渲染提速、macOS 动画显存回收与空闲功耗下降、Linux 打包附 PKGBUILD。终审 minor 清理批次（同日）：RowMore 死状态字段随菜单化删除；menuIcon 失败路径记 slog 日志（降级纯文字）；zoomOne 漂移保护断言；抽屉菜单备份/还原选中落位用例补齐。**工具备注**：`mygo-automation`（v0.8.0）可在开发期以 CLI 驱动真实运行的应用（snapshot/press/fill），UI 改动的实机验证优先考虑它。
 
+**v0.2.0 发布（2026-11-07）**：mygo.json 版本 0.2.0；三平台产物（darwin dmg / windows 便携 exe——安装包由 CI 的 windows-latest 生成 / linux deb+tar.gz+install.sh+PKGBUILD）；GitHub Release v0.2.0 已发（Tomato-black/AgentSwitch，含发布说明）；GitHub（Tomato-black）与 Gitee（red-kale）双远程 master 同步至 e30f72d；官网（website/，pages.yml 随 push 自动部署）与手册（docs/manual/README.md §2.3/§2.4）已更新。Gitee release 需在网页端手动创建（无 API token）。
+
 ## 常用命令
 
 ```bash
