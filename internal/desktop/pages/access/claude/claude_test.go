@@ -6,6 +6,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"AgentSwitch/internal/bridge"
+	"AgentSwitch/internal/desktop/accesskit"
 	"AgentSwitch/internal/desktop/state"
 	"AgentSwitch/internal/desktop/uikit"
 	"AgentSwitch/internal/desktop/uitest"
@@ -74,7 +75,7 @@ func TestEditorModelKeysSection(t *testing.T) {
 }
 
 // TestEditorModelKeyDropdown（2026-11-07 用户指令）：主模型是下拉（含
-//「（跟随网关）」哨兵）；文档带 model 时回显对应选项。
+// 「（跟随网关）」哨兵）；文档带 model 时回显对应选项。
 func TestEditorModelKeyDropdown(t *testing.T) {
 	st, a := uitest.New(t)
 	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
@@ -96,5 +97,41 @@ func TestEditorModelKeyDropdown(t *testing.T) {
 	}
 	if !tt.HasText("主模型:") {
 		t.Fatalf("缺主模型行: %v", tt.Texts())
+	}
+}
+
+// TestRoleNameAutofill（2026-11-07 用户指令）：角色显示名称随模型下拉自动
+// 填充——选模型后名称=模型名并写文档；手动改过的名称不被覆盖；跟随主模型
+// 清空名称。
+func TestRoleNameAutofill(t *testing.T) {
+	f := &state.AccessForm{Open: true, ModelLabel: "model-a", DocJSON: `{"env":{}}`}
+	labels := []string{"model-a", "model-b"}
+	// 初始回填（跟随主模型）。
+	accesskit.SyncRolesFromDoc(f)
+	// Sonnet 选 model-b → 显示名自动填 model-b。
+	f.RoleModels[0] = "model-b"
+	autofillRoleName(f, 0, labels)
+	if f.RoleNames[0] != "model-b" {
+		t.Fatalf("自动填充失败: %q", f.RoleNames[0])
+	}
+	// 手动改名后再换模型 → 不覆盖。
+	f.RoleNames[0] = "我的别名"
+	f.RoleModels[0] = "model-a"
+	autofillRoleName(f, 0, labels)
+	if f.RoleNames[0] != "我的别名" {
+		t.Fatalf("手动名称被覆盖: %q", f.RoleNames[0])
+	}
+	// 跟随主模型 → 清空名称（含手动名——跟随时 NAME 键无意义）。
+	f.RoleModels[0] = accesskit.FollowModel
+	autofillRoleName(f, 0, labels)
+	if f.RoleNames[0] != "" {
+		t.Fatalf("跟随主模型应清空名称: %q", f.RoleNames[0])
+	}
+	// 自动填充痕迹（名称恰为某模型名）再换模型 → 覆盖。
+	f.RoleModels[0] = "model-a"
+	f.RoleNames[0] = "model-b" // 上一次自动填充的痕迹
+	autofillRoleName(f, 0, labels)
+	if f.RoleNames[0] != "model-a" {
+		t.Fatalf("自动痕迹应被覆盖: %q", f.RoleNames[0])
 	}
 }

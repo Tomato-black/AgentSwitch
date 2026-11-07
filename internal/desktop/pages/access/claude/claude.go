@@ -128,6 +128,32 @@ func modelSection(c *ui.Context, t *ui.Theme, st *state.State, acc bridge.Access
 	})
 }
 
+// autofillRoleName 在角色模型切换后自动填充显示名称（2026-11-07 用户指令）：
+// 名称为空或恰为某逻辑模型名（上次自动填充的痕迹）→ 覆盖为新模型名；
+// 手动改过的名称不动；「跟随主模型」清空名称（不写 NAME 键）。
+func autofillRoleName(f *state.AccessForm, i int, labels []string) {
+	r := accesskit.ClaudeRoles()[i]
+	if r.NameKey == "" {
+		return
+	}
+	name := f.RoleNames[i]
+	auto := name == ""
+	for _, l := range labels {
+		if name == l {
+			auto = true
+			break
+		}
+	}
+	if f.RoleModels[i] == accesskit.FollowModel {
+		// 跟随主模型：名称一并清空（不写 NAME 键；切回具体模型可再自动填充）。
+		f.RoleNames[i] = ""
+		return
+	}
+	if auto {
+		f.RoleNames[i] = f.RoleModels[i]
+	}
+}
+
 // rolesSection 是「模型映射」段落：显示名称只影响 /model 菜单；每行
 // 模型下拉（含「跟随主模型」）+ 显示名输入 + 1M 勾选，变化即写回文档。
 func rolesSection(c *ui.Context, t *ui.Theme, st *state.State, labels []string) {
@@ -149,6 +175,7 @@ func rolesSection(c *ui.Context, t *ui.Theme, st *state.State, labels []string) 
 			before := f.RoleModels[i]
 			sel := ui.Select(c, &f.RoleModels[i], opts)
 			if sel.Changed() && f.RoleModels[i] != before {
+				autofillRoleName(f, i, labels)
 				accesskit.PatchRole(f, i)
 			}
 			beforeB := f.RoleOneM[i]
