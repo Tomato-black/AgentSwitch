@@ -1,6 +1,7 @@
 package claudecfg
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -177,32 +178,56 @@ func mergeValueText(path string, v any, reveal bool) string {
 func permissionCard(c *ui.Context, t *ui.Theme, cf *state.ClaudeCfgState) {
 	s := uikit.Softs(t)
 	ui.Text(c, "权限求值").Bold()
-	ui.Text(c, "求值顺序：拒绝 → 询问 → 允许（先匹配 deny，再 ask，最后 allow）").
-		FontSize(t.FontSize - 2).TextColor(t.TextMuted)
+	// 三段式（原型 §6.8.2）：1 拒绝 → 2 询问 → 3 允许，首个匹配决定。
+	type seg struct{ num, path string }
+	segs := []seg{
+		{"1 拒绝", "permissions.deny"},
+		{"2 询问", "permissions.ask"},
+		{"3 允许", "permissions.allow"},
+	}
+	ui.Row(c).Gap(7).AlignItems(ui.Start).Children(func() {
+		for i, sg := range segs {
+			if i > 0 {
+				ui.Text(c, "→").TextColor(t.TextMuted)
+			}
+			entry, ok := cf.MergeEntries[sg.path]
+			count := 0
+			if ok {
+				if arr, isArr := entry.Value.([]any); isArr {
+					count = len(arr)
+				}
+			}
+			ui.Box(c).Border(1, t.Border).Radius(9).Padding(7, 9).Grow(1).Children(func() {
+				ui.Column(c).Gap(3).Children(func() {
+					ui.Text(c, sg.num).Bold()
+					ui.Text(c, fmt.Sprintf("%d 条", count)).FontSize(t.FontSize - 2).TextColor(t.TextMuted)
+					if ok {
+						ui.Text(c, mergeValueText(sg.path, entry.Value, cf.MergeReveal[sg.path])).
+							Font(uikit.MonoFont).FontSize(t.FontSize - 2).MaxWidth(160)
+					} else {
+						ui.Text(c, "未设置").FontSize(t.FontSize - 2).TextColor(t.TextMuted)
+					}
+				})
+			})
+		}
+	})
+	ui.Text(c, "deny 任意层压过 allow 任意层；首个匹配决定").FontSize(t.FontSize - 2).TextColor(t.TextMuted)
 
-	rows := []struct{ path, label string }{
-		{"permissions.deny", "拒绝规则"},
-		{"permissions.ask", "询问规则"},
-		{"permissions.allow", "允许规则"},
-		{"permissions.additionalDirectories", "附加目录"},
-	}
-	for _, row := range rows {
-		entry, ok := cf.MergeEntries[row.path]
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, row.label).Width(90).TextColor(t.TextMuted)
-			if !ok {
-				ui.Text(c, "未设置").TextColor(t.TextMuted).Grow(1)
-				return
-			}
-			ui.Text(c, mergeValueText(row.path, entry.Value, cf.MergeReveal[row.path])).
-				Font(uikit.MonoFont).Grow(1)
-			uikit.SoftBadge(c, t, s, "gray", mergeKindLabel(entry.Kind))
-			if entry.Source != "" {
-				ui.Text(c, "来源："+sourceLabel(entry.Source)).
-					FontSize(t.FontSize - 2).TextColor(t.TextMuted)
-			}
-		})
-	}
+	entry, ok := cf.MergeEntries["permissions.additionalDirectories"]
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, "附加目录").Width(90).TextColor(t.TextMuted)
+		if !ok {
+			ui.Text(c, "未设置").TextColor(t.TextMuted).Grow(1)
+			return
+		}
+		ui.Text(c, mergeValueText("permissions.additionalDirectories", entry.Value, cf.MergeReveal[entry.Path])).
+			Font(uikit.MonoFont).Grow(1)
+		uikit.SoftBadge(c, t, s, "gray", mergeKindLabel(entry.Kind))
+		if entry.Source != "" {
+			ui.Text(c, "来源："+sourceLabel(entry.Source)).
+				FontSize(t.FontSize - 2).TextColor(t.TextMuted)
+		}
+	})
 
 	if entry, ok := cf.MergeEntries["permissions.defaultMode"]; ok {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {

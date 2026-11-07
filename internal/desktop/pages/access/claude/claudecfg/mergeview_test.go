@@ -120,9 +120,9 @@ func TestPermissionCardOrderAndIneffectiveProjectMode(t *testing.T) {
 		}
 		return -1
 	}
-	deny, ask, allow := index("拒绝规则"), index("询问规则"), index("允许规则")
+	deny, ask, allow := index("1 拒绝"), index("2 询问"), index("3 允许")
 	if deny < 0 || ask < 0 || allow < 0 {
-		t.Fatalf("permission rows missing: %v", texts)
+		t.Fatalf("permission segments missing: %v", texts)
 	}
 	if !(deny < ask && ask < allow) {
 		t.Fatalf("permission order must be deny → ask → allow: %d %d %d", deny, ask, allow)
@@ -167,5 +167,45 @@ func TestMergedSkillsPluginRowsMarkedLocked(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(tt.Texts(), " "), "deploy") {
 		t.Fatalf("skill row missing: %v", tt.Texts())
+	}
+}
+
+// TestPermissionEvalThreeSegmentCard（2026-11-07 原型对齐）：权限求值卡为
+// 三段式——「1 拒绝」→「2 询问」→「3 允许」，每段显示条数与固定说明。
+func TestPermissionEvalThreeSegmentCard(t *testing.T) {
+	entries := map[string]corecfg.MergedEntry{
+		"permissions.deny": {
+			Path: "permissions.deny", Value: []any{"Bash(rm:*)"}, Kind: corecfg.MergeUnion, Source: corecfg.ScopeUser,
+		},
+		"permissions.ask": {
+			Path: "permissions.ask", Value: []any{"Write"}, Kind: corecfg.MergeUnion, Source: corecfg.ScopeUser,
+		},
+		"permissions.allow": {
+			Path: "permissions.allow", Value: []any{"Read"}, Kind: corecfg.MergeUnion, Source: corecfg.ScopeUser,
+		},
+	}
+	st := mergeTestState(t, entries)
+	tt := renderMerge(st)
+	texts := tt.Texts()
+	index := func(s string) int {
+		for i, text := range texts {
+			if text == s {
+				return i
+			}
+		}
+		return -1
+	}
+	s1, s2, s3 := index("1 拒绝"), index("2 询问"), index("3 允许")
+	if s1 < 0 || s2 < 0 || s3 < 0 {
+		t.Fatalf("three-segment labels missing: %v", texts)
+	}
+	if !(s1 < s2 && s2 < s3) {
+		t.Fatalf("segment order must be 1→2→3: %d %d %d", s1, s2, s3)
+	}
+	if !tt.HasText("1 条") {
+		t.Fatalf("segment count missing: %v", texts)
+	}
+	if !tt.HasText("deny 任意层压过 allow 任意层") {
+		t.Fatalf("fixed note missing: %v", texts)
 	}
 }
