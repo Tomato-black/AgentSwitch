@@ -37,6 +37,7 @@ type LayerView struct {
 	Exists     bool
 	Doc        map[string]any
 	RawJSON    string
+	Hash       string
 	ParseError string
 	Violations []claudecfg.Violation
 	Managed    claudecfg.ManagedSet
@@ -107,6 +108,7 @@ func (s ClaudeConfigs) ReadClaudeConfigLayer(req ReadLayerRequest) (LayerView, e
 		return view, nil
 	}
 	view.Doc = doc.Raw
+	view.Hash = doc.Hash
 	view.Violations = claudecfg.Validate(doc.Raw, req.Kind, doc.Raw, managed)
 	return view, nil
 }

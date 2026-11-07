@@ -29,6 +29,10 @@ import (
 // → chmod → write → close → rename）。本方法不写任何日志——写入值含网关
 // 令牌（spec §9 脱敏）。
 func (s AccessConfigs) writeClaudeLive(doc map[string]any, env map[string]string) error {
+	// 与配置中心保存共用同一把锁：接入 Apply 与设置区保存都写
+	// ~/.claude/settings.json，必须串行化。
+	claudeSettingsMu.Lock()
+	defer claudeSettingsMu.Unlock()
 	home := s.Home
 	if home == "" {
 		var err error
