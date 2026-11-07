@@ -33,7 +33,8 @@ func mergedView(c *ui.Context, t *ui.Theme, st *state.State) {
 	ui.Text(c, "图例：覆盖=最高层胜出；并集=数组去重合并；逐变量=env 逐键；累加=hooks；逐键=对象逐键；整值替换；任一层 true=OR").
 		FontSize(t.FontSize - 2).TextColor(t.TextMuted)
 
-	ui.TextInput(c, &cf.MergeQuery).Placeholder("筛选键路径")
+	// ui.SearchField（mygo v0.7+）：放大镜/一键清除/Esc 清空/读屏 search 角色。
+	ui.SearchField(c, &cf.MergeQuery).Placeholder("筛选键路径")
 	permissionCard(c, t, cf)
 	mergeKeys(c, t, cf)
 	mergeSkills(c, t, cf)

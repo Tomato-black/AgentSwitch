@@ -209,3 +209,21 @@ func TestPermissionEvalThreeSegmentCard(t *testing.T) {
 		t.Fatalf("fixed note missing: %v", texts)
 	}
 }
+
+// TestMergedViewQueryFilterPinned（2026-11-07 组件升级钉住）：键路径筛选框换
+// ui.SearchField 后过滤语义不变——只显示含查询串的键行。
+func TestMergedViewQueryFilterPinned(t *testing.T) {
+	entries := map[string]corecfg.MergedEntry{
+		"model":       {Path: "model", Value: "sonnet", Kind: corecfg.MergeOverride, Source: corecfg.ScopeUser},
+		"permissions": {Path: "permissions", Value: map[string]any{}, Kind: corecfg.MergeOverride, Source: corecfg.ScopeUser},
+	}
+	st := mergeTestState(t, entries)
+	st.ClaudeCfg.MergeQuery = "model"
+	tt := renderMerge(st)
+	if !tt.HasText("model") {
+		t.Fatalf("命中键行缺失: %v", tt.Texts())
+	}
+	if tt.HasText("permissions") {
+		t.Fatalf("未命中键行应被过滤: %v", tt.Texts())
+	}
+}
