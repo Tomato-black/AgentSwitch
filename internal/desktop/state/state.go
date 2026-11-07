@@ -78,24 +78,35 @@ type AccessState struct {
 // ClaudeCfgState 是 Claude Code 设置区状态。Doc 是当前层工作文档，
 // Baseline 是打开/上次保存时的文档；Dirty 由 diff 计算。
 type ClaudeCfgState struct {
-	Loaded    bool
-	Loading   bool
-	Home      string // 测试注入；空=os.UserHomeDir()
-	Layer     string // user/project/managed
-	Sub       string // shared/local
-	Project   string
-	View      string // form/json/merged
-	File      string
-	Display   string
-	Exists    bool
-	Hash      string
-	Doc       map[string]any
-	Baseline  map[string]any
-	Dirty     bool
-	Msg       string
-	ParseErr  string
-	JSONText  string
-	MergeText string
+	Loaded       bool
+	Loading      bool
+	Home         string // 测试注入；空=os.UserHomeDir()
+	Layer        string // user/project/managed
+	Sub          string // shared/local
+	Project      string
+	ProjectInput string
+	View         string // form/json/merged
+	File         string
+	Display      string
+	Exists       bool
+	Hash         string
+	Doc          map[string]any
+	Baseline     map[string]any
+	Dirty        bool
+	Msg          string
+	Warning      string
+	ParseErr     string
+	JSONText     string
+	MergeText    string
+
+	// JSON 视图与合并预览的交互状态（仅 UI 用，不参与保存）。
+	JSONPending  bool  // 300ms 防抖解析在等待
+	JSONDueNano  int64 // 防抖截止（c.Now().UnixNano()）
+	JSONResetArm bool  // 「重置」确认框 open 位
+	JSONHint     string
+	MergeQuery   string
+	MergeOpen    map[string]bool // 按路径展开贡献值
+	MergeReveal  map[string]bool // 按路径显示敏感值
 
 	ModelInput    string
 	FallbackInput string
@@ -119,6 +130,7 @@ type ClaudeCfgState struct {
 	EnvNewValue string
 	PluginNew   string
 	FormMsg     string
+	SaveArm     bool
 
 	Projects []bridge.ClaudeProject
 	Skills   []bridge.SkillView

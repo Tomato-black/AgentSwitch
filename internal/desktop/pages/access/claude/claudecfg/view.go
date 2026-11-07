@@ -35,6 +35,9 @@ func Section(c *ui.Context, st *state.State) {
 			}
 			layerSelector(c, t, s, st, cfgs)
 			fileLine(c, t, s, st)
+			if st.ClaudeCfg.Warning != "" {
+				uikit.Feedback(c, t, uikit.FeedbackWarning, st.ClaudeCfg.Warning)
+			}
 			viewTabs(c, t, s, st, cfgs)
 			switch st.ClaudeCfg.View {
 			case "json":
@@ -47,6 +50,7 @@ func Section(c *ui.Context, st *state.State) {
 			uikit.Feedback(c, t, uikit.InferFeedback(st.ClaudeCfg.Msg), st.ClaudeCfg.Msg)
 		})
 	})
+	saveDialog(c, st, cfgs)
 }
 
 func ensure(cf *state.ClaudeCfgState) {
@@ -73,6 +77,7 @@ func load(st *state.State, cfgs bridge.ClaudeConfigs) {
 	if cf.Layer == "project" && cf.Project == "" && len(cf.Projects) > 0 {
 		cf.Project = cf.Projects[0].Path
 	}
+	cf.ProjectInput = cf.Project
 	req := bridge.ReadLayerRequest{Kind: corecfg.ScopeUser, Project: cf.Project, Sub: cf.Sub}
 	switch cf.Layer {
 	case "project":
@@ -102,6 +107,9 @@ func load(st *state.State, cfgs bridge.ClaudeConfigs) {
 		return
 	}
 	cf.Loaded = true
+	if ov, ovErr := cfgs.ClaudeConfigOverview(); ovErr == nil {
+		cf.Warning = ov.Warning
+	}
 	cf.File = view.File
 	cf.Display = view.Display
 	cf.Exists = view.Exists
@@ -160,15 +168,21 @@ func header(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, cf
 		if uikit.SoftButton(c, t, s, "gray", "刷新").Clicked() {
 			load(st, cfgs)
 		}
-		canSave := st.ClaudeCfg.Loaded && st.ClaudeCfg.Layer != "managed" && st.ClaudeCfg.ParseErr == "" && st.ClaudeCfg.Dirty
+		canSave := st.ClaudeCfg.Loaded && st.ClaudeCfg.Layer != "managed" && st.ClaudeCfg.Dirty &&
+			saveBlockReason(&st.ClaudeCfg) == ""
 		btn := uikit.SoftButton(c, t, s, "act", "保存设置")
 		if !canSave {
 			btn.Disabled(true)
 		}
 		if btn.Clicked() && canSave {
-			save(st, cfgs)
+			st.ClaudeCfg.SaveArm = true
 		}
 	})
+	if st.ClaudeCfg.Loaded && st.ClaudeCfg.Dirty {
+		if reason := saveBlockReason(&st.ClaudeCfg); reason != "" {
+			uikit.Feedback(c, t, uikit.FeedbackError, reason)
+		}
+	}
 }
 
 func layerSelector(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, cfgs bridge.ClaudeConfigs) {
@@ -214,8 +228,21 @@ func layerSelector(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.St
 				load(st, cfgs)
 			}
 		} else {
-			ui.Text(c, "未读取到最近项目，请从接入页选择项目或手动输入路径").TextColor(t.TextMuted)
+			ui.Text(c, "未读取到最近项目；可手动输入项目目录").TextColor(t.TextMuted)
 		}
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.TextInput(c, &cf.ProjectInput).Grow(1).Placeholder("/path/to/project")
+			if uikit.SoftButton(c, t, s, "gray", "打开").Clicked() && strings.TrimSpace(cf.ProjectInput) != "" && cf.ProjectInput != cf.Project {
+				if cf.Dirty {
+					cf.Msg = "有未保存修改；请先保存或点「刷新」放弃"
+					return
+				}
+				cf.Project = strings.TrimSpace(cf.ProjectInput)
+				cf.Doc = nil
+				cf.Loaded = false
+				load(st, cfgs)
+			}
+		})
 		sub := 0
 		if cf.Sub == "local" {
 			sub = 1
@@ -271,11 +298,21 @@ func viewTabs(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, 
 		if idx == 0 {
 			cf.View = "form"
 		} else if idx == 1 {
+			if cf.View != "json" {
+				// 从表单切回 JSON 时按当前 Doc 重建文本，避免显示旧快照。
+				cf.JSONText = pretty(cf.Doc)
+				cf.ParseErr = ""
+				cf.JSONHint = ""
+				cf.JSONPending = false
+			}
 			cf.View = "json"
 		} else {
-			cf.View = "merged"
-			if merged, err := cfgs.MergeClaudeConfig(cf.Project); err == nil {
-				cf.MergeText = pretty(merged)
+			if cf.View != "merged" {
+				cf.View = "merged"
+				if merged, entries, err := cfgs.MergeClaudeConfigView(cf.Project); err == nil {
+					cf.MergeText = pretty(merged)
+					cf.MergeEntries = entries
+				}
 			}
 		}
 	}
@@ -292,34 +329,38 @@ func FormRowRaw(c *ui.Context, t *ui.Theme, label string, field func()) {
 	uikit.FormRowRaw(c, t, label, field)
 }
 
-func jsonView(c *ui.Context, t *ui.Theme, st *state.State) {
+func saveDialog(c *ui.Context, st *state.State, cfgs bridge.ClaudeConfigs) {
 	cf := &st.ClaudeCfg
-	readOnly := cf.Layer == "managed"
-	ta := ui.TextArea(c, &cf.JSONText).Height(320).Font(uikit.MonoFont).ReadOnly(readOnly)
-	if ta.Changed() && !readOnly {
-		var doc map[string]any
-		if err := json.Unmarshal([]byte(cf.JSONText), &doc); err != nil {
-			cf.ParseErr = err.Error()
-		} else {
-			cf.Doc = doc
-			cf.ParseErr = ""
-			RecomputeDirty(cf)
-		}
+	changed := corecfg.Diff(cf.Baseline, cf.Doc)
+	msg := "目标文件：" + cf.Display + "\n变更 " + itoa(len(changed)) + " 个键"
+	if len(changed) > 0 {
+		msg += "：" + strings.Join(changed, "、")
 	}
-	_ = t
+	msg += "\n写入前会备份当前文件；只改这些键，其余设置原样保留。"
+	uikit.ConfirmDialog(c, c.Theme(), uikit.ConfirmOpts{
+		Open: &cf.SaveArm, Title: "保存 Claude Code 设置？", Message: msg,
+		ConfirmLabel: "保存", OnConfirm: func() { performSave(st, cfgs) },
+	})
 }
 
-func mergedView(c *ui.Context, t *ui.Theme, st *state.State) {
-	cf := &st.ClaudeCfg
-	ui.Text(c, "只读：跨层合并后的最终值；不会写回任何文件").TextColor(t.TextMuted)
-	ui.TextArea(c, &cf.MergeText).Height(360).Font(uikit.MonoFont).ReadOnly(true)
-	_ = t
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var b []byte
+	for n > 0 {
+		b = append([]byte{byte('0' + n%10)}, b...)
+		n /= 10
+	}
+	return string(b)
 }
 
-func save(st *state.State, cfgs bridge.ClaudeConfigs) {
+func performSave(st *state.State, cfgs bridge.ClaudeConfigs) {
 	cf := &st.ClaudeCfg
-	if cf.View == "json" && cf.ParseErr != "" {
-		cf.Msg = "JSON 有错误，先修复再保存"
+	// JSON 语法错误、本次引入的 scope 违规、非法 skillOverrides 与受管键
+	// 修改都在这里统一阻断，并给出具体路径与原因。
+	if reason := saveBlockReason(cf); reason != "" {
+		cf.Msg = reason
 		return
 	}
 	if cf.Layer == "user" {

@@ -409,8 +409,13 @@ func claudeSummaryCard(c *ui.Context, st *state.State, acc bridge.AccessConfigs,
 				}
 			})
 			status := "网关未运行"
-			if stt.State == "running" {
+			switch stt.State {
+			case "running":
 				status = "网关运行中 · " + stt.Addr
+			case "degraded":
+				status = "网关降级 · " + stt.Addr
+			case "starting":
+				status = "网关启动中"
 			}
 			if cur == nil {
 				ui.Text(c, status+" · 尚未选择接入配置").TextColor(t.TextMuted)
