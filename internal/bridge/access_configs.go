@@ -202,10 +202,14 @@ func (s AccessConfigs) Apply(id string) error {
 }
 
 // GlobalConfig 读全局 env（settings 键 access.global.<app_type>）；缺失视为
-// 空 map。审计/返回不涉及 token。
+// 空 map。审计/返回不涉及 token。claude 恒为空（2026-11-07 用户决策：Claude
+// 全局配置下线，env 由 Claude Code 设置中心按层管理；残留键不再参与合成）。
 func (s AccessConfigs) GlobalConfig(appType string) (map[string]string, error) {
 	if err := validateAccessAppType(appType); err != nil {
 		return nil, err
+	}
+	if appType == "claude" {
+		return map[string]string{}, nil
 	}
 	raw, err := s.A.Store().Settings().Get("access.global." + appType)
 	if err != nil {
@@ -225,10 +229,14 @@ func (s AccessConfigs) GlobalConfig(appType string) (map[string]string, error) {
 }
 
 // SaveGlobalConfig 写全局 env（JSON 编码存 settings 键 access.global.<app_type>）。
-// 审计行绝不记录 env 值或 token。
+// 审计行绝不记录 env 值或 token。claude 拒绝保存（全局配置已下线，见
+// GlobalConfig 注释；UI 入口仅剩 codex）。
 func (s AccessConfigs) SaveGlobalConfig(appType string, env map[string]string) error {
 	if err := validateAccessAppType(appType); err != nil {
 		return err
+	}
+	if appType == "claude" {
+		return fmt.Errorf("Claude 全局配置已下线；环境变量请在 Claude Code 设置区管理")
 	}
 	if env == nil {
 		env = map[string]string{}

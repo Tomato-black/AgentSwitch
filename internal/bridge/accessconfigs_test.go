@@ -636,15 +636,51 @@ func TestCreateNormalizesDocBeforeStore(t *testing.T) {
 func TestAccessConfigsGlobalConfig(t *testing.T) {
 	a := tempApp(t)
 	acc := AccessConfigs{A: a, Home: t.TempDir()}
-	if err := acc.SaveGlobalConfig("claude", map[string]string{"K": "V"}); err != nil {
+	if err := acc.SaveGlobalConfig("codex", map[string]string{"K": "V"}); err != nil {
 		t.Fatal(err)
 	}
-	g, err := acc.GlobalConfig("claude")
+	g, err := acc.GlobalConfig("codex")
 	if err != nil || g["K"] != "V" {
 		t.Fatalf("%v %v", g, err)
 	}
 	if err := acc.SaveGlobalConfig("gemini", nil); err == nil {
 		t.Fatal("白名单外 appType 应报错")
+	}
+}
+
+// TestGlobalConfigClaudeRetired 覆盖 2026-11-07 用户决策：Claude 全局配置下线
+// （Claude Code 设置中心接管 env 管理）——残留的 access.global.claude 不再
+// 参与合成，保存直接拒绝；codex 全局配置不受影响。
+func TestGlobalConfigClaudeRetired(t *testing.T) {
+	a := tempApp(t)
+	acc := AccessConfigs{A: a, Home: t.TempDir()}
+	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "m", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	// 残留键直写 settings（模拟下线前的存量数据）。
+	if err := a.Store().Settings().Set("access.global.claude", `{"HTTPS_PROXY":"http://p:1"}`); err != nil {
+		t.Fatal(err)
+	}
+	g, err := acc.GlobalConfig("claude")
+	if err != nil || len(g) != 0 {
+		t.Fatalf("claude 全局配置应恒为空: %v %v", g, err)
+	}
+	raw, err := acc.PreviewDoc("claude", "lm1", `{"env":{"CUSTOM":"x"}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(raw, "HTTPS_PROXY") {
+		t.Fatalf("claude 预览不得合并全局配置: %s", raw)
+	}
+	if err := acc.SaveGlobalConfig("claude", map[string]string{"K": "V"}); err == nil {
+		t.Fatal("claude 全局配置保存应拒绝")
+	}
+	// codex 全局配置不受影响。
+	if err := acc.SaveGlobalConfig("codex", map[string]string{"K": "V"}); err != nil {
+		t.Fatal(err)
+	}
+	if g, err := acc.GlobalConfig("codex"); err != nil || g["K"] != "V" {
+		t.Fatalf("codex 全局配置应正常: %v %v", g, err)
 	}
 }
 
@@ -1044,15 +1080,17 @@ func TestWritePersistRejectsNewlineValue(t *testing.T) {
 }
 
 // TestSaveGlobalConfigRefreshesDerived 覆盖终审 Important#2：全局配置保存
-// 后 live 与全部持久文件同步刷新（验收场景④——无需令牌轮换）。
+// 后 live 与全部持久文件同步刷新（验收场景④——无需令牌轮换）。claude 全局
+// 配置已下线（2026-11-07），本用例改走 codex；live 断言 config.toml 中的
+// 模型目录键（codex live 不投影任意 env），env 落持久文件。
 func TestSaveGlobalConfigRefreshesDerived(t *testing.T) {
 	a := tempApp(t)
 	acc := AccessConfigs{A: a, Home: t.TempDir()}
 	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "m", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	cur, _ := acc.Create("claude", "工作", "lm1", "")
-	other, _ := acc.Create("claude", "备用", "lm1", "")
+	cur, _ := acc.Create("codex", "工作", "lm1", "")
+	other, _ := acc.Create("codex", "备用", "lm1", "")
 	if err := acc.Apply(cur.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -1062,15 +1100,15 @@ func TestSaveGlobalConfigRefreshesDerived(t *testing.T) {
 	if _, err := acc.LaunchCommand(other.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := acc.SaveGlobalConfig("claude", map[string]string{"HTTPS_PROXY": "http://p:1"}); err != nil {
+	if err := acc.SaveGlobalConfig("codex", map[string]string{"HTTPS_PROXY": "http://p:1"}); err != nil {
 		t.Fatal(err)
 	}
-	live, _ := os.ReadFile(filepath.Join(acc.Home, ".claude", "settings.json"))
-	if !strings.Contains(string(live), "http://p:1") {
-		t.Fatal("live 未刷新全局 env")
+	live, _ := os.ReadFile(filepath.Join(acc.Home, ".codex", "config.toml"))
+	if !strings.Contains(string(live), "m") {
+		t.Fatal("live 未刷新")
 	}
 	for _, id := range []string{cur.ID, other.ID} {
-		b, _ := os.ReadFile(filepath.Join(acc.Home, ".agentswitch", "access", "claude", id+".json"))
+		b, _ := os.ReadFile(filepath.Join(acc.Home, ".agentswitch", "access", "codex", id+".env"))
 		if !strings.Contains(string(b), "http://p:1") {
 			t.Fatalf("持久文件 %s 未刷新全局 env", id)
 		}
@@ -1174,9 +1212,6 @@ func TestPreviewDocRendersTokenAndComposes(t *testing.T) {
 	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	if err := acc.SaveGlobalConfig("claude", map[string]string{"HTTPS_PROXY": "http://p:1"}); err != nil {
-		t.Fatal(err)
-	}
 	raw, err := acc.PreviewDoc("claude", "lm1", `{"env":{"API_TIMEOUT_MS":"1","ANTHROPIC_AUTH_TOKEN":"x"},"language":"zh-CN"}`)
 	if err != nil {
 		t.Fatal(err)
@@ -1199,8 +1234,8 @@ func TestPreviewDocRendersTokenAndComposes(t *testing.T) {
 	if env["ANTHROPIC_MODEL"] != "my-code" || env["ANTHROPIC_BASE_URL"] == "" {
 		t.Fatalf("锁定键应就位: %v", env)
 	}
-	if env["HTTPS_PROXY"] != "http://p:1" || env["API_TIMEOUT_MS"] != "1" {
-		t.Fatalf("全局/文档 env 应合成: %v", env)
+	if env["API_TIMEOUT_MS"] != "1" {
+		t.Fatalf("文档 env 应合成: %v", env)
 	}
 	if doc["language"] != "zh-CN" {
 		t.Fatalf("顶层键应保留: %v", doc)
@@ -1362,7 +1397,8 @@ func TestRebaseAccessDoc(t *testing.T) {
 
 // TestPreviewRebaseSaveRoundTrip 覆盖 Important#1/#2 端到端回归：旧预览里的
 // 派生值（SMALL_FAST=旧模型、全局 HTTPS_PROXY=旧值）在切换模型/更新全局后
-// 经重定位不再被保存归一化冻结；真正的定制键 CUSTOM 保留。
+// 经重定位不再被保存归一化冻结；真正的定制键 CUSTOM 保留。claude 全局配置
+// 已下线（2026-11-07），全局重定位场景改走 codex，claude 段只守模型切换。
 func TestPreviewRebaseSaveRoundTrip(t *testing.T) {
 	a := tempApp(t)
 	acc := AccessConfigs{A: a, Home: t.TempDir()}
@@ -1374,9 +1410,6 @@ func TestPreviewRebaseSaveRoundTrip(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := acc.SaveGlobalConfig("claude", map[string]string{"HTTPS_PROXY": "p1"}); err != nil {
-		t.Fatal(err)
-	}
 	previewA, err := acc.PreviewDoc("claude", "lm1", `{"env":{"CUSTOM":"x"}}`)
 	if err != nil {
 		t.Fatal(err)
@@ -1384,14 +1417,6 @@ func TestPreviewRebaseSaveRoundTrip(t *testing.T) {
 	// 主模型 A → B：按旧模型的 SMALL_FAST 派生值重定位。
 	rebased, err := RebaseAccessDoc("claude", previewA,
 		map[string]string{"ANTHROPIC_SMALL_FAST_MODEL": "model-a"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// 全局 HTTPS_PROXY p1 → p2：按保存前的全局值重定位。
-	if err := acc.SaveGlobalConfig("claude", map[string]string{"HTTPS_PROXY": "p2"}); err != nil {
-		t.Fatal(err)
-	}
-	rebased, err = RebaseAccessDoc("claude", rebased, map[string]string{"HTTPS_PROXY": "p1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1416,11 +1441,45 @@ func TestPreviewRebaseSaveRoundTrip(t *testing.T) {
 	if _, frozen := doc.Env["ANTHROPIC_SMALL_FAST_MODEL"]; frozen {
 		t.Fatalf("旧模型派生值被冻结: %s", stored.Settings)
 	}
-	if _, frozen := doc.Env["HTTPS_PROXY"]; frozen {
-		t.Fatalf("旧全局值被冻结: %s", stored.Settings)
-	}
 	if doc.Env["CUSTOM"] != "x" {
 		t.Fatalf("定制键丢失: %s", stored.Settings)
+	}
+
+	// 全局 HTTPS_PROXY p1 → p2（codex 仍保留全局配置）：按保存前的全局值重定位，
+	// 旧全局派生值不得在保存归一化中被冻结；定制键 CUSTOM2 保留。
+	if err := acc.SaveGlobalConfig("codex", map[string]string{"HTTPS_PROXY": "p1"}); err != nil {
+		t.Fatal(err)
+	}
+	codexPreview, err := acc.PreviewDoc("codex", "lm1", `{"env":{"CUSTOM2":"y"}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := acc.SaveGlobalConfig("codex", map[string]string{"HTTPS_PROXY": "p2"}); err != nil {
+		t.Fatal(err)
+	}
+	codexRebased, err := RebaseAccessDoc("codex", codexPreview, map[string]string{"HTTPS_PROXY": "p1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cv, err := acc.Create("codex", "cfg", "lm1", codexRebased)
+	if err != nil {
+		t.Fatal(err)
+	}
+	codexStored, err := a.Store().AccessConfigs().Get(cv.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var codexDoc struct {
+		Env map[string]string `json:"env"`
+	}
+	if err := json.Unmarshal([]byte(codexStored.Settings), &codexDoc); err != nil {
+		t.Fatalf("存储文档非法: %v: %s", err, codexStored.Settings)
+	}
+	if _, frozen := codexDoc.Env["HTTPS_PROXY"]; frozen {
+		t.Fatalf("旧全局值被冻结: %s", codexStored.Settings)
+	}
+	if codexDoc.Env["CUSTOM2"] != "y" {
+		t.Fatalf("定制键丢失: %s", codexStored.Settings)
 	}
 }
 
