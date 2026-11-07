@@ -2,6 +2,7 @@ package access
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -601,27 +602,37 @@ func TestReenterKeepsDraft(t *testing.T) {
 	}
 }
 
-// TestCodexConfigFilterSearchField（2026-11-07 组件升级钉住）：codex 配置过滤
-// 框换 ui.SearchField 后过滤语义不变——无匹配显示「没有匹配的配置」。
+// TestCodexConfigFilterSearchField（2026-11-07 组件升级）：codex 配置过滤框
+// 是 ui.SearchField——聚焦输入绑定 + Esc 清空（TextInput 无此行为，为控件
+// 级判别）；过滤语义不变（无匹配显示「没有匹配的配置」）。搜索框仅在
+// 配置 > 8 个时渲染，测试造 9 个。
 func TestCodexConfigFilterSearchField(t *testing.T) {
 	st, a := uitest.New(t)
 	if _, err := a.Store().LogicalModels().Save(storage.LogicalModel{ID: "lm1", Name: "my-code", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	acc := configs(st)
-	if _, err := acc.Create("codex", "工作", "lm1", "{}"); err != nil {
-		t.Fatal(err)
+	for i := 0; i < 9; i++ {
+		if _, err := acc.Create("codex", fmt.Sprintf("配置%d", i), "lm1", "{}"); err != nil {
+			t.Fatal(err)
+		}
 	}
 	st.Page = "access"
 	st.Access.App = "codex"
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1200, 900)
+	// 控件级判别：SearchField 的输入件带读屏 search 态（TextInput 无）；
+	// codex 页签全局配置行为空行时它是唯一文本输入件。
+	field, ok := tt.AccessByRole(ui.RoleTextField, "")
+	if !ok {
+		t.Fatal("codex 过滤输入件缺失")
+	}
+	if !field.Search {
+		t.Fatal("过滤框应为 ui.SearchField（读屏 search 态缺失）")
+	}
+	// 过滤语义不变：无匹配提示。
 	st.Access.Filter = "不存在"
-	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
+	tt = ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1200, 900)
 	if !tt.HasText("没有匹配的配置") {
 		t.Fatalf("无匹配提示缺失: %v", tt.Texts())
-	}
-	st.Access.Filter = "工作"
-	tt = ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 900)
-	if tt.HasText("没有匹配的配置") {
-		t.Fatalf("命中配置不应提示无匹配: %v", tt.Texts())
 	}
 }

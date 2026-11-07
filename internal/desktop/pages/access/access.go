@@ -217,7 +217,8 @@ func Page(c *ui.Context, st *state.State) {
 								}
 							}
 							if len(list) > 8 {
-								ui.TextInput(c, &st.Access.Filter).Grow(1).
+								// ui.SearchField（mygo v0.7+）：放大镜/一键清除/Esc 清空/读屏 search 态。
+								ui.SearchField(c, &st.Access.Filter).Grow(1).
 									Placeholder("搜索配置：名称 / 模型")
 							}
 							filter := strings.ToLower(strings.TrimSpace(st.Access.Filter))
