@@ -6,6 +6,7 @@ package uitest
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"AgentSwitch/internal/app"
 	"AgentSwitch/internal/bridge"
@@ -32,4 +33,29 @@ func New(t testing.TB) (*state.State, *app.App) {
 	// 页面测试必须与真实 ~/.claude 隔离，避免读取用户配置。
 	st.ClaudeCfg.Home = t.TempDir()
 	return st, a
+}
+
+// AsyncWaiter 把 Dispatch 换成带信号的版本并返回等待函数：异步任务完成后
+// 测试可等待回调在「主线程」执行，再断言（避免读取进行中的状态）。与
+// channels 包的 asyncWaiter 同型，供各页共用。等待函数会轮询至回调入队
+// （给工作 goroutine 留计算时间），调用方须确保确有任务被触发。
+func AsyncWaiter(t testing.TB, st *state.State) func() {
+	t.Helper()
+	queue := make(chan func(), 8)
+	st.Dispatch = func(fn func()) { queue <- fn }
+	return func() {
+		deadline := time.Now().Add(3 * time.Second)
+		for {
+			select {
+			case fn := <-queue:
+				fn()
+				return
+			default:
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("async task did not finish")
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
 }

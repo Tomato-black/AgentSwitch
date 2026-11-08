@@ -80,6 +80,7 @@ type AccessState struct {
 type ClaudeCfgState struct {
 	Loaded       bool
 	Loading      bool
+	LoadGen      int // 异步加载代次：切换层/刷新递增，过期结果丢弃
 	Home         string // 测试注入；空=os.UserHomeDir()
 	Layer        string // user/project/managed
 	Sub          string // shared/local

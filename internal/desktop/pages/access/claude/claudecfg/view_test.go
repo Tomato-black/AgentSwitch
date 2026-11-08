@@ -26,7 +26,12 @@ func TestSectionRendersClaudeSettings(t *testing.T) {
 	}
 	st.Access.App = "claude"
 	st.ClaudeCfg.Home = home
+	wait := uitest.AsyncWaiter(t, st)
 	tt := ui.NewTester(func(c *ui.Context) {
+		Page(c, st)
+	}, 1000, 1600)
+	wait() // 初始层加载在工作 goroutine，排空后再渲染断言
+	tt = ui.NewTester(func(c *ui.Context) {
 		Page(c, st)
 	}, 1000, 1600)
 	for _, want := range []string{
@@ -57,7 +62,9 @@ func TestLoadNumericJSONNotDirty(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfgs := bridge.ClaudeConfigs{A: st.Svc.Gateway.A, Home: home}
+	wait := uitest.AsyncWaiter(t, st)
 	load(st, cfgs)
+	wait()
 	cf := &st.ClaudeCfg
 	if !cf.Loaded {
 		t.Fatalf("load failed: %s", cf.Msg)
@@ -135,7 +142,9 @@ func TestRefreshGuardsDirtyEdits(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfgs := bridge.ClaudeConfigs{A: st.Svc.Gateway.A, Home: home}
+	wait := uitest.AsyncWaiter(t, st)
 	load(st, cfgs)
+	wait()
 	setString(st.ClaudeCfg.Doc, "model", "opus")
 	RecomputeDirty(&st.ClaudeCfg)
 
@@ -166,6 +175,7 @@ func TestRefreshGuardsDirtyEdits(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
+	wait() // 放弃后重载在工作 goroutine，排空后再断言
 	if st.ClaudeCfg.ReloadArm {
 		t.Fatal("confirm must close the dialog")
 	}
@@ -190,7 +200,9 @@ func TestRefreshCleanReloadsImmediately(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfgs := bridge.ClaudeConfigs{A: st.Svc.Gateway.A, Home: home}
+	wait := uitest.AsyncWaiter(t, st)
 	load(st, cfgs)
+	wait()
 
 	tt := ui.NewTester(func(c *ui.Context) {
 		Page(c, st)
@@ -220,7 +232,9 @@ func TestBrokenJSONReadOnlyRepairState(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfgs := bridge.ClaudeConfigs{A: st.Svc.Gateway.A, Home: home}
+	wait := uitest.AsyncWaiter(t, st)
 	load(st, cfgs)
+	wait()
 	cf := &st.ClaudeCfg
 
 	if !cf.Loaded || !cf.BrokenFile || cf.ParseErr == "" {
@@ -300,7 +314,9 @@ func TestBrokenJSONRawTextSurvivesViewSwitch(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfgs := bridge.ClaudeConfigs{A: st.Svc.Gateway.A, Home: home}
+	wait := uitest.AsyncWaiter(t, st)
 	load(st, cfgs)
+	wait()
 	cf := &st.ClaudeCfg
 
 	tt := ui.NewTester(func(c *ui.Context) {
@@ -331,7 +347,9 @@ func TestFileStripStatusBadges(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfgs := bridge.ClaudeConfigs{A: st.Svc.Gateway.A, Home: home}
+	wait := uitest.AsyncWaiter(t, st)
 	load(st, cfgs)
+	wait()
 	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 1600)
 	if !tt.HasText("已保存") {
 		t.Fatalf("clean file must show 已保存: %v", tt.Texts())
@@ -363,7 +381,10 @@ func TestLayerContextCards(t *testing.T) {
 	st.ClaudeCfg.Project = proj
 	st.ClaudeCfg.Projects = []bridge.ClaudeProject{{Path: proj}}
 	st.ClaudeCfg.Loaded = false
+	wait := uitest.AsyncWaiter(t, st)
 	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 1600)
+	wait()
+	tt = ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 1600)
 	for _, want := range []string{"共享 settings.json", "本地 settings.local.json", "settings.json"} {
 		if !tt.HasText(want) {
 			t.Fatalf("project context missing %q: %v", want, tt.Texts())
@@ -371,6 +392,8 @@ func TestLayerContextCards(t *testing.T) {
 	}
 	st.ClaudeCfg.Layer = "managed"
 	st.ClaudeCfg.Loaded = false
+	tt = ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 1600)
+	wait()
 	tt = ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 1600)
 	if !tt.HasText("托管配置只读") || !tt.HasText("managed-settings.json") {
 		t.Fatalf("managed context missing source path/readonly note: %v", tt.Texts())
@@ -391,7 +414,12 @@ func TestPageRendersClaudeSettings(t *testing.T) {
 	}
 	st.Access.App = "claude"
 	st.ClaudeCfg.Home = home
+	wait := uitest.AsyncWaiter(t, st)
 	tt := ui.NewTester(func(c *ui.Context) {
+		Page(c, st)
+	}, 1000, 1600)
+	wait() // 初始层加载在工作 goroutine，排空后再渲染断言
+	tt = ui.NewTester(func(c *ui.Context) {
 		Page(c, st)
 	}, 1000, 1600)
 	for _, want := range []string{
@@ -427,7 +455,9 @@ func TestLocalCandidatesSwitch(t *testing.T) {
 	st.ClaudeCfg.Project = sub
 	st.ClaudeCfg.Projects = []bridge.ClaudeProject{{Path: sub}}
 	st.ClaudeCfg.Loaded = false
+	wait := uitest.AsyncWaiter(t, st)
 	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 1800)
+	wait()
 	if len(st.ClaudeCfg.Candidates) != 2 {
 		t.Fatalf("candidates = %v", st.ClaudeCfg.Candidates)
 	}
@@ -438,6 +468,8 @@ func TestLocalCandidatesSwitch(t *testing.T) {
 	alt := st.ClaudeCfg.Candidates[1]
 	st.ClaudeCfg.LocalPath = alt
 	st.ClaudeCfg.Loaded = false
+	tt = ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 1800)
+	wait()
 	tt = ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 1800)
 	if st.ClaudeCfg.File != alt {
 		t.Fatalf("File 应跟随所选候选：%q want %q", st.ClaudeCfg.File, alt)

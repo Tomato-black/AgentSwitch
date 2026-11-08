@@ -319,7 +319,9 @@ func TestBoolFieldTriStateSegmented(t *testing.T) {
 	if err := os.WriteFile(file, []byte(`{"model":"sonnet"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	wait := uitest.AsyncWaiter(t, st)
 	load(st, bridge.ClaudeConfigs{A: st.Svc.Gateway.A, Home: home})
+	wait()
 	cf := &st.ClaudeCfg
 	if _, ok := corecfg.Get(cf.Doc, "alwaysThinkingEnabled"); ok {
 		t.Fatal("前置不成立：文件不应含该键")
@@ -370,7 +372,9 @@ func TestListFieldChipEditor(t *testing.T) {
 	if err := os.WriteFile(file, []byte(`{"permissions":{"allow":["Bash(go test:*)","Bash(ls)"]},"fallbackModel":["haiku","sonnet","opus"]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	wait := uitest.AsyncWaiter(t, st)
 	load(st, bridge.ClaudeConfigs{A: st.Svc.Gateway.A, Home: home})
+	wait()
 	cf := &st.ClaudeCfg
 
 	// chip 渲染：两个 chip 文本 + 「未设置」不出现 + 添加按钮在场。

@@ -31,7 +31,9 @@ func loadedUserState(t *testing.T) (*state.State, bridge.ClaudeConfigs, string) 
 		t.Fatal(err)
 	}
 	cfgs := bridge.ClaudeConfigs{A: st.Svc.Gateway.A, Home: home}
+	wait := uitest.AsyncWaiter(t, st)
 	load(st, cfgs)
+	wait()
 	if !st.ClaudeCfg.Loaded {
 		t.Fatalf("load failed: %s", st.ClaudeCfg.Msg)
 	}
@@ -386,7 +388,9 @@ func TestRestoreBackupOnlyTouchesCurrentLayer(t *testing.T) {
 	if err := os.WriteFile(file, []byte(`{"model":"haiku"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	wait := uitest.AsyncWaiter(t, st)
 	load(st, cfgs)
+	wait()
 	openBackups(st, cfgs)
 	if len(cf.Backups) == 0 {
 		t.Fatal("user layer must have a backup")

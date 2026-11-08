@@ -25,8 +25,11 @@ func Page(c *ui.Context, st *state.State) {
 	s := uikit.Softs(t)
 	cfgs := bridge.ClaudeConfigs{A: st.Svc.Gateway.A, Home: st.ClaudeCfg.Home}
 	ensure(&st.ClaudeCfg)
-	if !st.ClaudeCfg.Loaded {
+	if !st.ClaudeCfg.Loaded && !st.ClaudeCfg.Loading {
 		load(st, cfgs)
+	}
+	if st.ClaudeCfg.Loading {
+		uikit.BusyRow(c, t, "正在加载配置…", nil)
 	}
 
 	ui.Column(c).Gap(12).Grow(1).Children(func() {
@@ -249,33 +252,97 @@ func ensure(cf *state.ClaudeCfgState) {
 	}
 }
 
+// claudeLoadInput 是 load 的输入快照：渲染帧一次性拷贝，工作 goroutine
+// 只读它，绝不碰 State。
+type claudeLoadInput struct {
+	Layer, Sub, Project, LocalPath string
+	ProjectsCache                  []bridge.ClaudeProject // nil=需要拉取
+}
+
+// claudeLoadResult 是一次加载的产出快照：主线程一次性应用，避免与渲染帧
+// 并发读写状态。
+type claudeLoadResult struct {
+	Projects      []bridge.ClaudeProject
+	HasProjects   bool
+	Project       string
+	Loaded        bool
+	File, Display string
+	Candidates    []string
+	Exists        bool
+	Hash          string
+	Doc, Baseline map[string]any
+	Managed       corecfg.ManagedSet
+	Violations    []corecfg.Violation
+	Warning       string
+	Msg           string
+	ParseErr      string
+	BrokenFile    bool
+	JSONText      string
+	MergeText     string
+	MergeEntries  map[string]corecfg.MergedEntry
+	Skills        []bridge.SkillView
+	SkillErr      string
+}
+
+// load 异步加载当前层（D3）：文件读/合并预览/Skills 扫描移出渲染线程，
+// 结果经 Dispatch 回主线程按代次应用；switchLayer/刷新会提升代次，过期
+// 结果直接丢弃。
 func load(st *state.State, cfgs bridge.ClaudeConfigs) {
 	cf := &st.ClaudeCfg
+	cf.LoadGen++
+	gen := cf.LoadGen
+	cf.Loading = true
 	cf.Msg = ""
 	cf.ParseErr = ""
 	cf.BrokenFile = false
-	if cf.Projects == nil {
-		cf.Projects, _ = cfgs.ListClaudeProjects()
+	in := claudeLoadInput{
+		Layer: cf.Layer, Sub: cf.Sub, Project: cf.Project, LocalPath: cf.LocalPath,
+		ProjectsCache: cf.Projects,
 	}
-	if cf.Layer == "project" && cf.Project == "" && len(cf.Projects) > 0 {
-		cf.Project = cf.Projects[0].Path
-	}
-	cf.ProjectInput = cf.Project
-	req := bridge.ReadLayerRequest{Kind: corecfg.ScopeUser, Project: cf.Project, Sub: cf.Sub, LocalPath: cf.LocalPath}
-	switch cf.Layer {
-	case "project":
-		if cf.Project == "" {
-			cf.Loaded = true
-			cf.Doc = map[string]any{}
-			cf.Baseline = map[string]any{}
-			cf.File = ""
-			cf.Display = "请选择项目"
-			cf.Exists = false
-			cf.Hash = ""
-			cf.Msg = "项目级设置需要先选择项目"
-			return
+	dispatch := st.Dispatch // spawn 时捕获：goroutine 不得再读 State 字段
+	go func() {
+		res := computeLoad(cfgs, in)
+		apply := func() {
+			if st.ClaudeCfg.LoadGen != gen {
+				return
+			}
+			applyLoad(&st.ClaudeCfg, res)
+			st.ClaudeCfg.Loading = false
 		}
-		if cf.Sub == "local" {
+		if dispatch != nil {
+			dispatch(apply)
+		} else {
+			apply()
+		}
+	}()
+}
+
+// computeLoad 做全部桥接 IO（读层/合并预览/Skills 扫描/项目列表），纯函数
+// 语义：只读输入，不碰 State。
+func computeLoad(cfgs bridge.ClaudeConfigs, in claudeLoadInput) claudeLoadResult {
+	var res claudeLoadResult
+	res.Project = in.Project
+	projects := in.ProjectsCache
+	if projects == nil {
+		projects, _ = cfgs.ListClaudeProjects()
+		res.Projects = projects
+		res.HasProjects = true
+	}
+	if in.Layer == "project" && in.Project == "" && len(projects) > 0 {
+		res.Project = projects[0].Path
+	}
+	req := bridge.ReadLayerRequest{Kind: corecfg.ScopeUser, Project: res.Project, Sub: in.Sub, LocalPath: in.LocalPath}
+	switch in.Layer {
+	case "project":
+		if res.Project == "" {
+			res.Loaded = true
+			res.Doc = map[string]any{}
+			res.Baseline = map[string]any{}
+			res.Display = "请选择项目"
+			res.Msg = "项目级设置需要先选择项目"
+			return res
+		}
+		if in.Sub == "local" {
 			req.Kind = corecfg.ScopeLocal
 		} else {
 			req.Kind = corecfg.ScopeProject
@@ -285,47 +352,76 @@ func load(st *state.State, cfgs bridge.ClaudeConfigs) {
 	}
 	view, err := cfgs.ReadClaudeConfigLayer(req)
 	if err != nil {
-		cf.Loaded = false
-		cf.Msg = err.Error()
-		return
+		res.Msg = err.Error()
+		return res
 	}
-	cf.Loaded = true
+	res.Loaded = true
 	if ov, ovErr := cfgs.ClaudeConfigOverview(); ovErr == nil {
-		cf.Warning = ov.Warning
+		res.Warning = ov.Warning
 	}
-	cf.File = view.File
-	cf.Display = view.Display
-	cf.Candidates = view.Candidates
-	cf.Exists = view.Exists
-	cf.Hash = view.Hash
-	cf.Doc = view.Doc
-	cf.Baseline = cloneDoc(view.Doc)
-	cf.Managed = view.Managed
-	cf.Violations = view.Violations
-	cf.Reveal = map[string]bool{}
+	res.File = view.File
+	res.Display = view.Display
+	res.Candidates = view.Candidates
+	res.Exists = view.Exists
+	res.Hash = view.Hash
+	res.Doc = view.Doc
+	res.Baseline = cloneDoc(view.Doc)
+	res.Managed = view.Managed
+	res.Violations = view.Violations
 	if view.ParseError != "" {
 		// 只读修复态（I5）：JSON 视图显示磁盘原文，表单停用，保存阻断。
-		cf.ParseErr = view.ParseError
-		cf.BrokenFile = true
-		cf.JSONText = view.RawJSON
+		res.ParseErr = view.ParseError
+		res.BrokenFile = true
+		res.JSONText = view.RawJSON
 	} else {
-		cf.JSONText = pretty(view.Doc)
+		res.JSONText = pretty(view.Doc)
 	}
-	cf.MergeText = ""
-	if merged, entries, err := cfgs.MergeClaudeConfigView(cf.Project); err == nil {
-		cf.MergeText = pretty(merged)
-		cf.MergeEntries = entries
+	if merged, entries, err := cfgs.MergeClaudeConfigView(res.Project); err == nil {
+		res.MergeText = pretty(merged)
+		res.MergeEntries = entries
 	}
-	skills, skillWarns, skillErr := cfgs.ListClaudeSkills(cf.Project)
-	cf.Skills = skills
+	skills, skillWarns, skillErr := cfgs.ListClaudeSkills(res.Project)
+	res.Skills = skills
 	switch {
 	case skillErr != nil:
-		cf.SkillErr = skillErr.Error()
+		res.SkillErr = skillErr.Error()
 	case len(skillWarns) > 0:
-		cf.SkillErr = strings.Join(skillWarns, "；")
-	default:
-		cf.SkillErr = ""
+		res.SkillErr = strings.Join(skillWarns, "；")
 	}
+	return res
+}
+
+// applyLoad 把结果一次性写回状态（含表单输入同步）。
+func applyLoad(cf *state.ClaudeCfgState, res claudeLoadResult) {
+	if res.HasProjects {
+		cf.Projects = res.Projects
+	}
+	cf.Project = res.Project
+	cf.ProjectInput = res.Project
+	cf.Loaded = res.Loaded
+	cf.File = res.File
+	cf.Display = res.Display
+	cf.Candidates = res.Candidates
+	cf.Exists = res.Exists
+	cf.Hash = res.Hash
+	cf.Doc = res.Doc
+	cf.Baseline = res.Baseline
+	cf.Managed = res.Managed
+	cf.Violations = res.Violations
+	cf.Warning = res.Warning
+	if res.Msg != "" {
+		cf.Msg = res.Msg
+	} else {
+		cf.Msg = ""
+	}
+	cf.ParseErr = res.ParseErr
+	cf.BrokenFile = res.BrokenFile
+	cf.JSONText = res.JSONText
+	cf.MergeText = res.MergeText
+	cf.MergeEntries = res.MergeEntries
+	cf.Reveal = map[string]bool{}
+	cf.Skills = res.Skills
+	cf.SkillErr = res.SkillErr
 	syncInputs(cf)
 }
 

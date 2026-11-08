@@ -6,6 +6,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"AgentSwitch/internal/desktop/state"
+	"AgentSwitch/internal/desktop/uitest"
 )
 
 // TestNavItemSet 覆盖侧栏导航项集合：恰为四页 ID 且有序（logical →
@@ -152,7 +153,10 @@ func TestNavItemSetClaudeSettings(t *testing.T) {
 func TestClaudeSettingsPageRendersAndGuardsDirty(t *testing.T) {
 	u, _ := testUI(t)
 	u.Page = "claude-settings"
+	wait := uitest.AsyncWaiter(t, u.State)
 	tt := ui.NewTester(u.view, 900, 700)
+	wait() // 设置页初始层加载在工作 goroutine，排空后再渲染断言
+	tt = ui.NewTester(u.view, 900, 700)
 	for _, want := range []string{"Claude Code 设置", "保存设置", "用户级", "项目级", "企业托管"} {
 		if !tt.HasText(want) {
 			t.Fatalf("missing %q: %v", want, tt.Texts())
