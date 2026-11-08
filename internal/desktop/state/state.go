@@ -85,6 +85,10 @@ type ClaudeCfgState struct {
 	Sub          string // shared/local
 	Project      string
 	ProjectInput string
+	// 项目本地层候选路径（Git 根 ≠ 项目目录时 >1）；LocalPath 是用户显式
+	// 选定的候选（空=默认首候选），随 ReadLayerRequest/保存请求透传 bridge。
+	Candidates []string
+	LocalPath  string
 	View         string // form/json/merged
 	File         string
 	Display      string

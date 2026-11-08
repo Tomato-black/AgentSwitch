@@ -403,3 +403,46 @@ func TestPageRendersClaudeSettings(t *testing.T) {
 		}
 	}
 }
+
+// TestLocalCandidatesSwitch 覆盖 D1：项目本地层出现多个候选路径时可手动
+// 切换，File 跟随所选候选。
+func TestLocalCandidatesSwitch(t *testing.T) {
+	st, _ := uitest.New(t)
+	home := t.TempDir()
+	st.ClaudeCfg.Home = home
+	proj := filepath.Join(home, "work", "demo")
+	sub := filepath.Join(proj, "sub")
+	for _, d := range []string{filepath.Join(proj, ".git"), sub} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(sub, ".claude", "settings.local.json"), []byte(`{"a":1}`), 0o600); err != nil && !os.IsExist(err) {
+		if err := os.MkdirAll(filepath.Join(sub, ".claude"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st.ClaudeCfg.Layer = "project"
+	st.ClaudeCfg.Sub = "local"
+	st.ClaudeCfg.Project = sub
+	st.ClaudeCfg.Projects = []bridge.ClaudeProject{{Path: sub}}
+	st.ClaudeCfg.Loaded = false
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 1800)
+	if len(st.ClaudeCfg.Candidates) != 2 {
+		t.Fatalf("candidates = %v", st.ClaudeCfg.Candidates)
+	}
+	if !strings.HasSuffix(st.ClaudeCfg.File, filepath.Join("demo", ".claude", "settings.local.json")) {
+		t.Fatalf("默认取 Git 根候选：%q", st.ClaudeCfg.File)
+	}
+	// 选定第二个候选（项目目录下）：File 跟随；候选选择器在场。
+	alt := st.ClaudeCfg.Candidates[1]
+	st.ClaudeCfg.LocalPath = alt
+	st.ClaudeCfg.Loaded = false
+	tt = ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1000, 1800)
+	if st.ClaudeCfg.File != alt {
+		t.Fatalf("File 应跟随所选候选：%q want %q", st.ClaudeCfg.File, alt)
+	}
+	if !tt.HasText("候选路径") {
+		t.Fatalf("候选选择器缺失：%v", tt.Texts())
+	}
+}

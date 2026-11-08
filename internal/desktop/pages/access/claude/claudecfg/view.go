@@ -261,7 +261,7 @@ func load(st *state.State, cfgs bridge.ClaudeConfigs) {
 		cf.Project = cf.Projects[0].Path
 	}
 	cf.ProjectInput = cf.Project
-	req := bridge.ReadLayerRequest{Kind: corecfg.ScopeUser, Project: cf.Project, Sub: cf.Sub}
+	req := bridge.ReadLayerRequest{Kind: corecfg.ScopeUser, Project: cf.Project, Sub: cf.Sub, LocalPath: cf.LocalPath}
 	switch cf.Layer {
 	case "project":
 		if cf.Project == "" {
@@ -295,6 +295,7 @@ func load(st *state.State, cfgs bridge.ClaudeConfigs) {
 	}
 	cf.File = view.File
 	cf.Display = view.Display
+	cf.Candidates = view.Candidates
 	cf.Exists = view.Exists
 	cf.Hash = view.Hash
 	cf.Doc = view.Doc
@@ -385,7 +386,8 @@ func projectContextCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *sta
 			if len(paths) > 0 {
 				project := cf.Project
 				if ui.Select(c, &project, paths).Grow(1).Changed() && project != cf.Project {
-					switchLayer(st, cfgs, func(cf *state.ClaudeCfgState) { cf.Project = project })
+					// 项目变更后候选集不同，显式选定的候选随之失效。
+					switchLayer(st, cfgs, func(cf *state.ClaudeCfgState) { cf.Project = project; cf.LocalPath = "" })
 				}
 			} else {
 				ui.Text(c, "未读取到最近项目；可手动输入项目目录").TextColor(t.TextMuted)
@@ -407,6 +409,20 @@ func projectContextCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *sta
 					next = "local"
 				}
 				switchLayer(st, cfgs, func(cf *state.ClaudeCfgState) { cf.Sub = next })
+			}
+			// 候选路径手动切换（D1）：Git 根 ≠ 项目目录时本地层有两个候选。
+			if cf.Layer == "project" && cf.Sub == "local" && len(cf.Candidates) > 1 {
+				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, "候选路径").TextColor(t.TextMuted)
+					local := cf.LocalPath
+					if local == "" {
+						local = cf.Candidates[0]
+					}
+					if ui.Select(c, &local, cf.Candidates).Grow(1).Changed() && local != cf.LocalPath {
+						pick := local
+						switchLayer(st, cfgs, func(cf *state.ClaudeCfgState) { cf.LocalPath = pick })
+					}
+				})
 			}
 			if cf.File != "" {
 				ui.Box(c).Radius(8).Background(t.SurfaceHover).Padding(7, 10).Children(func() {

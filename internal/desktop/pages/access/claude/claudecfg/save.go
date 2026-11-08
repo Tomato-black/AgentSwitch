@@ -184,6 +184,7 @@ func saveWithHash(st *state.State, cfgs bridge.ClaudeConfigs, expectedHash strin
 		Kind:         scopeOf(cf.Layer, cf.Sub),
 		Project:      cf.Project,
 		Sub:          cf.Sub,
+		LocalPath:    cf.LocalPath,
 		Document:     cf.Doc,
 		ExpectedHash: hash,
 		Create:       !cf.Exists,
@@ -328,7 +329,7 @@ func backupTime(unixMilli int64) string {
 func openBackups(st *state.State, cfgs bridge.ClaudeConfigs) {
 	cf := &st.ClaudeCfg
 	list, err := cfgs.ListClaudeConfigBackups(bridge.ReadLayerRequest{
-		Kind: scopeOf(cf.Layer, cf.Sub), Project: cf.Project, Sub: cf.Sub,
+		Kind: scopeOf(cf.Layer, cf.Sub), Project: cf.Project, Sub: cf.Sub, LocalPath: cf.LocalPath,
 	})
 	if err != nil {
 		cf.BackupMsg = err.Error()
