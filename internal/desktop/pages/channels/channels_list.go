@@ -86,7 +86,11 @@ func channelCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.Stat
 							uikit.SoftBadge(c, t, s, "warn", "无 Key")
 						}
 						if cd, ok := cool[ch.ID]; ok {
-							uikit.SoftBadge(c, t, s, "warn", "冷却 "+uikit.CooldownRemainingWord(cd.RemainingSeconds))
+							if cd.HalfOpen {
+								uikit.SoftBadge(c, t, s, "ok", "恢复中")
+							} else {
+								uikit.SoftBadge(c, t, s, "warn", "冷却 "+uikit.CooldownRemainingWord(cd.RemainingSeconds))
+							}
 						}
 					})
 					ui.Text(c, ch.Protocol+" · "+ch.BaseURL).Font(uikit.MonoFont).TextColor(t.TextMuted).SingleLine()

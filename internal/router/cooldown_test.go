@@ -64,8 +64,13 @@ func TestCooldownsTryAcquireAndExpiry(t *testing.T) {
 	if _, ok := c.TryAcquire("ch", now.Add(CooldownServer)); !ok {
 		t.Fatal("after expiry TryAcquire must pass")
 	}
-	// Review Focus 5：过期条目被快照过滤，不留残留
-	if sn := c.Snapshot(now.Add(CooldownServer + time.Second)); len(sn) != 0 {
+	// Review Focus 5：过期条目不留残留——半开探测中以 HalfOpen 条目保留
+	// （B1 起对 UI 可见），探测成功后彻底清除。
+	if sn := c.Snapshot(now.Add(CooldownServer + time.Second)); len(sn) != 1 || !sn[0].HalfOpen {
+		t.Fatalf("probing entry must be visible as half-open: %v", sn)
+	}
+	c.MarkSuccess("ch")
+	if sn := c.Snapshot(now.Add(CooldownServer + 2*time.Second)); len(sn) != 0 {
 		t.Fatalf("expired entries must be filtered: %v", sn)
 	}
 }
@@ -140,5 +145,28 @@ func TestCooldownsHalfOpenFailureExtends(t *testing.T) {
 	}
 	if sn := c.Snapshot(after.Add(time.Second)); len(sn) != 1 {
 		t.Fatalf("snapshot = %v", sn)
+	}
+}
+
+// TestCooldownsSnapshotMarksHalfOpen 覆盖 B1：冷却到期、半开探测中的渠道
+// 留在快照里且 HalfOpen=true（供 UI 显示「恢复中」）；冷却中为 false。
+func TestCooldownsSnapshotMarksHalfOpen(t *testing.T) {
+	c := NewCooldowns()
+	now := time.Now()
+	c.MarkClassified("ch", provider.ClassServer, 0, now)
+	sn := c.Snapshot(now.Add(time.Second))
+	if len(sn) != 1 || sn[0].HalfOpen {
+		t.Fatalf("冷却中条目应 HalfOpen=false：%+v", sn)
+	}
+	if _, ok := c.TryAcquire("ch", now.Add(CooldownServer)); !ok {
+		t.Fatal("到期首个请求应为探测")
+	}
+	sn = c.Snapshot(now.Add(CooldownServer + time.Second))
+	if len(sn) != 1 || !sn[0].HalfOpen {
+		t.Fatalf("半开探测中应保留条目且 HalfOpen=true：%+v", sn)
+	}
+	c.MarkSuccess("ch")
+	if sn := c.Snapshot(now.Add(CooldownServer + 2*time.Second)); len(sn) != 0 {
+		t.Fatalf("探测成功后条目应清除：%+v", sn)
 	}
 }

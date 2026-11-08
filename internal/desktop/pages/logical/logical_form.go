@@ -152,23 +152,31 @@ func hasDanglingTarget(m bridge.ModelView) bool {
 	return false
 }
 
-// coolingChannels 返回 ChannelID→剩余冷却秒数（内存快照）。
-func coolingChannels(st *state.State) map[string]int {
-	out := map[string]int{}
+// coolingChannels 返回 ChannelID→冷却视图（内存快照；HalfOpen=恢复中）。
+func coolingChannels(st *state.State) map[string]bridge.CooldownView {
+	out := map[string]bridge.CooldownView{}
 	for _, cd := range st.Svc.Gateway.Cooldowns() {
-		out[cd.ChannelID] = cd.RemainingSeconds
+		out[cd.ChannelID] = cd
 	}
 	return out
 }
 
-// modelCooling 报告逻辑模型的任一目标渠道是否在冷却中。
-func modelCooling(m bridge.ModelView, cool map[string]int) bool {
+// modelCooldown 报告逻辑模型目标的冷却态：恢复中（任一半开探测中）优先于
+// 冷却中；两者皆无返回空串。
+func modelCooldown(m bridge.ModelView, cool map[string]bridge.CooldownView) string {
+	cooling := false
 	for _, tg := range m.Targets {
-		if _, ok := cool[tg.ChannelID]; ok {
-			return true
+		if cd, ok := cool[tg.ChannelID]; ok {
+			if cd.HalfOpen {
+				return "恢复中"
+			}
+			cooling = true
 		}
 	}
-	return false
+	if cooling {
+		return "冷却中"
+	}
+	return ""
 }
 
 // targetIssue 返回目标链的可见风险：渠道被删=「目标失效」，渠道存在但

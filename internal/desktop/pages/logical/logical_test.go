@@ -260,14 +260,20 @@ func TestTargetIssue(t *testing.T) {
 	}
 }
 
-// TestModelCooling 覆盖冷却徽章：任一目标渠道在冷却中即为 true。
-func TestModelCooling(t *testing.T) {
+// TestModelCooldown 覆盖冷却徽章：任一目标渠道冷却中→「冷却中」；任一
+// 半开探测中→「恢复中」（优先）；无关渠道→空。
+func TestModelCooldown(t *testing.T) {
 	m := bridge.ModelView{Targets: []bridge.TargetView{{ChannelID: "c1"}, {ChannelID: "c2"}}}
-	if modelCooling(m, map[string]int{"c2": 20}) != true {
-		t.Fatal("c2 cooling must flag model")
+	if got := modelCooldown(m, map[string]bridge.CooldownView{"c2": {RemainingSeconds: 20}}); got != "冷却中" {
+		t.Fatalf("c2 cooling = %q", got)
 	}
-	if modelCooling(m, map[string]int{"c3": 20}) {
-		t.Fatal("unrelated cooling must not flag model")
+	if got := modelCooldown(m, map[string]bridge.CooldownView{
+		"c1": {RemainingSeconds: 0, HalfOpen: true}, "c2": {RemainingSeconds: 20},
+	}); got != "恢复中" {
+		t.Fatalf("half-open must win = %q", got)
+	}
+	if got := modelCooldown(m, map[string]bridge.CooldownView{"c3": {RemainingSeconds: 20}}); got != "" {
+		t.Fatalf("unrelated cooling = %q", got)
 	}
 }
 

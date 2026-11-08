@@ -24,6 +24,9 @@ type CooldownEntry struct {
 	ChannelID string
 	Until     time.Time
 	Reason    string // 冷却原因（错误分类原文）
+	// HalfOpen：冷却已到期、半开探测进行中（等待一个探测请求的结果），
+	// 供 UI 显示「恢复中」；Until 为已过去的时间。
+	HalfOpen bool
 }
 
 // Cooldowns 是内存冷却存储：键 = 渠道 ID（渠道是执行单元，冷却跨逻辑模型共享）。
@@ -122,8 +125,10 @@ func (c *Cooldowns) Snapshot(now time.Time) []CooldownEntry {
 	out := make([]CooldownEntry, 0, len(c.m))
 	for id, e := range c.m {
 		if !now.Before(e.Until) {
-			// 半开探测进行中：保留条目，避免后续请求绕过单飞。
 			if _, probing := c.halfOpen[id]; probing {
+				// 半开探测进行中：保留条目（避免后续请求绕过单飞），
+				// 并以 HalfOpen 标记出现在快照里，UI 可显示「恢复中」。
+				out = append(out, CooldownEntry{ChannelID: id, Until: e.Until, Reason: e.Reason, HalfOpen: true})
 				continue
 			}
 			delete(c.m, id)

@@ -161,6 +161,8 @@ type CooldownView struct {
 	ChannelName      string
 	Reason           string
 	RemainingSeconds int
+	// HalfOpen：冷却已到期、半开探测进行中（UI 显示「恢复中」而非倒计时）。
+	HalfOpen bool
 }
 
 // Cooldowns 返回当前未过期的渠道冷却快照（内存态，重启清零）。渠道名从
@@ -188,7 +190,7 @@ func (g Gateway) Cooldowns() []CooldownView {
 			name = e.ChannelID
 		}
 		out = append(out, CooldownView{ChannelID: e.ChannelID, ChannelName: name,
-			Reason: e.Reason, RemainingSeconds: remaining})
+			Reason: e.Reason, RemainingSeconds: remaining, HalfOpen: e.HalfOpen})
 	}
 	return out
 }

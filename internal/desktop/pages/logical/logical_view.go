@@ -84,7 +84,10 @@ func listView(c *ui.Context, st *state.State) {
 							if issue := targetIssue(model); issue != "" {
 								uikit.SoftBadge(c, t, s, "warn", issue)
 							}
-							if modelCooling(model, cool) {
+							switch modelCooldown(model, cool) {
+							case "恢复中":
+								uikit.SoftBadge(c, t, s, "ok", "恢复中")
+							case "冷却中":
 								uikit.SoftBadge(c, t, s, "warn", "冷却中")
 							}
 							switch {
