@@ -57,6 +57,8 @@
 | E2 | 项目选择器搜索 + 最近使用排序：候选列表顶部搜索框（复用 `ui.SearchField`）；最近使用的 3 个项目置顶 | `internal/desktop/pages/access/claude/claudecfg/view.go`、`internal/desktop/state/state.go`（持久化最近项目） | 页面测试：过滤命中；选择后置顶排序 |
 | E3 | 调研（不编码）：MyGo v0.8.3 TextArea 是否支持行号/gutter——查上游仓库与 release notes，结论写回本计划与 CLAUDE.md | 无代码 | 结论记录 |
 
+**E3 结论（2026-11-08）**：MyGo **v0.8.3 为当前最新版本**（`go list -m -versions` 至 v0.8.3 止），`ui.TextArea` 无行号/gutter API；编辑器内部滚动偏移无公开接口，外部自绘行号列无法可靠同步 → **JSON 编辑器行号维持不做**（错误仍以「第 X 行第 Y 列」文本形式给出，已满足定位需求）。若上游未来提供 gutter/scroll-offset 能力再评估。
+
 ## 收尾
 
 | 任务 | 内容 | 验证 |
@@ -73,3 +75,12 @@
 ## 工作量说明
 
 多数任务 2–5 分钟粒度；超限项及原因：A4（zip 组装 + 脱敏扫描测试，约 15 分钟）、C1+C2（加密格式设计与正反测试，合计约 25 分钟）、D3（异步化触点多，约 20 分钟）、D4（对话框 + diff 集成，约 15 分钟）。
+
+## 执行记录（2026-11-08，本批全部完成）
+
+- **子批 A**：A1 `ListRecent(sinceMs)` 下推 SQL + app/bridge `History(since)`；A2 设置页历史切持久化视图 + 时间范围分段（全部/今天/24小时/7天），顺带修复「重启后历史为空」；A3 CSV 导出；A4 诊断包 zip（历史 JSON+CSV/日志/脱敏渠道与逻辑模型清单）；A5 导出菜单三入口。
+- **子批 B**：B1 冷却快照 `HalfOpen`（半开探测条目此前被快照跳过、UI 不可见）；B2 渠道卡/逻辑模型卡「恢复中」徽章；B3 额度阈值告警（本地配额 ≥80%/≥100%，按渠道 24h 去重，OnRecord 10 分钟闸门）。B4（系统通知实机验证）留在人工验收。
+- **子批 C**：C1 口令导出 v2 加密信封（PBKDF2-SHA256 60 万轮 + AES-256-GCM，内层 v1 bundle）；C2 导入口令流（`ErrEncryptedExport` → 口令对话框 → 解密预览）；C3 复制渠道确认框可选同时复制 Key（默认不复制）。
+- **子批 D**：D1 本地层候选路径手动切换（bridge `LocalPath` 既有语义接线）；D2 Skills 扫描告警上浮（目录不可读/清单损坏）；D3 设置页读路径异步化（computeLoad/applyLoad 拆分 + LoadGen 代次 + BusyRow + uitest.AsyncWaiter）；D4 应用接入确认对话框（目标文件与受管键范围先示后写）。
+- **子批 E**：E1 插件行三态分段（跟随下层/启用/停用）；E2 项目选择器搜索 + 最近选择置顶（`RecentProjects`/`RememberProject`）；E3 行号调研结论见上（不做）。
+- **验证**：`go build ./...`、`go vet ./...`、`go test ./...`、`go test -race ./...` 全绿；每任务一个提交。

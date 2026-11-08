@@ -48,6 +48,8 @@ AgentSwitch：面向本地 AI Agent 的**模型 API 网关**——为 Claude Cod
 
 **v0.2.0 发布（2026-11-07）**：mygo.json 版本 0.2.0；三平台产物（darwin dmg / windows 便携 exe——安装包由 CI 的 windows-latest 生成 / linux deb+tar.gz+install.sh+PKGBUILD）；GitHub Release v0.2.0 已发（Tomato-black/AgentSwitch，含发布说明）；GitHub（Tomato-black）与 Gitee（red-kale）双远程 master 同步至 e30f72d；官网（website/，pages.yml 随 push 自动部署）与手册（docs/manual/README.md §2.3/§2.4）已更新。Gitee release 需在网页端手动创建（无 API token）。
 
+**尾款收口批次（2026-11-08，v0.2.1 代码完成、未发版）**：roadmap §2.2 实施状态明细的未做项 + 2026-11-07 设置区/原型对齐遗留的最后一公里，无新产品需求（计划与执行记录 `docs/superpowers/plans/2026-11-08-tail-cleanup-batch.md`，13 个提交；硬约束：网关三入站契约不动、schema 零变更、导出/诊断包不含明文 Key 与 prompt/response 正文；验证 build/vet/test/-race 全绿）。**子批 A（请求历史收尾）**：`ListRecent(sinceMs)` 时间范围下推 SQL + bridge `History(since)`；设置页历史区切**持久化数据源**（顺带修复「重启后历史为空」）+ 时间范围 `uikit.Segmented`（全部/今天/24小时/7天）；`ExportHistory` 支持 CSV（脱敏同 JSON 路径）；诊断包 zip（历史 JSON+CSV、当前日志文件、脱敏渠道/逻辑模型清单）；导出入口改 `ui.PopoverMenuButton` 三项菜单（JSON/CSV/诊断包）。**子批 B（路由状态可见）**：冷却快照条目增 `HalfOpen`——半开探测条目此前被 `Cooldowns.Snapshot` 跳过、UI 不可见；渠道卡/逻辑模型卡区分「冷却 Xm」与「恢复中（待探测）」；额度阈值告警（本地配额 ≥80%/≥100% 按渠道 24h 各一次、OnRecord 10 分钟闸门）；系统通知实机验证（B4）留人工验收。**子批 C（配置安全）**：导出可选口令加密——v2 信封 `{"encrypted":true,"kdf":"pbkdf2-sha256","iterations":600000,…}` + AES-256-GCM（内层 v1 bundle）；导入检测 `encrypted` 标记走口令对话框（`ErrEncryptedExport` → 解密预览），v1 明文包导入不受影响；复制渠道改确认框、可选同时复制 API Key（默认不复制）。**子批 D（设置区遗留清零）**：项目本地层候选路径手动切换（bridge `LocalPath` 既有语义接线）；Skills 扫描错误上浮（目录不可读/清单损坏显示警告、不中断列表）；设置页读路径异步化（computeLoad/applyLoad 拆分 + LoadGen 代次防串 + BusyRow + uitest.AsyncWaiter，主线程只渲染）；应用接入改确认对话框（列出目标文件与受管键变更摘要、敏感值遮蔽，取消不写入）。**子批 E（UI 打磨）**：`enabledPlugins` 三态分段（跟随下层/启用/停用，与 bool 三态一致）；项目选择器搜索（`ui.SearchField`）+ 最近 3 个项目置顶（`RecentProjects`/`RememberProject` 持久化）；**E3 调研结论（JSON 行号不做）**：MyGo v0.8.3 为当前最新版，`ui.TextArea` 无行号/gutter API、滚动偏移无公开接口，外部自绘无法可靠同步——JSON 编辑器行号维持不做，错误仍以「第 X 行第 Y 列」文本定位；上游提供 gutter/scroll-offset 后再评估。**PM 后续分析（同日）**：`docs/product/next-steps-2026-11-08.md`——欠账四类（文档回写/人工验收/发布流程/信任残留）与 ICE 排序（prioritize-features 技能），下一迭代 G1 文档回写 → G2 发版 v0.2.1 → G3 人工验收包 → G4 信任残留小修（C-1 派生刷新失败上浮/C-2 List 吞错渲染空态/C-3 详情页逐目标冷却，可选 C-4 遥测补 ChannelID）；v0.2.1 尚未发版（mygo.json 仍 0.2.0）。
+
 ## 常用命令
 
 ```bash
@@ -117,8 +119,8 @@ P0-A 核心网关（单协议端到端）→ P0-B 账号池与故障转移 → P
 
   ANTHROPIC_BASE_URL=http://127.0.0.1:17890
   ANTHROPIC_AUTH_TOKEN=<gateway-token>
-  ANTHROPIC_MODEL=my-code
-  ANTHROPIC_SMALL_FAST_MODEL=my-code
+  ANTHROPIC_MODEL=mycode[1M]
+  ANTHROPIC_SMALL_FAST_MODEL=mycode
 
 ### 更严格的任务粒度约束
 
