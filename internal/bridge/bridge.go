@@ -145,6 +145,16 @@ func (g Gateway) ExportHistory(format string) (string, error) {
 	return g.A.ExportHistory(filepath.Join(home, ".agentswitch", "exports"), format)
 }
 
+// ExportDiagnostics 打包脱敏诊断包 zip（历史 JSON+CSV、当前日志、渠道/
+// 逻辑模型清单）到 ~/.agentswitch/exports，返回路径。
+func (g Gateway) ExportDiagnostics() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return g.A.ExportDiagnostics(filepath.Join(home, ".agentswitch", "exports"))
+}
+
 // CooldownView 是渠道冷却的 UI 视图：渠道名解析失败时回退 ID。
 type CooldownView struct {
 	ChannelID        string

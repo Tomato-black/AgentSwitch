@@ -3,6 +3,7 @@
 package app
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -475,6 +476,79 @@ func (a *App) ExportHistory(dir, format string) (string, error) {
 	}
 	path := filepath.Join(dir, fmt.Sprintf("request-history-%d.%s", time.Now().UnixMilli(), ext))
 	if err := os.WriteFile(path, b, 0o600); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// ExportDiagnostics 打包脱敏诊断包 zip（请求历史 JSON+CSV、当前日志文件、
+// 渠道与逻辑模型清单）到 dir，返回路径。不含密钥、凭据引用与请求正文。
+func (a *App) ExportDiagnostics(dir string) (string, error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, fmt.Sprintf("diagnostics-%d.zip", time.Now().UnixMilli()))
+	f, err := os.Create(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	zw := zip.NewWriter(f)
+	add := func(name string, b []byte) error {
+		w, err := zw.Create(name)
+		if err != nil {
+			return err
+		}
+		_, err = w.Write(b)
+		return err
+	}
+	recs := a.History(10000, time.Time{})
+	for _, format := range []string{"json", "csv"} {
+		ext, b, err := historyExportBytes(format, a.opts.Version, recs)
+		if err != nil {
+			return "", err
+		}
+		if err := add("request-history."+ext, b); err != nil {
+			return "", err
+		}
+	}
+	if lp := a.LogPath(); lp != "" {
+		if b, err := os.ReadFile(lp); err == nil {
+			if err := add("logs/"+filepath.Base(lp), b); err != nil {
+				return "", err
+			}
+		}
+	}
+	chans, _ := a.Store().Channels().List()
+	channelView := make([]map[string]any, 0, len(chans))
+	for _, ch := range chans {
+		channelView = append(channelView, map[string]any{
+			"name": ch.Name, "protocol": ch.Protocol, "base_url": ch.BaseURL, "enabled": ch.Enabled,
+		})
+	}
+	if b, err := json.MarshalIndent(channelView, "", "  "); err == nil {
+		if err := add("channels.json", b); err != nil {
+			return "", err
+		}
+	}
+	models, _ := a.Store().LogicalModels().List()
+	modelView := make([]map[string]any, 0, len(models))
+	for _, m := range models {
+		targets, _ := a.Store().LogicalModelTargets().ListByModel(m.ID)
+		tv := make([]map[string]any, 0, len(targets))
+		for _, tg := range targets {
+			tv = append(tv, map[string]any{"channel_id": tg.ChannelID, "model": tg.ModelName, "priority": tg.Priority})
+		}
+		modelView = append(modelView, map[string]any{
+			"name": m.Name, "display_name": m.DisplayName, "enabled": m.Enabled, "targets": tv,
+		})
+	}
+	if b, err := json.MarshalIndent(modelView, "", "  "); err == nil {
+		if err := add("logical-models.json", b); err != nil {
+			return "", err
+		}
+	}
+	if err := zw.Close(); err != nil {
 		return "", err
 	}
 	return path, nil

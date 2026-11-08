@@ -243,3 +243,33 @@ func TestSettingsDiagnosticsAtBottom(t *testing.T) {
 		t.Fatalf("diagnostics must be below about: about.Y=%v diag.Y=%v", about.Y, diag.Y)
 	}
 }
+
+// TestSettingsExportMenu 覆盖 A5：导出收敛进菜单，三项分别导出
+// JSON/CSV/诊断包 zip。
+func TestSettingsExportMenu(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	oldCopy := copyPath
+	copyPath = func(string) {}
+	t.Cleanup(func() { copyPath = oldCopy })
+	st, _ := uitest.New(t)
+	st.Page = "settings"
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1200, 2600)
+	if err := tt.Click("导出诊断"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("导出 CSV"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(st.Settings.HistoryMsg, ".csv") {
+		t.Fatalf("CSV 导出消息异常：%q", st.Settings.HistoryMsg)
+	}
+	if err := tt.Click("导出诊断"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("诊断包（zip）"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(st.Settings.HistoryMsg, ".zip") {
+		t.Fatalf("诊断包导出消息异常：%q", st.Settings.HistoryMsg)
+	}
+}

@@ -1,12 +1,15 @@
 package app
 
 import (
+	"archive/zip"
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -608,4 +611,74 @@ func TestExportHistoryCSV(t *testing.T) {
 	if strings.Contains(s, "prompt") || strings.Contains(s, "authorization") {
 		t.Fatalf("CSV 不应含正文/凭据列：%q", s)
 	}
+}
+
+// TestExportDiagnostics 覆盖 A4：诊断包 zip 含历史（JSON+CSV）、当前日志、
+// 渠道与逻辑模型清单；渠道清单不含凭据引用字段。
+func TestExportDiagnostics(t *testing.T) {
+	dir := t.TempDir()
+	path, logPath := filepath.Join(dir, "d.db"), filepath.Join(dir, "d.log")
+	if err := os.WriteFile(logPath, []byte("2026-11-08 fake log line\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a, err := Open(Options{DBPath: path, LogPath: logPath, Host: "127.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { a.Close() })
+	if _, err := a.Store().Channels().Save(storage.Channel{
+		ID: "ch1", Name: "主渠道", Protocol: "anthropic", BaseURL: "https://api.example.com", Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Store().RequestHistory().Add(storage.RequestHistoryRecord{
+		ID: "r1", StartedAt: time.Now().UnixMilli(), Model: "m", Channel: "主渠道", Status: 200,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := a.ExportDiagnostics(filepath.Join(dir, "exports"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.OpenReader(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close()
+	entries := map[string]string{}
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries[f.Name] = string(b)
+	}
+	for _, name := range []string{"request-history.json", "request-history.csv", "logs/d.log", "channels.json", "logical-models.json"} {
+		if _, ok := entries[name]; !ok {
+			t.Fatalf("诊断包缺 %q，实有 %v", name, keysOf(entries))
+		}
+	}
+	if !strings.Contains(entries["logs/d.log"], "fake log line") {
+		t.Fatalf("日志内容缺失：%q", entries["logs/d.log"])
+	}
+	if !strings.Contains(entries["channels.json"], "主渠道") || strings.Contains(entries["channels.json"], "credential") {
+		t.Fatalf("渠道清单异常：%q", entries["channels.json"])
+	}
+	if !strings.Contains(entries["request-history.csv"], "r1") {
+		t.Fatalf("CSV 缺记录：%q", entries["request-history.csv"])
+	}
+}
+
+func keysOf(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

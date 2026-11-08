@@ -307,15 +307,33 @@ func Page(c *ui.Context, st *state.State) {
 							ui.TextInput(c, &st.Settings.HistoryFilter).Width(260).
 								Placeholder("筛选：模型 / 渠道 / 状态")
 							ui.Box(c).Grow(1)
-							if uikit.SoftButton(c, t, s, "gray", "导出诊断").Clicked() {
-								path, err := st.Svc.Gateway.ExportHistory("json")
-								if err != nil {
-									st.Settings.HistoryMsg = "导出诊断失败：" + err.Error()
-								} else {
-									mygo.Clipboard.Write(transfer.TextData(path))
-									st.Settings.HistoryMsg = "诊断已导出（路径已复制）：" + path
+							// 次级导出动作收敛进主题化菜单（键盘 + 读屏支持）。
+							ui.PopoverMenuButton(c, "导出诊断", func(m *ui.Menu) {
+								export := func(format string) {
+									path, err := st.Svc.Gateway.ExportHistory(format)
+									if err != nil {
+										st.Settings.HistoryMsg = "导出失败：" + err.Error()
+										return
+									}
+									copyPath(path)
+									st.Settings.HistoryMsg = "已导出（路径已复制）：" + path
 								}
-							}
+								if m.Item("导出 JSON").Chosen() {
+									export("json")
+								}
+								if m.Item("导出 CSV").Chosen() {
+									export("csv")
+								}
+								if m.Item("诊断包（zip）").Chosen() {
+									path, err := st.Svc.Gateway.ExportDiagnostics()
+									if err != nil {
+										st.Settings.HistoryMsg = "诊断包导出失败：" + err.Error()
+										return
+									}
+									copyPath(path)
+									st.Settings.HistoryMsg = "诊断包已导出（路径已复制）：" + path
+								}
+							})
 						})
 						uikit.Feedback(c, t, uikit.InferFeedback(st.Settings.HistoryMsg), st.Settings.HistoryMsg)
 						if len(st.Settings.Recent) == 0 {
@@ -430,6 +448,10 @@ func recentLine(r telemetry.RequestRecord) string {
 	}
 	return line
 }
+
+// copyPath 把文本写入系统剪贴板。抽成变量是给页面测试留缝：ui.NewTester
+// 无主循环，直接调 mygo.Clipboard.Write 会永久阻塞。
+var copyPath = func(text string) { _ = mygo.Clipboard.Write(transfer.TextData(text)) }
 
 // loadRecent 按当前时间范围窗口加载持久化请求历史（含重启前记录）。
 func loadRecent(st *state.State) {
