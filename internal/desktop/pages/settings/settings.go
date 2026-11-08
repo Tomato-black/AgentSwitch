@@ -6,6 +6,7 @@
 package settings
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"github.com/egoist/mygo/transfer"
 	"github.com/egoist/mygo/ui"
 
+	"AgentSwitch/internal/bridge"
 	"AgentSwitch/internal/config"
 	"AgentSwitch/internal/desktop/state"
 	"AgentSwitch/internal/desktop/uikit"
@@ -190,13 +192,10 @@ func Page(c *ui.Context, st *state.State) {
 								if err != nil {
 									st.Settings.DataMsg = "导出失败：" + err.Error()
 								} else if path != "" {
-									sum, err := st.Svc.Gateway.ExportConfig(path)
-									if err != nil {
-										st.Settings.DataMsg = "导出失败：" + err.Error()
-									} else {
-										st.Settings.DataMsg = fmt.Sprintf("已导出 %d 个渠道、%d 个逻辑模型、%d 个接入配置：%s",
-											sum.Channels, sum.LogicalModels, sum.AccessConfigs, sum.Path)
-									}
+									// 选定路径后弹口令（可选加密）；空口令=明文 v1。
+									st.Settings.ExportPwd = ""
+									st.Settings.ExportPath = path
+									st.Settings.ExportArm = true
 								}
 							}
 							if uikit.SoftButton(c, t, s, "gray", "导入配置").Clicked() {
@@ -205,8 +204,14 @@ func Page(c *ui.Context, st *state.State) {
 									Filters: []mygo.FileFilter{{Name: "JSON", Extensions: []string{"json"}}},
 								})
 								if err == nil && len(paths) > 0 {
-									pre, err := st.Svc.Gateway.PreviewImport(paths[0])
-									if err != nil {
+									st.Settings.ImportPassphrase = ""
+									pre, err := st.Svc.Gateway.PreviewImport(paths[0], "")
+									if errors.Is(err, bridge.ErrEncryptedExport) {
+										// 加密包：弹口令输入，确认后带口令重试预览。
+										st.Settings.ImportPath = paths[0]
+										st.Settings.ImportPwd = ""
+										st.Settings.ImportPassArm = true
+									} else if err != nil {
 										st.Settings.DataMsg = "导入预览失败：" + err.Error()
 									} else {
 										st.Settings.ImportPreview = &pre
@@ -218,6 +223,51 @@ func Page(c *ui.Context, st *state.State) {
 							}
 						})
 						uikit.Feedback(c, t, uikit.InferFeedback(st.Settings.DataMsg), st.Settings.DataMsg)
+						uikit.RichDialog(c, t, uikit.RichDialogOpts{
+							Open:    &st.Settings.ExportArm,
+							Title:   "导出口令（可选）",
+							Subtitle: "留空导出明文 JSON；填写口令则以 AES-256-GCM 加密（分享更安全）",
+							Body: func() {
+								ui.TextInput(c, &st.Settings.ExportPwd).Placeholder("口令").Password()
+							},
+							Actions: []uikit.RichDialogAction{
+								{Label: "取消", Default: true, OnClick: func() { st.Settings.ExportArm = false }},
+								{Label: "导出", Primary: true, OnClick: func() {
+									st.Settings.ExportArm = false
+									sum, err := st.Svc.Gateway.ExportConfig(st.Settings.ExportPath, st.Settings.ExportPwd)
+									if err != nil {
+										st.Settings.DataMsg = "导出失败：" + err.Error()
+									} else {
+										st.Settings.DataMsg = fmt.Sprintf("已导出 %d 个渠道、%d 个逻辑模型、%d 个接入配置：%s",
+											sum.Channels, sum.LogicalModels, sum.AccessConfigs, sum.Path)
+									}
+								}},
+							},
+						})
+						uikit.RichDialog(c, t, uikit.RichDialogOpts{
+							Open:    &st.Settings.ImportPassArm,
+							Title:   "输入导入口令",
+							Subtitle: "该配置文件已加密，需要导出时设置的口令",
+							Body: func() {
+								ui.TextInput(c, &st.Settings.ImportPwd).Placeholder("口令").Password()
+							},
+							Actions: []uikit.RichDialogAction{
+								{Label: "取消", Default: true, OnClick: func() { st.Settings.ImportPassArm = false }},
+								{Label: "解密预览", Primary: true, OnClick: func() {
+									pre, err := st.Svc.Gateway.PreviewImport(st.Settings.ImportPath, st.Settings.ImportPwd)
+									if err != nil {
+										st.Settings.DataMsg = "导入预览失败：" + err.Error()
+										st.Settings.ImportPassArm = false
+										return
+									}
+									st.Settings.ImportPassphrase = st.Settings.ImportPwd
+									st.Settings.ImportPreview = &pre
+									st.Settings.ImportArm = true
+									st.Settings.ImportPassArm = false
+									st.Settings.DataMsg = ""
+								}},
+							},
+						})
 						if st.Settings.ImportArm && st.Settings.ImportPreview != nil {
 							p := st.Settings.ImportPreview
 							ui.Text(c, "导入预览").Bold()
@@ -236,7 +286,7 @@ func Page(c *ui.Context, st *state.State) {
 									st.Settings.ImportPath = ""
 								}
 								if uikit.SoftButton(c, t, s, "act", "确认导入").Clicked() {
-									res, err := st.Svc.Gateway.ApplyImport(st.Settings.ImportPath)
+									res, err := st.Svc.Gateway.ApplyImport(st.Settings.ImportPath, st.Settings.ImportPassphrase)
 									if err != nil {
 										st.Settings.DataMsg = "导入失败：" + err.Error()
 									} else {

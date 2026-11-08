@@ -341,6 +341,14 @@ type SettingsState struct {
 	ImportPreview  *bridge.ImportPreview
 	ImportPath     string
 	ImportArm      bool
+	// 导出口令（可选加密）：文件对话框确定路径后弹口令输入，空=明文 v1。
+	ExportArm bool
+	ExportPath string
+	ExportPwd string
+	// 导入口令：包为 v2 加密信封时弹输入；ImportPassphrase 陪同预览→确认导入。
+	ImportPassArm  bool
+	ImportPwd      string
+	ImportPassphrase string
 	UsageLoaded    bool
 	UsageReport    bridge.UsageReport
 	DailyUsage     []bridge.DailyUsageRow

@@ -1,7 +1,15 @@
 package bridge
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/pbkdf2"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +17,29 @@ import (
 )
 
 const configExportVersion = 1
+
+// 导出加密参数：PBKDF2-HMAC-SHA256（OWASP 2023 建议 60 万轮）+ AES-256-GCM。
+const (
+	exportKDFName      = "pbkdf2-sha256"
+	exportKDFIter      = 600000
+	exportCipherName   = "aes-256-gcm"
+	exportKeyLen       = 32
+)
+
+// ErrEncryptedExport 表示导入文件是口令加密的导出包，需要口令才能解析
+// （UI 据此弹口令输入，而非报错终止）。
+var ErrEncryptedExport = errors.New("配置文件已加密，需要导入口令")
+
+// encryptedEnvelope 是口令导出的外层信封（v2）：内层 ciphertext 解密后
+// 仍是 v1 exportBundle JSON，明文 v1 包无 encrypted 字段、走既有路径。
+type encryptedEnvelope struct {
+	Encrypted  bool   `json:"encrypted"`
+	KDF        string `json:"kdf"`
+	Iterations int    `json:"iterations"`
+	Salt       string `json:"salt"`        // hex
+	Nonce      string `json:"nonce"`       // hex
+	Ciphertext string `json:"ciphertext"`  // base64
+}
 
 // ExportSummary 是一次配置导出的结果。
 type ExportSummary struct {
@@ -74,8 +105,9 @@ type exportAccessConfig struct {
 	Settings     json.RawMessage `json:"settings"`
 }
 
-// ExportConfig 导出版本化配置 JSON；默认不含渠道 Key。
-func (g Gateway) ExportConfig(path string) (ExportSummary, error) {
+// ExportConfig 导出版本化配置 JSON；passphrase 非空时以 PBKDF2 派生密钥
+// AES-256-GCM 加密为 v2 信封（内层仍是 v1 bundle）。默认不含渠道 Key。
+func (g Gateway) ExportConfig(path, passphrase string) (ExportSummary, error) {
 	bundle, sum, err := g.buildExport()
 	if err != nil {
 		return sum, err
@@ -91,7 +123,18 @@ func (g Gateway) ExportConfig(path string) (ExportSummary, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return sum, err
 	}
-	b, err := json.MarshalIndent(bundle, "", "  ")
+	if passphrase == "" {
+		b, err := json.MarshalIndent(bundle, "", "  ")
+		if err != nil {
+			return sum, err
+		}
+		if err := os.WriteFile(path, b, 0o600); err != nil {
+			return sum, err
+		}
+		sum.Path = path
+		return sum, nil
+	}
+	b, err := encryptBundle(bundle, passphrase)
 	if err != nil {
 		return sum, err
 	}
@@ -100,6 +143,76 @@ func (g Gateway) ExportConfig(path string) (ExportSummary, error) {
 	}
 	sum.Path = path
 	return sum, nil
+}
+
+// encryptBundle 把 v1 bundle 加密为 v2 信封 JSON。
+func encryptBundle(bundle exportBundle, passphrase string) ([]byte, error) {
+	plain, err := json.MarshalIndent(bundle, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	salt := make([]byte, 16)
+	if _, err := rand.Read(salt); err != nil {
+		return nil, err
+	}
+	key, err := pbkdf2.Key(sha256.New, passphrase, salt, exportKDFIter, exportKeyLen)
+	if err != nil {
+		return nil, err
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, err
+	}
+	env := encryptedEnvelope{
+		Encrypted: true, KDF: exportKDFName, Iterations: exportKDFIter,
+		Salt: hex.EncodeToString(salt), Nonce: hex.EncodeToString(nonce),
+		Ciphertext: base64.StdEncoding.EncodeToString(gcm.Seal(nil, nonce, plain, nil)),
+	}
+	return json.MarshalIndent(env, "", "  ")
+}
+
+// decryptEnvelope 用口令解密 v2 信封，返回内层 v1 bundle 字节。
+func decryptEnvelope(env encryptedEnvelope, passphrase string) ([]byte, error) {
+	if env.KDF != exportKDFName {
+		return nil, fmt.Errorf("不支持的 KDF %q", env.KDF)
+	}
+	salt, err := hex.DecodeString(env.Salt)
+	if err != nil {
+		return nil, fmt.Errorf("salt 无效：%w", err)
+	}
+	nonce, err := hex.DecodeString(env.Nonce)
+	if err != nil {
+		return nil, fmt.Errorf("nonce 无效：%w", err)
+	}
+	ct, err := base64.StdEncoding.DecodeString(env.Ciphertext)
+	if err != nil {
+		return nil, fmt.Errorf("密文无效：%w", err)
+	}
+	key, err := pbkdf2.Key(sha256.New, passphrase, salt, env.Iterations, exportKeyLen)
+	if err != nil {
+		return nil, err
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	plain, err := gcm.Open(nil, nonce, ct, nil)
+	if err != nil {
+		return nil, errors.New("口令错误或文件已损坏")
+	}
+	return plain, nil
 }
 
 func (g Gateway) buildExport() (exportBundle, ExportSummary, error) {
@@ -186,9 +299,10 @@ func (g Gateway) buildExport() (exportBundle, ExportSummary, error) {
 	return bundle, sum, nil
 }
 
-// PreviewImport 解析导出文件并计算冲突/安全提示，不写库。
-func (g Gateway) PreviewImport(path string) (ImportPreview, error) {
-	bundle, err := loadConfigBundle(path)
+// PreviewImport 解析导出文件并计算冲突/安全提示，不写库。passphrase 用
+// 于口令加密包（明文包传空串）；加密包未给口令返回 ErrEncryptedExport。
+func (g Gateway) PreviewImport(path, passphrase string) (ImportPreview, error) {
+	bundle, err := loadConfigBundle(path, passphrase)
 	if err != nil {
 		return ImportPreview{}, err
 	}
@@ -240,8 +354,9 @@ func (g Gateway) PreviewImport(path string) (ImportPreview, error) {
 }
 
 // ApplyImport 只新增不覆盖：同名渠道/逻辑模型/接入配置跳过并记入 Skipped。
-func (g Gateway) ApplyImport(path string) (ImportSummary, error) {
-	bundle, err := loadConfigBundle(path)
+// passphrase 语义同 PreviewImport。
+func (g Gateway) ApplyImport(path, passphrase string) (ImportSummary, error) {
+	bundle, err := loadConfigBundle(path, passphrase)
 	if err != nil {
 		return ImportSummary{}, err
 	}
@@ -355,10 +470,23 @@ func (g Gateway) ApplyImport(path string) (ImportSummary, error) {
 	return res, nil
 }
 
-func loadConfigBundle(path string) (exportBundle, error) {
+// loadConfigBundle 读导出文件：v2 加密信封先按口令解密（未给口令报
+// ErrEncryptedExport），再按 v1 bundle 解析。
+func loadConfigBundle(path, passphrase string) (exportBundle, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return exportBundle{}, err
+	}
+	var probe encryptedEnvelope
+	if json.Unmarshal(b, &probe) == nil && probe.Encrypted {
+		if passphrase == "" {
+			return exportBundle{}, ErrEncryptedExport
+		}
+		plain, err := decryptEnvelope(probe, passphrase)
+		if err != nil {
+			return exportBundle{}, err
+		}
+		b = plain
 	}
 	var bundle exportBundle
 	if err := json.Unmarshal(b, &bundle); err != nil {
