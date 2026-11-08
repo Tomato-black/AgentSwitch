@@ -10,6 +10,7 @@ import (
 	"AgentSwitch/internal/bridge"
 	"AgentSwitch/internal/config"
 	"AgentSwitch/internal/desktop/uitest"
+	"AgentSwitch/internal/storage"
 	"AgentSwitch/internal/telemetry"
 )
 
@@ -115,7 +116,8 @@ func TestAttemptLine(t *testing.T) {
 func TestRecentAttemptsRender(t *testing.T) {
 	st, _ := uitest.New(t)
 	st.Page = "settings"
-	st.Recent = []telemetry.RequestRecord{{
+	st.Settings.RecentLoaded = true
+	st.Settings.Recent = []telemetry.RequestRecord{{
 		ID: "r1", Model: "my-code", Channel: "A", Status: 200, StartedAt: time.Now(),
 		Attempts: []telemetry.AttemptRecord{{Channel: "A", Model: "m1", Outcome: "cooling_skip", Reason: "cooling:rate_limited"}},
 	}}
@@ -128,7 +130,8 @@ func TestRecentAttemptsRender(t *testing.T) {
 
 func TestSettingsHistoryFilter(t *testing.T) {
 	st, _ := uitest.New(t)
-	st.Recent = []telemetry.RequestRecord{
+	st.Settings.RecentLoaded = true
+	st.Settings.Recent = []telemetry.RequestRecord{
 		{ID: "a", Model: "my-code", Channel: "main", Status: 200},
 		{ID: "b", Model: "other", Channel: "backup", Status: 429},
 	}
@@ -136,6 +139,38 @@ func TestSettingsHistoryFilter(t *testing.T) {
 	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1200, 1000)
 	if !tt.HasText("my-code") || tt.HasText("other") {
 		t.Fatalf("筛选未生效：%v", tt.Texts())
+	}
+}
+
+// TestSettingsRecentWindowSwitch 覆盖时间范围切换：设置页「最近请求」读
+// 持久化历史（含重启前记录），切「7天」后窗口外记录消失、切回「全部」重现。
+func TestSettingsRecentWindowSwitch(t *testing.T) {
+	st, a := uitest.New(t)
+	st.Page = "settings"
+	now := time.Now()
+	for _, rec := range []storage.RequestHistoryRecord{
+		{ID: "old", StartedAt: now.Add(-10 * 24 * time.Hour).UnixMilli(), Model: "old-model", Channel: "c", Status: 200},
+		{ID: "fresh", StartedAt: now.Add(-time.Hour).UnixMilli(), Model: "fresh-model", Channel: "c", Status: 200},
+	} {
+		if err := a.Store().RequestHistory().Add(rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1200, 2600)
+	if !tt.HasText("old-model") || !tt.HasText("fresh-model") {
+		t.Fatalf("初始应显示全部持久化记录：%v", tt.Texts())
+	}
+	if err := tt.Click("7天"); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Settings.Recent) != 1 || st.Settings.Recent[0].ID != "fresh" {
+		t.Fatalf("7天窗口应只留 1 小时前记录：%+v", st.Settings.Recent)
+	}
+	if err := tt.Click("全部"); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Settings.Recent) != 2 {
+		t.Fatalf("切回全部应重现旧记录：%+v", st.Settings.Recent)
 	}
 }
 

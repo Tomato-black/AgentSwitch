@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/transfer"
@@ -67,6 +68,9 @@ func Page(c *ui.Context, st *state.State) {
 	}
 	if !st.Settings.UsageLoaded {
 		loadUsage(st)
+	}
+	if !st.Settings.RecentLoaded {
+		loadRecent(st)
 	}
 	if !st.Settings.AlertsLoaded {
 		st.Settings.AlertsOn = st.Svc.Gateway.AlertsEnabled()
@@ -297,6 +301,9 @@ func Page(c *ui.Context, st *state.State) {
 						}
 						ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 							ui.Text(c, "最近请求").Bold()
+							if uikit.Segmented(c, t, s, &st.Settings.RecentWindow, "全部", "今天", "24小时", "7天").Changed() {
+								loadRecent(st)
+							}
 							ui.TextInput(c, &st.Settings.HistoryFilter).Width(260).
 								Placeholder("筛选：模型 / 渠道 / 状态")
 							ui.Box(c).Grow(1)
@@ -311,13 +318,13 @@ func Page(c *ui.Context, st *state.State) {
 							}
 						})
 						uikit.Feedback(c, t, uikit.InferFeedback(st.Settings.HistoryMsg), st.Settings.HistoryMsg)
-						if len(st.Recent) == 0 {
+						if len(st.Settings.Recent) == 0 {
 							ui.Text(c, "还没有请求记录——Agent 发起请求后会显示在这里").TextColor(t.TextMuted)
 						}
 						ui.Text(c, "点击一条记录展开尝试链（渠道/模型/跳过原因）").TextColor(t.TextMuted)
 						filter := strings.TrimSpace(st.Settings.HistoryFilter)
-						filtered := make([]telemetry.RequestRecord, 0, len(st.Recent))
-						for _, r := range st.Recent {
+						filtered := make([]telemetry.RequestRecord, 0, len(st.Settings.Recent))
+						for _, r := range st.Settings.Recent {
 							if filter == "" || strings.Contains(r.Model, filter) ||
 								strings.Contains(r.Channel, filter) ||
 								strings.Contains(fmt.Sprint(r.Status), filter) {
@@ -422,6 +429,22 @@ func recentLine(r telemetry.RequestRecord) string {
 		line += " · 流"
 	}
 	return line
+}
+
+// loadRecent 按当前时间范围窗口加载持久化请求历史（含重启前记录）。
+func loadRecent(st *state.State) {
+	var since time.Time
+	switch st.Settings.RecentWindow {
+	case 1: // 今天：当地零点起
+		now := time.Now()
+		since = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	case 2:
+		since = time.Now().Add(-24 * time.Hour)
+	case 3:
+		since = time.Now().Add(-7 * 24 * time.Hour)
+	}
+	st.Settings.Recent = st.Svc.Gateway.History(100, since)
+	st.Settings.RecentLoaded = true
 }
 
 // loadUsage 刷新 30 天用量报告与价格表原文。

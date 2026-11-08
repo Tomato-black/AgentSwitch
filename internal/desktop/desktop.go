@@ -254,6 +254,11 @@ func Run(a *app.App) error {
 					if len(u.Recent) > 100 {
 						u.Recent = u.Recent[:100]
 					}
+					// 设置页「最近请求」读持久化视图，同样头插保持实时。
+					u.Settings.Recent = append([]telemetry.RequestRecord{rec}, u.Settings.Recent...)
+					if len(u.Settings.Recent) > 100 {
+						u.Settings.Recent = u.Settings.Recent[:100]
+					}
 				})
 			}
 		})

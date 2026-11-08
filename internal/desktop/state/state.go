@@ -352,6 +352,9 @@ type SettingsState struct {
 	UsageMsg       string
 	AlertsOn       bool
 	AlertsLoaded   bool
+	Recent         []telemetry.RequestRecord // 最近请求（持久化历史，含重启前记录；区别于内存环 Recent）
+	RecentWindow   int                       // 时间范围：0=全部 1=今天 2=24小时 3=7天
+	RecentLoaded   bool
 	RecentOpen     string // 展开尝试链的请求 ID（空=全部收起）
 	PassthroughOn  bool   // 透传未登记模型开关（预留：SaveSettings 不消费）
 }
