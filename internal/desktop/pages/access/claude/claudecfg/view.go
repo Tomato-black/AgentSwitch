@@ -316,11 +316,14 @@ func load(st *state.State, cfgs bridge.ClaudeConfigs) {
 		cf.MergeText = pretty(merged)
 		cf.MergeEntries = entries
 	}
-	skills, skillErr := cfgs.ListClaudeSkills(cf.Project)
+	skills, skillWarns, skillErr := cfgs.ListClaudeSkills(cf.Project)
 	cf.Skills = skills
-	if skillErr != nil {
+	switch {
+	case skillErr != nil:
 		cf.SkillErr = skillErr.Error()
-	} else {
+	case len(skillWarns) > 0:
+		cf.SkillErr = strings.Join(skillWarns, "；")
+	default:
 		cf.SkillErr = ""
 	}
 	syncInputs(cf)

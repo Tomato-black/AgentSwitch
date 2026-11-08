@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"AgentSwitch/internal/claudecfg"
@@ -39,7 +40,7 @@ func TestListClaudeSkillsSources(t *testing.T) {
 	}
 
 	cfgs := ClaudeConfigs{A: tempApp(t), Home: home}
-	got, err := cfgs.ListClaudeSkills(project)
+	got, _, err := cfgs.ListClaudeSkills(project)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +67,7 @@ func TestListClaudeSkillsSources(t *testing.T) {
 
 func TestListClaudeSkillsMissingDirs(t *testing.T) {
 	cfgs := ClaudeConfigs{A: tempApp(t), Home: t.TempDir()}
-	got, err := cfgs.ListClaudeSkills("")
+	got, _, err := cfgs.ListClaudeSkills("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,5 +206,54 @@ func TestClaudeEnvPassesRuntimeGOOS(t *testing.T) {
 	env := claudeEnv("/tmp/home")
 	if env.Home != "/tmp/home" || env.GOOS != runtime.GOOS {
 		t.Fatalf("env = %#v", env)
+	}
+}
+
+// TestListClaudeSkillsScanWarnings 覆盖 D2：目录缺失静默；目录存在但不可读、
+// installed_plugins.json 损坏时上浮为告警（列表仍返回），Skill.md 缺失的
+// 子目录不计。
+func TestListClaudeSkillsScanWarnings(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	home := t.TempDir()
+	// 用户 Skills 目录存在但无读权限 → 告警。
+	skillsDir := filepath.Join(home, ".claude", "skills")
+	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(skillsDir, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(skillsDir, 0o755) })
+	// installed_plugins.json 损坏 → 告警。
+	if err := os.MkdirAll(filepath.Join(home, ".claude", "plugins"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".claude", "plugins", "installed_plugins.json"), []byte("{bad"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfgs := ClaudeConfigs{A: tempApp(t), Home: home}
+	got, warns, err := cfgs.ListClaudeSkills("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) == 0 {
+		t.Fatal("内置 Skills 仍应返回")
+	}
+	if len(warns) != 2 {
+		t.Fatalf("warns = %v", warns)
+	}
+	foundDir, foundJSON := false, false
+	for _, w := range warns {
+		if strings.Contains(w, "skills") && strings.Contains(w, "不可读") {
+			foundDir = true
+		}
+		if strings.Contains(w, "installed_plugins.json") {
+			foundJSON = true
+		}
+	}
+	if !foundDir || !foundJSON {
+		t.Fatalf("warns = %v", warns)
 	}
 }

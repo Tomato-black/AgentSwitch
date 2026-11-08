@@ -41,20 +41,28 @@ var builtinSkillCatalog = []SkillView{
 }
 
 // ListClaudeSkills 扫描内置、用户、项目与插件来源的 Skills，并计算有效状态。
-func (s ClaudeConfigs) ListClaudeSkills(project string) ([]SkillView, error) {
+// 目录缺失静默；目录存在但不可读、installed_plugins.json 损坏等扫描异常以
+// warns 上浮（列表照常返回，D2）。
+func (s ClaudeConfigs) ListClaudeSkills(project string) (skills []SkillView, warns []string, err error) {
 	home, err := s.home()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	layers := s.claudeLayers(home, project)
 	pluginEnabled := mergedPluginEnabled(layers)
 
-	skills := append([]SkillView(nil), builtinSkillCatalog...)
-	skills = append(skills, scanSkillDir(filepath.Join(home, ".claude", "skills"), claudecfg.SkillSourceUser)...)
+	skills = append([]SkillView(nil), builtinSkillCatalog...)
+	userSkills, userWarns := scanSkillDirSafe(filepath.Join(home, ".claude", "skills"), claudecfg.SkillSourceUser)
+	skills = append(skills, userSkills...)
+	warns = append(warns, userWarns...)
 	if project != "" {
-		skills = append(skills, scanSkillDir(filepath.Join(project, ".claude", "skills"), claudecfg.SkillSourceProject)...)
+		projSkills, projWarns := scanSkillDirSafe(filepath.Join(project, ".claude", "skills"), claudecfg.SkillSourceProject)
+		skills = append(skills, projSkills...)
+		warns = append(warns, projWarns...)
 	}
-	skills = append(skills, scanPluginSkills(home)...)
+	pluginSkills, pluginWarns := scanPluginSkills(home)
+	skills = append(skills, pluginSkills...)
+	warns = append(warns, pluginWarns...)
 
 	seen := map[string]bool{}
 	for i := range skills {
@@ -81,7 +89,7 @@ func (s ClaudeConfigs) ListClaudeSkills(project string) ([]SkillView, error) {
 		}
 		return skills[i].Name < skills[j].Name
 	})
-	return skills, nil
+	return skills, warns, nil
 }
 
 // claudeLayers 读取参与合并的各层文档：user → project → local → managed。
@@ -197,10 +205,15 @@ func mergedPluginEnabled(layers []claudecfg.Layer) map[string]bool {
 	return out
 }
 
-func scanSkillDir(dir string, source claudecfg.SkillSource) []SkillView {
+// scanSkillDirSafe 扫描一个 Skills 目录：目录/清单缺失静默（正常态），
+// 存在但不可读时上浮告警；无 SKILL.md 的子目录跳过不计。
+func scanSkillDirSafe(dir string, source claudecfg.SkillSource) ([]SkillView, []string) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil
+		if !os.IsNotExist(err) {
+			return nil, []string{"Skills 目录不可读（" + dir + "）：" + err.Error()}
+		}
+		return nil, nil
 	}
 	var out []SkillView
 	for _, e := range entries {
@@ -217,17 +230,18 @@ func scanSkillDir(dir string, source claudecfg.SkillSource) []SkillView {
 			Name: name, Description: desc, Source: source, Effective: claudecfg.SkillOn, LockedBy: locked,
 		})
 	}
-	return out
+	return out, nil
 }
 
-func scanPluginSkills(home string) []SkillView {
-	b, err := os.ReadFile(filepath.Join(home, ".claude", "plugins", "installed_plugins.json"))
+func scanPluginSkills(home string) ([]SkillView, []string) {
+	manifest := filepath.Join(home, ".claude", "plugins", "installed_plugins.json")
+	b, err := os.ReadFile(manifest)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	var file installedPluginsFile
 	if err := json.Unmarshal(b, &file); err != nil {
-		return nil
+		return nil, []string{"installed_plugins.json 解析失败（skills 未加载插件来源）：" + err.Error()}
 	}
 	var out []SkillView
 	for pluginID, installs := range file.Plugins {
@@ -238,13 +252,15 @@ func scanPluginSkills(home string) []SkillView {
 		if i := strings.Index(pluginName, "@"); i >= 0 {
 			pluginName = pluginName[:i]
 		}
-		for _, skill := range scanSkillDir(filepath.Join(installs[0].InstallPath, "skills"), claudecfg.SkillSourcePlugin) {
+		// 插件安装目录异常按静默处理（未安装插件是常见态）。
+		skills, _ := scanSkillDirSafe(filepath.Join(installs[0].InstallPath, "skills"), claudecfg.SkillSourcePlugin)
+		for _, skill := range skills {
 			skill.Name = pluginName + ":" + skill.Name
 			skill.PluginID = pluginID
 			out = append(out, skill)
 		}
 	}
-	return out
+	return out, nil
 }
 
 func parseSkillFile(raw, fallbackName string) (name, desc, lockedBy string) {
