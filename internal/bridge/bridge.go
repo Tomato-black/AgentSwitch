@@ -135,13 +135,14 @@ func (g Gateway) History(limit int, since time.Time) []telemetry.RequestRecord {
 	return g.A.History(limit, since)
 }
 
-// ExportHistory 把请求历史导出为脱敏 JSON 到 ~/.agentswitch/exports，返回路径。
-func (g Gateway) ExportHistory() (string, error) {
+// ExportHistory 把请求历史导出为脱敏文件（format "json"/"csv"）到
+// ~/.agentswitch/exports，返回路径。
+func (g Gateway) ExportHistory(format string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return g.A.ExportHistory(filepath.Join(home, ".agentswitch", "exports"))
+	return g.A.ExportHistory(filepath.Join(home, ".agentswitch", "exports"), format)
 }
 
 // CooldownView 是渠道冷却的 UI 视图：渠道名解析失败时回退 ID。

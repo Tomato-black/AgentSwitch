@@ -568,3 +568,44 @@ func TestHistoryRetentionSevenDays(t *testing.T) {
 		t.Fatalf("retention kept = %+v", got)
 	}
 }
+
+// TestExportHistoryCSV 覆盖 A3：CSV 导出含表头与字段行，attempt 链以紧凑
+// 摘要呈现，且不含 prompt/response 正文列。
+func TestExportHistoryCSV(t *testing.T) {
+	dir := t.TempDir()
+	path, logPath := filepath.Join(dir, "d.db"), filepath.Join(dir, "d.log")
+	a, err := Open(Options{DBPath: path, LogPath: logPath, Host: "127.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { a.Close() })
+	if err := a.Store().RequestHistory().Add(storage.RequestHistoryRecord{
+		ID: "r1", StartedAt: time.Now().UnixMilli(), Model: "my-code", Channel: "main",
+		Status: 429, DurationMs: 88, FailoverCount: 1, Streaming: true,
+		InputTokens: 10, OutputTokens: 20, ErrorClass: "rate_limited",
+		Attempts: []storage.RequestAttempt{{Channel: "main", Model: "u1", Outcome: "cooling_skip", Reason: "rate_limited"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "exports")
+	p, err := a.ExportHistory(out, "csv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	if !strings.HasPrefix(s, "id,started_at,model,upstream_model,channel,status,duration_ms,failover_count,streaming,input_tokens,output_tokens,error_class,attempts\n") {
+		t.Fatalf("CSV header = %q", s)
+	}
+	for _, want := range []string{"r1", "my-code", "main", "429", "88", "true", "10", "20", "rate_limited", "main|u1|cooling_skip|rate_limited"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("CSV 缺 %q：%q", want, s)
+		}
+	}
+	if strings.Contains(s, "prompt") || strings.Contains(s, "authorization") {
+		t.Fatalf("CSV 不应含正文/凭据列：%q", s)
+	}
+}

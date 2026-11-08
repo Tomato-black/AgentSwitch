@@ -3,8 +3,10 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -12,6 +14,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -458,27 +462,58 @@ func (a *App) History(limit int, since time.Time) []telemetry.RequestRecord {
 	return out
 }
 
-// ExportHistory 把最近请求导出为脱敏 JSON 到 dir，返回文件路径。
-// 不包含 prompt/response 正文、Authorization 或密钥。
-func (a *App) ExportHistory(dir string) (string, error) {
+// ExportHistory 把最近请求导出为脱敏文件到 dir，返回文件路径；format 为
+// "json"（默认）或 "csv"。不包含 prompt/response 正文、Authorization 或密钥。
+func (a *App) ExportHistory(dir, format string) (string, error) {
 	recs := a.History(10000, time.Time{})
-	payload := struct {
-		ExportedAt time.Time                 `json:"exported_at"`
-		Version    string                    `json:"version"`
-		Records    []telemetry.RequestRecord `json:"records"`
-	}{time.Now(), a.opts.Version, recs}
-	b, err := json.MarshalIndent(payload, "", "  ")
-	if err != nil {
-		return "", err
-	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
-	path := filepath.Join(dir, fmt.Sprintf("request-history-%d.json", time.Now().UnixMilli()))
+	ext, b, err := historyExportBytes(format, a.opts.Version, recs)
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, fmt.Sprintf("request-history-%d.%s", time.Now().UnixMilli(), ext))
 	if err := os.WriteFile(path, b, 0o600); err != nil {
 		return "", err
 	}
 	return path, nil
+}
+
+// historyExportBytes 把记录编码为导出字节：JSON 保持既有信封结构；CSV 每行
+// 一条请求，attempt 链以 channel|model|outcome|reason 紧凑摘要呈现。
+func historyExportBytes(format, version string, recs []telemetry.RequestRecord) (string, []byte, error) {
+	if format != "csv" {
+		payload := struct {
+			ExportedAt time.Time                 `json:"exported_at"`
+			Version    string                    `json:"version"`
+			Records    []telemetry.RequestRecord `json:"records"`
+		}{time.Now(), version, recs}
+		b, err := json.MarshalIndent(payload, "", "  ")
+		return "json", b, err
+	}
+	var buf bytes.Buffer
+	w := csv.NewWriter(&buf)
+	if err := w.Write([]string{"id", "started_at", "model", "upstream_model", "channel",
+		"status", "duration_ms", "failover_count", "streaming",
+		"input_tokens", "output_tokens", "error_class", "attempts"}); err != nil {
+		return "", nil, err
+	}
+	for _, r := range recs {
+		attempts := make([]string, 0, len(r.Attempts))
+		for _, at := range r.Attempts {
+			attempts = append(attempts, strings.Join([]string{at.Channel, at.Model, at.Outcome, at.Reason}, "|"))
+		}
+		row := []string{r.ID, r.StartedAt.Format(time.RFC3339), r.Model, r.UpstreamModel, r.Channel,
+			strconv.Itoa(r.Status), strconv.FormatInt(r.DurationMs, 10), strconv.Itoa(r.FailoverCount),
+			strconv.FormatBool(r.Streaming), strconv.Itoa(r.InputTokens), strconv.Itoa(r.OutputTokens),
+			r.ErrorClass, strings.Join(attempts, "; ")}
+		if err := w.Write(row); err != nil {
+			return "", nil, err
+		}
+	}
+	w.Flush()
+	return "csv", buf.Bytes(), w.Error()
 }
 
 func historyToStorage(rec telemetry.RequestRecord) storage.RequestHistoryRecord {

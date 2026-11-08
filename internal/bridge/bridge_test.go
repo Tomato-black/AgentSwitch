@@ -117,7 +117,7 @@ func TestGatewayHistoryAndExport(t *testing.T) {
 		t.Fatalf("History(since=now) = %+v", got)
 	}
 	t.Setenv("HOME", t.TempDir())
-	path, err := g.ExportHistory()
+	path, err := g.ExportHistory("json")
 	if err != nil {
 		t.Fatal(err)
 	}

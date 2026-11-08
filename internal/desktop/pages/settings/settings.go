@@ -308,7 +308,7 @@ func Page(c *ui.Context, st *state.State) {
 								Placeholder("筛选：模型 / 渠道 / 状态")
 							ui.Box(c).Grow(1)
 							if uikit.SoftButton(c, t, s, "gray", "导出诊断").Clicked() {
-								path, err := st.Svc.Gateway.ExportHistory()
+								path, err := st.Svc.Gateway.ExportHistory("json")
 								if err != nil {
 									st.Settings.HistoryMsg = "导出诊断失败：" + err.Error()
 								} else {
