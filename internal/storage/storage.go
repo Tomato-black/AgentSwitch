@@ -116,10 +116,11 @@ type DailyUsage struct {
 	InputTokens, OutputTokens int64
 }
 
-// RequestHistoryRepo 读写 request_history 表；ListRecent 按时间新→旧。
+// RequestHistoryRepo 读写 request_history 表；ListRecent 按时间新→旧，
+// sinceMs <= 0 表示不限时间范围。
 type RequestHistoryRepo interface {
 	Add(rec RequestHistoryRecord) error
-	ListRecent(limit int) ([]RequestHistoryRecord, error)
+	ListRecent(limit int, sinceMs int64) ([]RequestHistoryRecord, error)
 	DeleteOlderThan(cutoffMs int64) (int64, error)
 	UsageByChannelModel(sinceMs int64) ([]UsageAggregate, error)
 	UsageByDay(sinceMs int64) ([]DailyUsage, error)

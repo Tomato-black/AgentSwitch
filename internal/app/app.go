@@ -403,7 +403,7 @@ func (a *App) startHistory() {
 	if _, err := a.store.RequestHistory().DeleteOlderThan(time.Now().Add(-historyRetention).UnixMilli()); err != nil {
 		a.log.Warn("request history retention failed", "err", err.Error())
 	}
-	if recs, err := a.store.RequestHistory().ListRecent(100); err == nil {
+	if recs, err := a.store.RequestHistory().ListRecent(100, 0); err == nil {
 		for i := len(recs) - 1; i >= 0; i-- {
 			a.ring.Add(historyFromStorage(recs[i]))
 		}
@@ -440,9 +440,14 @@ func (a *App) stopHistory() {
 	})
 }
 
-// History 返回持久化的最近请求（新→旧）；失败返回 nil。
-func (a *App) History(limit int) []telemetry.RequestRecord {
-	recs, err := a.store.RequestHistory().ListRecent(limit)
+// History 返回持久化的最近请求（新→旧）；since 为零值表示不限时间，
+// 失败返回 nil。
+func (a *App) History(limit int, since time.Time) []telemetry.RequestRecord {
+	var sinceMs int64
+	if !since.IsZero() {
+		sinceMs = since.UnixMilli()
+	}
+	recs, err := a.store.RequestHistory().ListRecent(limit, sinceMs)
 	if err != nil {
 		return nil
 	}
@@ -456,7 +461,7 @@ func (a *App) History(limit int) []telemetry.RequestRecord {
 // ExportHistory 把最近请求导出为脱敏 JSON 到 dir，返回文件路径。
 // 不包含 prompt/response 正文、Authorization 或密钥。
 func (a *App) ExportHistory(dir string) (string, error) {
-	recs := a.History(10000)
+	recs := a.History(10000, time.Time{})
 	payload := struct {
 		ExportedAt time.Time                 `json:"exported_at"`
 		Version    string                    `json:"version"`

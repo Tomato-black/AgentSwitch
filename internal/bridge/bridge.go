@@ -129,8 +129,11 @@ func (g Gateway) Setup() SetupStatus {
 	return s
 }
 
-// History 返回持久化的最近请求（新→旧），供设置页筛选与诊断。
-func (g Gateway) History(limit int) []telemetry.RequestRecord { return g.A.History(limit) }
+// History 返回持久化的最近请求（新→旧）；since 为零值表示不限时间，
+// 供设置页筛选与诊断。
+func (g Gateway) History(limit int, since time.Time) []telemetry.RequestRecord {
+	return g.A.History(limit, since)
+}
 
 // ExportHistory 把请求历史导出为脱敏 JSON 到 ~/.agentswitch/exports，返回路径。
 func (g Gateway) ExportHistory() (string, error) {

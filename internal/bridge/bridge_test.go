@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"AgentSwitch/internal/app"
 	"AgentSwitch/internal/storage"
@@ -108,9 +109,12 @@ func TestGatewayHistoryAndExport(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	got := g.History(10)
+	got := g.History(10, time.Time{})
 	if len(got) != 1 || got[0].ID != "r1" {
 		t.Fatalf("History = %+v", got)
+	}
+	if got := g.History(10, time.Now()); len(got) != 0 {
+		t.Fatalf("History(since=now) = %+v", got)
 	}
 	t.Setenv("HOME", t.TempDir())
 	path, err := g.ExportHistory()

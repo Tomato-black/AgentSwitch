@@ -24,12 +24,18 @@ func (r *requestHistoryRepo) Add(rec RequestHistoryRecord) error {
 	return err
 }
 
-func (r *requestHistoryRepo) ListRecent(limit int) ([]RequestHistoryRecord, error) {
+func (r *requestHistoryRepo) ListRecent(limit int, sinceMs int64) ([]RequestHistoryRecord, error) {
 	if limit <= 0 {
 		limit = 100
 	}
+	where := ""
+	args := []any{limit}
+	if sinceMs > 0 {
+		where = ` WHERE started_at >= ?`
+		args = append([]any{sinceMs}, limit)
+	}
 	rows, err := r.db.Query(`SELECT `+requestHistoryCols+`
-		FROM request_history ORDER BY started_at DESC, rowid DESC LIMIT ?`, limit)
+		FROM request_history`+where+` ORDER BY started_at DESC, rowid DESC LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}

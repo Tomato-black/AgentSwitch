@@ -66,7 +66,7 @@ func (g Gateway) DurationSeries(days, limit int) []DurationPoint {
 		limit = 500
 	}
 	since := time.Now().Add(-time.Duration(days) * 24 * time.Hour).UnixMilli()
-	recs, err := g.A.Store().RequestHistory().ListRecent(limit)
+	recs, err := g.A.Store().RequestHistory().ListRecent(limit, since)
 	if err != nil {
 		return nil
 	}

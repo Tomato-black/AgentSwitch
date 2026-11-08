@@ -110,7 +110,7 @@ func TestRequestHistoryRepoRoundTripAndRetention(t *testing.T) {
 	if err := r.Add(RequestHistoryRecord{ID: "new", StartedAt: 2000, Model: "m2", Channel: "c2", Status: 429}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := r.ListRecent(10)
+	got, err := r.ListRecent(10, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,9 +124,34 @@ func TestRequestHistoryRepoRoundTripAndRetention(t *testing.T) {
 	if err != nil || n != 1 {
 		t.Fatalf("DeleteOlderThan = %d, %v", n, err)
 	}
-	got, _ = r.ListRecent(10)
+	got, _ = r.ListRecent(10, 0)
 	if len(got) != 1 || got[0].ID != "new" {
 		t.Fatalf("after delete = %+v", got)
+	}
+}
+
+func TestRequestHistoryListRecentSince(t *testing.T) {
+	s := tempStore(t)
+	r := s.RequestHistory()
+	for _, rec := range []RequestHistoryRecord{
+		{ID: "a", StartedAt: 1000, Model: "m", Channel: "c", Status: 200},
+		{ID: "b", StartedAt: 2000, Model: "m", Channel: "c", Status: 200},
+		{ID: "c", StartedAt: 3000, Model: "m", Channel: "c", Status: 200},
+	} {
+		if err := r.Add(rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := r.ListRecent(10, 1500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].ID != "c" || got[1].ID != "b" {
+		t.Fatalf("ListRecent(since) = %+v", got)
+	}
+	got, err = r.ListRecent(2, 0)
+	if err != nil || len(got) != 2 || got[0].ID != "c" {
+		t.Fatalf("ListRecent(no since, limit) = %+v, %v", got, err)
 	}
 }
 
