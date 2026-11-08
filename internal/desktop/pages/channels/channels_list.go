@@ -118,18 +118,7 @@ func channelCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.Stat
 				st.Svc.Channels.SetEnabled(ch.ID, !ch.Enabled)
 			}
 			if uikit.SoftButton(c, t, s, "gray", "复制").Clicked() {
-				v, err := st.Svc.Channels.Copy(ch.ID, false)
-				if err != nil {
-					st.Channels.TestMsg = "复制失败：" + err.Error()
-				} else {
-					msg := "已复制渠道「" + v.Name + "」（不含 Key）"
-					if st.Svc.Logical != nil {
-						if models, err := st.Svc.Logical.AddCopyToReferencing(ch.ID, v.ID); err == nil && len(models) > 0 {
-							msg += "；已加入目标链：" + strings.Join(models, "、")
-						}
-					}
-					st.Channels.TestMsg = msg + "；请填写 Key"
-				}
+				armChannelCopy(st, ch.ID, nil)
 			}
 		})
 	})

@@ -127,19 +127,7 @@ func detailView(c *ui.Context, st *state.State) {
 				if dirty {
 					copyBtn.Disabled(true)
 				} else if copyBtn.Clicked() {
-					v, err := st.Svc.Channels.Copy(d.ID, false)
-					if err != nil {
-						st.Channels.TestMsg = "复制失败：" + err.Error()
-					} else {
-						msg := "已复制渠道（不含 Key）"
-						if st.Svc.Logical != nil {
-							if models, err := st.Svc.Logical.AddCopyToReferencing(d.ID, v.ID); err == nil && len(models) > 0 {
-								msg += "；已加入目标链：" + strings.Join(models, "、")
-							}
-						}
-						openDetail(st, v.ID)
-						st.Channels.TestMsg = msg + "；请填写新 Key 后保存"
-					}
+					armChannelCopy(st, d.ID, func(st *state.State, newID string) { openDetail(st, newID) })
 				}
 				ui.Box(c).Grow(1)
 				if uikit.SoftButton(c, t, s, "danger", "删除渠道").Clicked() {

@@ -285,6 +285,13 @@ type ChannelState struct {
 	FetchArm    bool
 	FetchIDs    []string
 	FetchTarget string // "detail" | "new"
+
+	// 复制渠道确认框（C3）：CopyKey 勾选=同时复制 API Key（默认不复制），
+	// CopyAfter 是复制成功后的落位动作（详情页打开新渠道，列表页无）。
+	CopyArm   bool
+	CopyID    string
+	CopyKey   bool
+	CopyAfter func(st *State, newID string)
 }
 
 // ChannelForm 是渠道新建/详情编辑的表单状态：APIKey 留空 = 不改密钥

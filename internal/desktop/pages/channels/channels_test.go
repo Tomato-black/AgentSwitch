@@ -527,11 +527,40 @@ func TestChannelListCopy(t *testing.T) {
 	if err := tt.Click("复制"); err != nil {
 		t.Fatal(err)
 	}
+	if err := tt.Click("确认复制"); err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(st.Channels.TestMsg, "不含 Key") {
 		t.Fatalf("msg = %q", st.Channels.TestMsg)
 	}
 	if len((bridge.Channels{A: a}).List()) != 2 {
 		t.Fatal("copy not created")
+	}
+	// 勾选「同时复制 API Key」再复制：副本带 Key，文案为「含 Key」。
+	if err := tt.Click("复制"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("同时复制 API Key"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("确认复制"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(st.Channels.TestMsg, "含 Key") {
+		t.Fatalf("copy-key msg = %q", st.Channels.TestMsg)
+	}
+	chs := (bridge.Channels{A: a}).List()
+	if len(chs) != 3 {
+		t.Fatalf("copies = %d", len(chs))
+	}
+	withKey := 0
+	for _, ch := range chs {
+		if ch.HasKey {
+			withKey++
+		}
+	}
+	if withKey != 2 {
+		t.Fatalf("channels with key = %d, want 2 (origin + key copy)", withKey)
 	}
 }
 
@@ -548,6 +577,9 @@ func TestChannelListCopyLinksReferencingModel(t *testing.T) {
 	}
 	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1200, 900)
 	if err := tt.Click("复制"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("确认复制"); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(st.Channels.TestMsg, "已加入目标链") {

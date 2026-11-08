@@ -14,9 +14,10 @@ import (
 )
 
 func Page(c *ui.Context, st *state.State) {
-	// 先处理拉取模型的确认弹窗：按钮点击发生在视图渲染中，若同帧再调用
+	// 先处理拉取模型/复制的确认弹窗：按钮点击发生在视图渲染中，若同帧再调用
 	// AlertDialog 会被框架当作「已打开」立即结算，选择结果丢失。
 	fetchConfirm(c, st)
+	copyConfirm(c, st)
 	switch st.Channels.View {
 	case "new":
 		newView(c, st)
