@@ -234,6 +234,10 @@ func Run(a *app.App) error {
 			alertID, alertTitle, alertBody := "", "", ""
 			if u.Svc.Gateway.AlertsEnabled() {
 				alertID, alertTitle, alertBody = u.alerts.evaluate(rec, time.Now())
+				// 额度阈值告警：请求级规则未命中时，低频（10 分钟闸门）查本地配额。
+				if alertID == "" && u.alerts.quotaCheckDue(time.Now()) {
+					alertID, alertTitle, alertBody = u.alerts.evaluateQuota(u.Svc.Gateway.QuotaReport(), time.Now())
+				}
 			}
 			if alertID != "" && mygo.NotificationsSupported() {
 				go func() {
