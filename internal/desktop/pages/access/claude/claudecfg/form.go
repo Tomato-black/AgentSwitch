@@ -478,13 +478,32 @@ func mcpGroup(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, cf *state.ClaudeC
 			ui.Text(c, "未配置插件").TextColor(t.TextMuted)
 		}
 		for _, id := range plugins {
-			cur := pluginEnabled(cf, id)
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, id).Font(uikit.MonoFont).Grow(1)
-				// 继承值也显示为勾选；用户切换时才写入当前层。
-				cb := ui.Checkbox(c, &cur, "")
-				if cb.Changed() {
-					setPluginEnabled(cf, id, cur)
+				ui.Column(c).Gap(1).Grow(1).Children(func() {
+					ui.Text(c, id).Font(uikit.MonoFont)
+					// 三态（E1）：缺键=跟随下层（不写入），启用/停用写当前层；
+					// 继承值以提示行展示，与 bool 三态形态一致。
+					inheritHint(c, t, cf, "enabledPlugins."+id)
+				})
+				choice := 0
+				if m, ok := cf.Doc["enabledPlugins"].(map[string]any); ok {
+					if v, ok := m[id].(bool); ok {
+						if v {
+							choice = 1
+						} else {
+							choice = 2
+						}
+					}
+				}
+				if uikit.Segmented(c, t, s, &choice, "跟随", "启用", "停用").Changed() {
+					switch choice {
+					case 1:
+						setPluginEnabled(cf, id, true)
+					case 2:
+						setPluginEnabled(cf, id, false)
+					default:
+						clearPluginEnabled(cf, id)
+					}
 				}
 			})
 		}
@@ -544,6 +563,17 @@ func setPluginEnabled(cf *state.ClaudeCfgState, id string, enabled bool) {
 		cf.Doc["enabledPlugins"] = m
 	}
 	m[id] = enabled
+	RecomputeDirty(cf)
+}
+
+// clearPluginEnabled 删除当前层的插件开关（回到继承）。
+func clearPluginEnabled(cf *state.ClaudeCfgState, id string) {
+	if m, ok := cf.Doc["enabledPlugins"].(map[string]any); ok {
+		delete(m, id)
+		if len(m) == 0 {
+			delete(cf.Doc, "enabledPlugins")
+		}
+	}
 	RecomputeDirty(cf)
 }
 

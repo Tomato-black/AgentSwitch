@@ -558,3 +558,38 @@ func TestInheritHintOnlyWhenLayerMissing(t *testing.T) {
 		t.Fatalf("缺键应显示下层提示: %v", tt.Texts())
 	}
 }
+
+// TestPluginTriStateSegmented 覆盖 E1：enabledPlugins 行由勾选框改三态分段
+// ——缺键=继承（不写入）、启用/停用写当前层；缺键时显示下层来源提示。
+func TestPluginTriStateSegmented(t *testing.T) {
+	st := formTestState(t)
+	cf := &st.ClaudeCfg
+	cf.Layer = "project"
+	cf.Sub = "shared"
+	cf.MergeEntries = map[string]corecfg.MergedEntry{
+		"enabledPlugins.foo@market": {
+			Path: "enabledPlugins.foo@market", Value: true,
+			Kind: corecfg.MergeOverride, Source: corecfg.ScopeUser,
+		},
+	}
+	tt := ui.NewTester(func(c *ui.Context) {
+		mcpGroup(c, c.Theme(), uikit.Softs(c.Theme()), cf)
+	}, 900, 900)
+	for _, want := range []string{"跟随", "启用", "停用", "下层："} {
+		if !tt.HasText(want) {
+			t.Fatalf("missing %q（三态分段/继承提示）：%v", want, tt.Texts())
+		}
+	}
+	if err := tt.Click("停用"); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := corecfg.Get(cf.Doc, "enabledPlugins.foo@market"); !ok || v != false {
+		t.Fatalf("停用应写入 false：%v", cf.Doc)
+	}
+	if err := tt.Click("跟随"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := corecfg.Get(cf.Doc, "enabledPlugins.foo@market"); ok {
+		t.Fatalf("继承应删除当前层键：%v", cf.Doc)
+	}
+}
