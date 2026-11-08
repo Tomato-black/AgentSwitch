@@ -120,3 +120,42 @@ func recentAt(home, project string, dirInfo os.FileInfo) int64 {
 	}
 	return 0
 }
+
+// claudeRecentProjectsKey 记录用户在应用内选择过的项目（E2：选择器置顶）。
+const claudeRecentProjectsKey = "claude.recent_projects"
+
+// RecentProjects 返回应用内最近选择的项目路径（新→旧，上限 5）。
+func (s ClaudeConfigs) RecentProjects() []string {
+	raw, err := s.A.Store().Settings().Get(claudeRecentProjectsKey)
+	if err != nil || raw == "" {
+		return nil
+	}
+	var out []string
+	if json.Unmarshal([]byte(raw), &out) != nil {
+		return nil
+	}
+	return out
+}
+
+// RememberProject 把项目头插进最近列表（去重、上限 5）并持久化。
+func (s ClaudeConfigs) RememberProject(path string) []string {
+	if strings.TrimSpace(path) == "" {
+		return s.RecentProjects()
+	}
+	prev := s.RecentProjects()
+	out := make([]string, 0, 5)
+	out = append(out, filepath.Clean(path))
+	for _, p := range prev {
+		if len(out) >= 5 {
+			break
+		}
+		if p == out[0] {
+			continue
+		}
+		out = append(out, p)
+	}
+	if b, err := json.Marshal(out); err == nil {
+		_ = s.A.Store().Settings().Set(claudeRecentProjectsKey, string(b))
+	}
+	return out
+}

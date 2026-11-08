@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -51,5 +52,27 @@ func TestListClaudeProjectsBadFileDoesNotBlock(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("projects = %#v", got)
+	}
+}
+
+// TestRememberRecentProjects 覆盖 E2：最近使用的项目头插去重、上限 5。
+func TestRememberRecentProjects(t *testing.T) {
+	cfgs := ClaudeConfigs{A: tempApp(t), Home: t.TempDir()}
+	if got := cfgs.RecentProjects(); len(got) != 0 {
+		t.Fatalf("initial recents = %v", got)
+	}
+	for _, p := range []string{"/p/a", "/p/b", "/p/a"} {
+		cfgs.RememberProject(p)
+	}
+	got := cfgs.RecentProjects()
+	if len(got) != 2 || got[0] != "/p/a" || got[1] != "/p/b" {
+		t.Fatalf("recents = %v", got)
+	}
+	for i := 0; i < 6; i++ {
+		cfgs.RememberProject(fmt.Sprintf("/p/x%d", i))
+	}
+	got = cfgs.RecentProjects()
+	if len(got) != 5 || got[0] != "/p/x5" {
+		t.Fatalf("capped recents = %v", got)
 	}
 }

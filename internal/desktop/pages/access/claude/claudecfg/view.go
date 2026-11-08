@@ -472,19 +472,63 @@ func layerSelector(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.St
 	}
 }
 
+// orderedProjects 生成项目选择器的候选序（E2）：应用内最近选择的项目
+// 置顶（按最近序），其余保持 ListClaudeProjects 的原序（最近活动优先）；
+// query 按路径/名称大小写不敏感过滤，空串不过滤。
+func orderedProjects(projects []bridge.ClaudeProject, recents []string, query string) []bridge.ClaudeProject {
+	q := strings.ToLower(strings.TrimSpace(query))
+	byPath := make(map[string]bridge.ClaudeProject, len(projects))
+	for _, p := range projects {
+		byPath[p.Path] = p
+	}
+	out := make([]bridge.ClaudeProject, 0, len(projects))
+	seen := map[string]bool{}
+	for _, r := range recents {
+		if p, ok := byPath[r]; ok && !seen[r] {
+			out = append(out, p)
+			seen[r] = true
+		}
+	}
+	for _, p := range projects {
+		if !seen[p.Path] {
+			out = append(out, p)
+		}
+	}
+	if q == "" {
+		return out
+	}
+	filtered := out[:0]
+	for _, p := range out {
+		if strings.Contains(strings.ToLower(p.Path), q) || strings.Contains(strings.ToLower(p.Name), q) {
+			filtered = append(filtered, p)
+		}
+	}
+	return filtered
+}
+
 // projectContextCard 是项目级上下文卡（原型 §4.1）：项目选择器 + 手动目录 +
 // 共享/本地分段 + 实际解析路径条。
 func projectContextCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State, cfgs bridge.ClaudeConfigs) {
 	cf := &st.ClaudeCfg
+	if !cf.RecentsLoaded {
+		cf.RecentProjects = cfgs.RecentProjects()
+		cf.RecentsLoaded = true
+	}
 	uikit.Card(c, t, func() {
 		ui.Column(c).Gap(8).Children(func() {
-			paths := make([]string, 0, len(cf.Projects))
-			for _, p := range cf.Projects {
+			// 列表 >8 项时出现搜索框（E2）；最近选择置顶由 orderedProjects 负责。
+			if len(cf.Projects) > 8 {
+				ui.SearchField(c, &cf.ProjectQuery).Grow(1)
+			}
+			picked := orderedProjects(cf.Projects, cf.RecentProjects, cf.ProjectQuery)
+			paths := make([]string, 0, len(picked))
+			for _, p := range picked {
 				paths = append(paths, p.Path)
 			}
 			if len(paths) > 0 {
 				project := cf.Project
 				if ui.Select(c, &project, paths).Grow(1).Changed() && project != cf.Project {
+					cf.RecentProjects = cfgs.RememberProject(project)
 					// 项目变更后候选集不同，显式选定的候选随之失效。
 					switchLayer(st, cfgs, func(cf *state.ClaudeCfgState) { cf.Project = project; cf.LocalPath = "" })
 				}
@@ -495,6 +539,7 @@ func projectContextCard(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *sta
 				ui.TextInput(c, &cf.ProjectInput).Grow(1).Placeholder("/path/to/project")
 				if uikit.SoftButton(c, t, s, "gray", "打开").Clicked() && strings.TrimSpace(cf.ProjectInput) != "" && cf.ProjectInput != cf.Project {
 					target := strings.TrimSpace(cf.ProjectInput)
+					cf.RecentProjects = cfgs.RememberProject(target)
 					switchLayer(st, cfgs, func(cf *state.ClaudeCfgState) { cf.Project = target })
 				}
 			})

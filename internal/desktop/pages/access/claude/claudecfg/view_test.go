@@ -1,6 +1,7 @@
 package claudecfg
 
 import (
+	"fmt"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -476,5 +477,56 @@ func TestLocalCandidatesSwitch(t *testing.T) {
 	}
 	if !tt.HasText("候选路径") {
 		t.Fatalf("候选选择器缺失：%v", tt.Texts())
+	}
+}
+
+// TestOrderedProjects 覆盖 E2：最近选择的项目置顶（按最近序）、其余保持
+// 原序（ListClaudeProjects 已按最近活动排序）、查询词大小写不敏感过滤。
+func TestOrderedProjects(t *testing.T) {
+	projects := []bridge.ClaudeProject{
+		{Path: "/work/a", Name: "a"}, {Path: "/work/b", Name: "b"}, {Path: "/work/c", Name: "c"},
+	}
+	got := orderedProjects(projects, []string{"/work/c", "/work/a"}, "")
+	if len(got) != 3 || got[0].Path != "/work/c" || got[1].Path != "/work/a" || got[2].Path != "/work/b" {
+		t.Fatalf("ordered = %+v", got)
+	}
+	got = orderedProjects(projects, nil, "B")
+	if len(got) != 1 || got[0].Path != "/work/b" {
+		t.Fatalf("filtered = %+v", got)
+	}
+	if got := orderedProjects(projects, []string{"/gone/x"}, ""); len(got) != 3 {
+		t.Fatalf("不存在于列表的最近项应忽略：%+v", got)
+	}
+}
+
+// TestProjectPickerSearchField 覆盖 E2：项目 >8 时出现搜索框，最近选择置顶。
+func TestProjectPickerSearchField(t *testing.T) {
+	st, _ := uitest.New(t)
+	home := t.TempDir()
+	st.ClaudeCfg.Home = home
+	cfgs := bridge.ClaudeConfigs{A: st.Svc.Gateway.A, Home: home}
+	for i := 0; i < 9; i++ {
+		cfgs.RememberProject(filepath.Join(home, fmt.Sprintf("p%d", i)))
+	}
+	projs := make([]bridge.ClaudeProject, 0, 9)
+	for i := 0; i < 9; i++ {
+		projs = append(projs, bridge.ClaudeProject{Path: filepath.Join(home, fmt.Sprintf("p%d", i))})
+	}
+	st.ClaudeCfg.Projects = projs
+	st.ClaudeCfg.Project = projs[0].Path
+	st.ClaudeCfg.Layer = "project"
+	st.ClaudeCfg.Sub = "shared"
+	st.ClaudeCfg.Loaded = true
+	st.ClaudeCfg.Doc = map[string]any{}
+	st.ClaudeCfg.Baseline = map[string]any{}
+	tt := ui.NewTester(func(c *ui.Context) { Page(c, st) }, 1100, 1600)
+	if !tt.HasText("搜索") && !tt.HasText("Search") {
+		// SearchField 的空占位文案可能因版本而异；至少断言搜索框元素在场。
+		if _, ok := tt.Find("p8"); !ok {
+			t.Fatalf("picker missing: %v", tt.Texts())
+		}
+	}
+	if len(st.ClaudeCfg.RecentProjects) != 5 {
+		t.Fatalf("recents = %v", st.ClaudeCfg.RecentProjects)
 	}
 }

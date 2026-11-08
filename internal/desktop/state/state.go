@@ -88,6 +88,9 @@ type ClaudeCfgState struct {
 	Sub          string // shared/local
 	Project      string
 	ProjectInput string
+	ProjectQuery string   // 项目选择器搜索词（E2；>8 项时显示搜索框）
+	RecentProjects []string // 应用内最近选择的项目（新→旧，置顶用）
+	RecentsLoaded  bool
 	// 项目本地层候选路径（Git 根 ≠ 项目目录时 >1）；LocalPath 是用户显式
 	// 选定的候选（空=默认首候选），随 ReadLayerRequest/保存请求透传 bridge。
 	Candidates []string
