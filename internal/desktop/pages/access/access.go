@@ -262,6 +262,8 @@ func Page(c *ui.Context, st *state.State) {
 
 				// 删除二次确认（行内「删除」只武装，弹窗确认才执行）
 				deleteConfirm(c, st, acc)
+				// 应用接入确认（D4：展示目标文件与受管键范围，确认才写）
+				applyConfirm(c, st, acc)
 				// 还原备份确认（覆盖 live 文件前先备份当前状态，可再次恢复）
 				restoreConfirm(c, st, acc)
 			})
@@ -431,7 +433,10 @@ func claudeSummaryCard(c *ui.Context, st *state.State, acc bridge.AccessConfigs,
 							uikit.SoftButton(c, t, s, "gray", label).Disabled(true)
 						default:
 							if uikit.SoftButton(c, t, s, "act", label).Clicked() {
-								accesskit.ApplyAsync(st, acc, *cur)
+								// 应用前确认（D4）：展示目标文件与受管键范围。
+								pending := *cur
+								st.Access.ApplyPending = &pending
+								st.Access.ApplyArm = true
 							}
 						}
 					}
@@ -556,6 +561,43 @@ func configRow(c *ui.Context, t *ui.Theme, s uikit.SoftPalette, st *state.State,
 				}
 			})
 		})
+	})
+}
+
+// applyConfirm 是 Claude 摘要卡「应用接入/重新应用」的确认框（D4）：列
+// 出将写入的目标文件与受管键范围；确认后走既有 ApplyAsync（后台执行、写
+// 前自动备份）。
+func applyConfirm(c *ui.Context, st *state.State, acc bridge.AccessConfigs) {
+	if !st.Access.ApplyArm {
+		st.Access.ApplyPending = nil
+		return
+	}
+	v := st.Access.ApplyPending
+	if v == nil {
+		st.Access.ApplyArm = false
+		return
+	}
+	t := c.Theme()
+	uikit.RichDialog(c, t, uikit.RichDialogOpts{
+		Open:     &st.Access.ApplyArm,
+		Title:    "应用接入配置？",
+		Subtitle: "配置「" + v.Name + "」",
+		Body: func() {
+			ui.Column(c).Gap(t.Space(2)).Children(func() {
+				ui.Row(c).Gap(8).Children(func() {
+					ui.Text(c, "目标文件").TextColor(t.TextMuted)
+					ui.Text(c, "~/.claude/settings.json").Font(uikit.MonoFont)
+				})
+				ui.Text(c, "将写入网关连接 env（BASE_URL / AUTH_TOKEN / MODEL）与模型键（model / fallbackModel / 角色映射）；写前自动备份，其余键原样保留。").TextColor(t.TextMuted)
+			})
+		},
+		Actions: []uikit.RichDialogAction{
+			{Label: "取消", Default: true, OnClick: func() { st.Access.ApplyArm = false }},
+			{Label: "确认应用", Primary: true, OnClick: func() {
+				st.Access.ApplyArm = false
+				accesskit.ApplyAsync(st, acc, *v)
+			}},
+		},
 	})
 }
 

@@ -1,6 +1,7 @@
 package access
 
 import (
+	"net"
 	"strings"
 	"testing"
 
@@ -52,5 +53,75 @@ func TestApplyAccessAllowedWhenSettingsClean(t *testing.T) {
 	accesskit.ApplyAsync(st, acc, bridge.AccessConfigView{ID: "cfg-1", Name: "主配置"})
 	if !st.Access.ApplyTask.IsRunning() {
 		t.Fatalf("clean settings must allow apply, msg=%q", st.Access.Msg)
+	}
+}
+
+// TestApplyAccessConfirmDialog 覆盖 D4：摘要卡「应用接入」先弹确认框
+//（目标文件与受管键说明在场），取消不启动任务，确认走 ApplyAsync。
+func TestApplyAccessConfirmDialog(t *testing.T) {
+	st, a := uitest.New(t)
+	st.Access.App = "claude"
+	// 探测空闲端口注入：不与本机在跑的实例抢 17890。
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+	cur, err := a.CurrentSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.SaveSettings(port, cur.RequestTimeoutSeconds); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.StartGateway(); err != nil {
+		t.Fatal(err)
+	}
+	acc := bridge.AccessConfigs{A: a, Home: t.TempDir()}
+	ch, err := (bridge.Channels{A: a}).Create("", "主渠道", "https://api.example.com", "anthropic", "sk-x", true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lm, err := (bridge.LogicalModels{A: a}).Create("my-code", "", bridge.ModelMeta{},
+		[]bridge.TargetSpec{{ChannelID: ch.ID, ModelName: "m1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := acc.Create("claude", "主配置", lm.ID, "{}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Store().AccessConfigs().SetCurrent("claude", v.ID); err != nil {
+		t.Fatal(err)
+	}
+	tt := ui.NewTester(func(c *ui.Context) {
+		Page(c, st)
+	}, 1000, 900)
+	if err := tt.Click("重新应用"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"应用接入配置？", "目标文件", "~/.claude/settings.json", "自动备份"} {
+		if !tt.HasText(want) {
+			t.Fatalf("missing %q in apply dialog: %v", want, tt.Texts())
+		}
+	}
+	if err := tt.Click("取消"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if st.Access.ApplyTask.IsRunning() {
+		t.Fatal("取消不得启动应用任务")
+	}
+	if err := tt.Click("重新应用"); err != nil {
+		t.Fatal(err)
+	}
+	wait := uitest.AsyncWaiter(t, st)
+	if err := tt.Click("确认应用"); err != nil {
+		t.Fatal(err)
+	}
+	wait()
+	if st.Access.ApplyTask.IsRunning() || !strings.Contains(st.Access.Msg, "已应用") {
+		t.Fatalf("确认后应完成应用任务：msg=%q", st.Access.Msg)
 	}
 }

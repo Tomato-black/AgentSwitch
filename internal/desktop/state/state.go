@@ -60,6 +60,8 @@ type AccessState struct {
 	Form        AccessForm
 	DesktopForm DesktopForm
 	DeleteArm   bool   // 删除接入配置 AlertDialog open 位
+	ApplyArm    bool   // 应用接入确认框 open 位（D4）
+	ApplyPending *bridge.AccessConfigView // 待确认应用的配置
 	ApplyID     string // 正在应用的配置 id（空=无应用任务）
 	ApplyTask   Async  // 应用任务状态（异步执行，防主线程冻结）
 	DeleteID    string // 删除武装对象——确认仅对匹配 id 生效
